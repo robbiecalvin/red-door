@@ -1,0 +1,48 @@
+{
+  "name": "dualmode",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "jest --runInBand",
+    "test:coverage": "jest --coverage --runInBand",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "backend": "tsx backend/src/server.ts",
+    "backend:watch": "tsx watch backend/src/server.ts",
+    "dev": "node vite.dev.mjs",
+    "dev:stack": "sh -c 'PORT=${PORT:-3012}; pkill -f \"tsx watch backend/src/server.ts\" 2>/dev/null || true; pkill -f \"backend/src/server.ts\" 2>/dev/null || true; PIDS=$(lsof -tiTCP:${PORT} -sTCP:LISTEN 2>/dev/null || true); if [ -n \"$PIDS\" ]; then kill -9 $PIDS; fi; JWT_SECRET=${JWT_SECRET:-dev} PORT=${PORT} npm run backend:watch > /tmp/reddoor-backend.log 2>&1 & BACK_PID=$!; i=0; until curl -fsS \"http://127.0.0.1:${PORT}/health\" >/dev/null 2>&1; do i=$((i+1)); if [ $i -ge 80 ]; then echo \"Backend failed to become healthy on port ${PORT}.\"; tail -n 120 /tmp/reddoor-backend.log; kill $BACK_PID 2>/dev/null || true; exit 1; fi; if ! kill -0 $BACK_PID 2>/dev/null; then echo \"Backend process exited.\"; tail -n 120 /tmp/reddoor-backend.log; exit 1; fi; sleep 0.25; done; DUALMODE_BACKEND_PORT=${DUALMODE_BACKEND_PORT:-${PORT}} npm run dev'",
+    "build": "node vite.build.mjs",
+    "build:obfuscated": "npm run build && node scripts/obfuscate-dist.cjs",
+    "preview": "vite preview --strictPort --port 5173"
+  },
+  "dependencies": {
+    "@fontsource/monoton": "5.2.7",
+    "@fontsource/rajdhani": "5.2.6",
+    "@aws-sdk/client-s3": "3.888.0",
+    "@aws-sdk/s3-request-presigner": "3.888.0",
+    "express": "4.21.2",
+    "maplibre-gl": "5.8.0",
+    "nodemailer": "6.10.1",
+    "pg": "8.13.3"
+  },
+  "devDependencies": {
+    "@types/jest": "29.5.14",
+    "@types/express": "4.17.21",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "@types/jsonwebtoken": "9.0.6",
+    "@types/nodemailer": "6.4.17",
+    "@types/ws": "8.5.13",
+    "jest": "29.7.0",
+    "jsonwebtoken": "9.0.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "vite": "5.4.11",
+    "tsx": "4.19.2",
+    "ts-jest": "29.2.5",
+    "typescript": "5.6.3",
+    "@types/pg": "8.11.10",
+    "ws": "8.18.0",
+    "javascript-obfuscator": "4.1.1"
+  }
+}

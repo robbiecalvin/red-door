@@ -1,0 +1,204 @@
+############################################
+# DualMode — Codex Configuration (Binding)
+############################################
+
+[project]
+name = "Red Door"
+domain = "location-based social network"
+language = "typescript"
+strict = true
+environment = "production"
+maturity = "pre-launch"
+
+############################################
+# Product Intent
+############################################
+
+[product]
+description = """
+Red Door is a cruise-first social platform centered on:
+- Real-time map-based discovery
+- Realtime chat grid and direct messaging
+- Profile-driven community interaction
+"""
+
+modes = ["cruise", "date", "hybrid"]
+
+mode_definitions.cruise = """
+Map-first, real-time, proximity-based discovery.
+Anonymous sessions allowed.
+Immediate interaction.
+"""
+
+mode_definitions.date = """
+Reserved for future expansion.
+Not part of current frontend scope.
+"""
+
+mode_definitions.hybrid = """
+Reserved for future expansion.
+Not part of current frontend scope.
+"""
+
+############################################
+# Identity & Access Rules
+############################################
+
+[identity]
+user_types = ["guest", "registered", "subscriber"]
+
+anonymous_allowed_only_in = ["cruise"]
+anonymous_session_lifetime_minutes = 120
+
+registered_required_for = ["date", "hybrid"]
+
+subscription_tiers = ["free", "premium"]
+
+############################################
+# Discovery Constraints
+############################################
+
+[discovery]
+
+cruise.discovery_surface = "map"
+cruise.realtime_presence = true
+cruise.matching_required = false
+
+date.discovery_surface = "feed"
+date.realtime_presence = false
+date.mutual_match_required = true
+
+hybrid.discovery_surface = ["map", "feed"]
+hybrid.user_visibility_controls = true
+
+############################################
+# Location & Privacy (Non-Negotiable)
+############################################
+
+[location]
+exact_location_storage = false
+store_location_history = false
+
+location_randomization_meters = 100
+randomization_applied_server_side = true
+
+distance_display = "bucketed"
+distance_buckets = ["<500m", "<1km", "<5km", ">5km"]
+
+############################################
+# Realtime System Rules
+############################################
+
+[realtime]
+protocol = "websocket"
+
+presence_update_interval_seconds = 15
+presence_expiry_seconds = 45
+
+payload_size_limit_kb = 2
+heartbeat_required = true
+
+persist_presence = false
+
+############################################
+# Chat & Messaging
+############################################
+
+[chat]
+
+cruise.chat_type = "ephemeral"
+cruise.chat_retention_hours = 72
+
+date.chat_type = "persistent"
+date.chat_retention = "user_controlled"
+
+message_rate_limit_per_minute = 20
+block_is_global = true
+
+############################################
+# Safety & Compliance
+############################################
+
+[safety]
+
+age_gate_required = true
+minimum_age = 18
+
+blocking_required = true
+reporting_required = true
+
+explicit_content_opt_in = true
+consent_enforced = true
+
+############################################
+# Data Retention
+############################################
+
+[data_retention]
+
+location = "never"
+presence = "ephemeral"
+cruise_chat = "72_hours"
+date_chat = "user_controlled"
+analytics = "anonymized_only"
+
+############################################
+# Stack & Architecture (Advisory but Binding)
+############################################
+
+[stack]
+frontend = "react + typescript"
+backend = "nodejs + express"
+realtime = "websockets"
+database = "postgresql + postgis"
+maps = "maplibre-gl"
+payments = "stripe"
+
+############################################
+# Coding Rules for Codex
+############################################
+
+[coding]
+
+no_pseudocode = true
+no_todos = true
+no_placeholders = true
+
+explicit_types_required = true
+defensive_programming = true
+fail_fast = true
+
+############################################
+# File & Repo Rules
+############################################
+
+[filesystem]
+
+edit_existing_files_only = false
+one_feature_per_commit = true
+
+generate_tests = true
+generate_docs = true
+
+############################################
+# Testing Expectations
+############################################
+
+[testing]
+
+backend_min_coverage_percent = 80
+critical_services_branch_coverage_percent = 100
+
+forbidden_test_types = ["snapshot", "shallow"]
+
+############################################
+# Codex Behavior Constraints
+############################################
+
+[codex_behavior]
+
+do_not_invent_features = true
+do_not_create_files = false
+stop_on_ambiguity = true
+
+ask_before_assuming = true
