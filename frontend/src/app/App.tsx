@@ -5,7 +5,7 @@ import { apiClient, type ServiceError, type Session } from "./api";
 import placeholderA from "../assets/reddoor-placeholder-1.svg";
 import placeholderB from "../assets/reddoor-placeholder-2.svg";
 import placeholderC from "../assets/reddoor-placeholder-3.svg";
-import welcomeDoorImage from "../assets/reddoor-welcome.png";
+import welcomeDoorImage from "../assets/appbackground.png";
 
 type AuthView = "guest" | "register" | "login";
 type TopTab = "discover" | "threads" | "public" | "profile" | "settings" | "submissions" | "promoted";
@@ -20,6 +20,7 @@ type Settings = Readonly<{
 
 declare const __DUALMODE_DEFAULT_CENTER_LAT__: string | undefined;
 declare const __DUALMODE_DEFAULT_CENTER_LNG__: string | undefined;
+declare const __DUALMODE_API_BASE_PATH__: string | undefined;
 
 function safeLocalStorageGet(key: string): string | null {
   try {
@@ -75,6 +76,31 @@ function normalizeUiError(e: unknown, fallback: string): string {
   return fallback;
 }
 
+function requestLocationPermission(): void {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = Number(pos.coords.latitude.toFixed(6));
+      const lng = Number(pos.coords.longitude.toFixed(6));
+      try {
+        localStorage.setItem("reddoor_travel_center", JSON.stringify({ enabled: true, lat, lng }));
+      } catch {
+        // storage may be unavailable in strict privacy mode
+      }
+      window.dispatchEvent(new CustomEvent("rd:location-updated", { detail: { lat, lng } }));
+    },
+    () => {
+      // deny/error is handled later by map presence fallbacks
+    },
+    { enableHighAccuracy: true, timeout: 12_000, maximumAge: 0 }
+  );
+}
+
+function resolveApiBasePath(): string {
+  const raw = typeof __DUALMODE_API_BASE_PATH__ === "string" ? __DUALMODE_API_BASE_PATH__.trim() : "";
+  return raw.length > 0 ? raw.replace(/\/+$/, "") : "/api";
+}
+
 const AVATARS = [placeholderA, placeholderB, placeholderC] as const;
 
 function avatarForSeed(seed: string): string {
@@ -84,7 +110,7 @@ function avatarForSeed(seed: string): string {
 }
 
 export function App(): React.ReactElement {
-  const api = useMemo(() => apiClient("/api"), []);
+  const api = useMemo(() => apiClient(resolveApiBasePath()), []);
 
   const [settings] = useState<Settings>(() => loadSettingsFromEnv());
 
@@ -106,6 +132,7 @@ export function App(): React.ReactElement {
   const [ageYears, setAgeYears] = useState<string>("");
   const [topAvatarUrl, setTopAvatarUrl] = useState<string | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
+  const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
 
   const refreshSession = useCallback(
     async (token: string): Promise<void> => {
@@ -198,6 +225,7 @@ export function App(): React.ReactElement {
   }
 
   async function createGuest(): Promise<void> {
+    requestLocationPermission();
     setBusy(true);
     setLastError(null);
     setAuthInfo("");
@@ -231,6 +259,7 @@ export function App(): React.ReactElement {
   }
 
   async function submitVerifyEmail(): Promise<void> {
+    requestLocationPermission();
     setBusy(true);
     setLastError(null);
     setAuthInfo("");
@@ -268,6 +297,7 @@ export function App(): React.ReactElement {
   }
 
   async function submitLogin(): Promise<void> {
+    requestLocationPermission();
     setBusy(true);
     setLastError(null);
     setAuthInfo("");
@@ -320,31 +350,52 @@ export function App(): React.ReactElement {
     return () => m.removeEventListener("change", onChange);
   }, []);
 
+  useEffect(() => {
+    const nav = navigator as Navigator & {
+      setAppBadge?: (count?: number) => Promise<void>;
+      clearAppBadge?: () => Promise<void>;
+    };
+    if (typeof nav.setAppBadge !== "function" && typeof nav.clearAppBadge !== "function") return;
+    if (unreadChatCount > 0 && typeof nav.setAppBadge === "function") {
+      void nav.setAppBadge(unreadChatCount).catch(() => {});
+      return;
+    }
+    if (typeof nav.clearAppBadge === "function") {
+      void nav.clearAppBadge().catch(() => {});
+    }
+  }, [unreadChatCount]);
+
+  function selectTab(tab: TopTab): void {
+    setActiveTab(tab);
+    window.dispatchEvent(new CustomEvent("rd:tab-select", { detail: { tab } }));
+  }
+
   const topAvatar = topAvatarUrl ?? avatarForSeed(session?.userId ?? session?.sessionToken ?? "guest");
+  const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
 
   return (
-    <div className="rd-shell">
+    <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""}`}>
       {session ? (
         <header className={`rd-topbar ${isMobile ? "mobile" : ""}`}>
           <div className="rd-topbar-inner">
             {isMobile ? (
               <div className="rd-mobile-titlebar">
-                <button
-                  type="button"
-                  className={`rd-btn rd-mobile-pill ${activeTab === "profile" ? "is-active" : ""}`}
-                  onClick={() => setActiveTab("profile")}
-                  aria-label="Open profile"
-                >
-                  Profile
-                </button>
-                <div className="rd-mobile-avatar" aria-hidden="true">
-                  <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
-                  <span className="rd-mobile-avatar-dot" />
+                <div className="rd-mobile-title-spacer" aria-hidden="true" />
+                <div className="rd-mobile-avatar-wrap">
+                  <button
+                    type="button"
+                    className="rd-mobile-avatar"
+                    aria-label="Open my profile"
+                    onClick={() => selectTab("profile")}
+                  >
+                    <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
+                    <span className="rd-mobile-avatar-dot" />
+                  </button>
                 </div>
                 <button
                   type="button"
-                  className={`rd-btn rd-mobile-pill ${activeTab === "settings" ? "is-active" : ""}`}
-                  onClick={() => setActiveTab("settings")}
+                  className="rd-btn rd-mobile-corner-settings"
+                  onClick={() => selectTab("settings")}
                   aria-label="Open settings"
                 >
                   Settings
@@ -354,16 +405,18 @@ export function App(): React.ReactElement {
               <>
                 {session.ageVerified === true ? (
                   <>
-                    <button type="button" className="rd-btn" onClick={() => setActiveTab("profile")} aria-label="Profile">Profile</button>
+                    <button type="button" className="rd-btn" onClick={() => selectTab("settings")} aria-label="Settings">Settings</button>
                     <div className="rd-brand" aria-label="Red Door">
                       <div className="rd-mark" aria-hidden="true" />
                       <div className="rd-name">Red Door</div>
                     </div>
-                    <button type="button" className="rd-btn" onClick={() => setActiveTab("discover")} aria-label="Discover">Discover</button>
-                    <button type="button" className="rd-btn" onClick={() => setActiveTab("threads")} aria-label="Threads">Threads</button>
-                    <button type="button" className="rd-btn" onClick={() => setActiveTab("public")} aria-label="Public postings">Public</button>
-                    <button type="button" className="rd-btn" onClick={() => setActiveTab("submissions")} aria-label="Submissions">Submissions</button>
-                    <button type="button" className="rd-btn" onClick={() => setActiveTab("promoted")} aria-label="Promoted profiles">Promoted</button>
+                    <button type="button" className="rd-btn" onClick={() => selectTab("discover")} aria-label="Discover">Discover</button>
+                    <button type="button" className="rd-btn" onClick={() => selectTab("threads")} aria-label="Inbox">
+                      Inbox{unreadChatCount > 0 ? ` (${unreadChatCount})` : ""}
+                    </button>
+                    <button type="button" className="rd-btn" onClick={() => selectTab("public")} aria-label="Public postings">Public</button>
+                    <button type="button" className="rd-btn" onClick={() => selectTab("submissions")} aria-label="Submissions">Submissions</button>
+                    <button type="button" className="rd-btn" onClick={() => selectTab("promoted")} aria-label="Promoted profiles">Promoted</button>
                     <div className="rd-spacer" />
                     <div className="rd-chip" aria-label="Session">
                       <span className="rd-dot on" aria-hidden="true" />
@@ -371,53 +424,12 @@ export function App(): React.ReactElement {
                         {session.userType.toUpperCase()} | {session.mode.toUpperCase()}
                       </span>
                     </div>
-                    <button type="button" className="rd-btn" onClick={() => setActiveTab("settings")} aria-label="Settings">Settings</button>
+                    <button type="button" className="rd-btn" onClick={() => selectTab("settings")} aria-label="Settings">Settings</button>
                   </>
                 ) : null}
               </>
             )}
           </div>
-          {isMobile ? (
-            <div className="rd-mobile-info">
-            <div className="rd-mobile-copy">
-              <div>Welcome to Red Door adult gay social network for men</div>
-              <button
-                type="button"
-                className="rd-link-btn rd-mobile-copy-link"
-                onClick={() => {
-                  setDiscoverFilter("all");
-                  setActiveTab("discover");
-                }}
-              >
-                All guys
-              </button>
-              <button
-                type="button"
-                className="rd-link-btn rd-mobile-copy-link online"
-                onClick={() => {
-                  setDiscoverFilter("online");
-                  setActiveTab("discover");
-                }}
-              >
-                Guys online now: {onlineCount}
-              </button>
-            </div>
-            <div className="rd-mobile-links">
-              <button type="button" className="rd-link-btn" onClick={() => setActiveTab("profile")}>Edit Profile</button>
-              <button type="button" className="rd-link-btn" onClick={() => setActiveTab("public")}>Public Ad</button>
-              <button
-                type="button"
-                className="rd-link-btn"
-                onClick={() => {
-                  setDiscoverFilter("favorites");
-                  setActiveTab("discover");
-                }}
-              >
-                Hot List
-              </button>
-            </div>
-          </div>
-        ) : null}
         </header>
       ) : null}
 
@@ -621,6 +633,7 @@ export function App(): React.ReactElement {
               busy={busy}
               setBusy={setBusy}
               setLastError={setLastError}
+              onUnreadCountChange={setUnreadChatCount}
               onLogout={onLogout}
             />
           ) : null}
@@ -629,19 +642,20 @@ export function App(): React.ReactElement {
 
       {isMobile && session && session.ageVerified === true ? (
         <nav className="rd-mobile-nav" aria-label="Mobile navigation">
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`} onClick={() => setActiveTab("discover")} aria-label="Discover">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`} onClick={() => selectTab("discover")} aria-label="Discover">
             <span className="rd-mobile-nav-icon" aria-hidden="true">⌖</span>
           </button>
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "threads" ? "is-active" : ""}`} onClick={() => setActiveTab("threads")} aria-label="Threads">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "threads" ? "is-active" : ""}`} onClick={() => selectTab("threads")} aria-label="Inbox">
             <span className="rd-mobile-nav-icon" aria-hidden="true">💬</span>
+            {unreadChatCount > 0 ? <span className="rd-mobile-nav-badge">{unreadChatCount > 99 ? "99+" : unreadChatCount}</span> : null}
           </button>
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "public" ? "is-active" : ""}`} onClick={() => setActiveTab("public")} aria-label="Public">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "public" ? "is-active" : ""}`} onClick={() => selectTab("public")} aria-label="Public">
             <span className="rd-mobile-nav-icon" aria-hidden="true">📣</span>
           </button>
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "submissions" ? "is-active" : ""}`} onClick={() => setActiveTab("submissions")} aria-label="Submissions">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "submissions" ? "is-active" : ""}`} onClick={() => selectTab("submissions")} aria-label="Submissions">
             <span className="rd-mobile-nav-icon" aria-hidden="true">✎</span>
           </button>
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "promoted" ? "is-active" : ""}`} onClick={() => setActiveTab("promoted")} aria-label="Promoted">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "promoted" ? "is-active" : ""}`} onClick={() => selectTab("promoted")} aria-label="Promoted">
             <span className="rd-mobile-nav-icon" aria-hidden="true">★</span>
           </button>
         </nav>

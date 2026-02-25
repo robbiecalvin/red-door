@@ -36,6 +36,8 @@ type DiscoverFilter = "all" | "online" | "favorites";
 type MobileCruiseTab = "map" | "chat";
 type MobilePublicTab = "ads" | "events" | "spots";
 type MessageChannel = "instant" | "direct";
+const FIRE_SIGNAL_TEXT = "FIRE_SIGNAL|1";
+declare const __DUALMODE_WS_URL__: string | undefined;
 
 type ProfileDraft = Readonly<{
   displayName: string;
@@ -122,6 +124,21 @@ function normalizeErrorMessage(e: unknown): string {
 }
 
 function wsProxyUrl(): string {
+  const configured = typeof __DUALMODE_WS_URL__ === "string" ? __DUALMODE_WS_URL__.trim() : "";
+  if (configured !== "") {
+    if (configured.startsWith("ws://") || configured.startsWith("wss://")) return configured;
+    try {
+      const fromHttp = new URL(configured);
+      fromHttp.protocol = fromHttp.protocol === "https:" ? "wss:" : "ws:";
+      return fromHttp.toString();
+    } catch {
+      if (configured.startsWith("/")) {
+        const rel = new URL(configured, window.location.origin);
+        rel.protocol = rel.protocol === "https:" ? "wss:" : "ws:";
+        return rel.toString();
+      }
+    }
+  }
   const u = new URL("/ws", window.location.origin);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return u.toString();
@@ -181,6 +198,14 @@ function normalizePeerKey(rawKey: string): string {
   return key;
 }
 
+function isFireSignalText(text: string): boolean {
+  return text.trim() === FIRE_SIGNAL_TEXT;
+}
+
+function displayMessageText(text: string): string {
+  return isFireSignalText(text) ? "🔥 I'm into you" : text;
+}
+
 function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const earthRadius = 6_371_000;
@@ -220,7 +245,8 @@ function CruiseSurface({
   setBusy,
   setLastError,
   isMobile,
-  onOpenThreadRequested
+  onOpenThreadRequested,
+  onUnreadCountChange
 }: Readonly<{
   api: Api;
   session: Session;
@@ -231,6 +257,7 @@ function CruiseSurface({
   setLastError(value: string | null): void;
   isMobile: boolean;
   onOpenThreadRequested(key: string): void;
+  onUnreadCountChange?(count: number): void;
 }>): React.ReactElement {
   const [mobileTab, setMobileTab] = useState<MobileCruiseTab>("map");
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
@@ -579,6 +606,16 @@ function CruiseSurface({
     }
   }
 
+  async function sendFireFromProfile(targetKey: string): Promise<void> {
+    const normalizedTarget = normalizePeerKey(targetKey);
+    if (!normalizedTarget || normalizedTarget === meKey) return;
+    try {
+      await api.sendChat(session.sessionToken, "cruise", normalizedTarget, FIRE_SIGNAL_TEXT);
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
+  }
+
   async function toggleBlockFromProfile(profileChatKey: string): Promise<void> {
     if (!profileChatKey.trim() || profileChatKey === meKey) return;
     if (session.userType === "guest") {
@@ -641,6 +678,19 @@ function CruiseSurface({
     return () => window.clearInterval(id);
   }, [session.sessionToken]);
 
+  useEffect(() => {
+    const onLocationUpdated = (evt: Event): void => {
+      const custom = evt as CustomEvent<{ lat?: number; lng?: number }>;
+      const lat = custom.detail?.lat;
+      const lng = custom.detail?.lng;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      setSelfCoords({ lat: lat as number, lng: lng as number });
+      void api.updatePresence(session.sessionToken, lat as number, lng as number, "online").catch(() => {});
+    };
+    window.addEventListener("rd:location-updated", onLocationUpdated as EventListener);
+    return () => window.removeEventListener("rd:location-updated", onLocationUpdated as EventListener);
+  }, [api, session.sessionToken]);
+
   const mapPresence = useMemo(() => {
     const hasSelf = mergedPresence.some((p) => p.key === meKey);
     if (hasSelf) return mergedPresence;
@@ -681,24 +731,53 @@ function CruiseSurface({
   );
 
   const mapPanel = (
-    <div style={{ ...cardStyle(), padding: 8 }}>
-      <CruiseMap
-        wsUrl={wsProxyUrl()}
-        sessionToken={session.sessionToken}
-        presenceUpdates={mapPresence}
-        realtimeErrorMessage={realtimeError}
-        onMarkerSelect={(key) => void openProfileByKey(key)}
-        avatarByKey={avatarUrlByKey}
-        additionalMarkers={spotMarkers}
-        defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
-        height={isMobile ? "calc(100vh - 340px)" : 600}
-        visible
-      />
-    </div>
+    <CruiseMap
+      wsUrl={wsProxyUrl()}
+      sessionToken={session.sessionToken}
+      presenceUpdates={mapPresence}
+      realtimeErrorMessage={realtimeError}
+      onMarkerSelect={(key) => void openProfileByKey(key)}
+      avatarByKey={avatarUrlByKey}
+      additionalMarkers={spotMarkers}
+      defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
+      height={isMobile ? "calc(100vh - 340px)" : 600}
+      visible
+    />
   );
 
   const mobileMapPanel = (
-    <div style={{ background: "#000", borderTop: "1px solid rgba(255,56,74,0.35)", borderBottom: "1px solid rgba(255,56,74,0.35)" }}>
+    <div style={{ background: "#000", marginInline: -10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, padding: "8px 10px", borderBottom: "1px solid rgba(255,58,77,0.25)" }}>
+        <button
+          type="button"
+          style={buttonSecondary(false)}
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "reset" } }));
+          }}
+        >
+          GUYS
+        </button>
+        <button
+          type="button"
+          style={buttonSecondary(false)}
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "toggle_favorites" } }));
+          }}
+          aria-label="Toggle favorites only"
+        >
+          ★
+        </button>
+        <button
+          type="button"
+          style={buttonSecondary(false)}
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "open_filters" } }));
+            setMobileTab("chat");
+          }}
+        >
+          FILTER
+        </button>
+      </div>
       <CruiseMap
         wsUrl={wsProxyUrl()}
         sessionToken={session.sessionToken}
@@ -708,7 +787,7 @@ function CruiseSurface({
         avatarByKey={avatarUrlByKey}
         additionalMarkers={spotMarkers}
         defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
-        height={"calc(100dvh - 290px)"}
+        height={"calc(100dvh - 220px)"}
         visible={mobileTab === "map"}
       />
     </div>
@@ -732,16 +811,27 @@ function CruiseSurface({
       publicProfiles={publicProfiles}
       favorites={favorites}
       mediaUrlById={mediaUrlById}
+      onUnreadCountChange={onUnreadCountChange}
     />
   );
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
+    <div style={{ display: "grid", gap: 8 }}>
       {isMobile ? (
         <>
           <div style={{ display: mobileTab === "map" ? "block" : "none" }}>{mobileMapPanel}</div>
           <div style={{ display: mobileTab === "chat" ? "block" : "none" }}>{chatPanel}</div>
-          <div style={{ ...cardStyle(), position: "sticky", bottom: 72, zIndex: 3 }}>
+          <div
+            style={{
+              position: "fixed",
+              left: 10,
+              right: 10,
+              bottom: "calc(env(safe-area-inset-bottom, 0px) + 66px)",
+              zIndex: 41,
+              padding: 8,
+              background: "rgba(0,0,0,0.35)"
+            }}
+          >
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <button type="button" style={mobileTab === "map" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setMobileTab("map")}>MAP</button>
               <button type="button" style={mobileTab === "chat" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setMobileTab("chat")}>CHAT</button>
@@ -760,18 +850,33 @@ function CruiseSurface({
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 30,
+            zIndex: 80,
             background: "rgba(0,0,0,0.72)",
             display: "grid",
-            placeItems: "center",
-            padding: 14
+            placeItems: isMobile ? "stretch" : "center",
+            padding: isMobile ? 0 : 14
           }}
           role="dialog"
           aria-modal="true"
           aria-label="User profile"
           onClick={() => setSelectedProfileKey(null)}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle(), width: "min(680px, 100%)", maxHeight: "86vh", overflow: "auto" }}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={
+              isMobile
+                ? {
+                    width: "100%",
+                    height: "100dvh",
+                    overflow: "auto",
+                    background: "linear-gradient(180deg, rgba(7,8,10,0.98), rgba(2,2,4,0.98))",
+                    borderRadius: 0,
+                    border: "none",
+                    padding: "calc(env(safe-area-inset-top, 0px) + 56px) 12px calc(env(safe-area-inset-bottom, 0px) + 20px)"
+                  }
+                : { ...cardStyle(), width: "min(680px, 100%)", maxHeight: "86vh", overflow: "auto" }
+            }
+          >
             <div style={{ display: "grid", gap: 14 }}>
               <div style={{ display: "grid", gridTemplateColumns: "106px 1fr auto", gap: 12, alignItems: "center" }}>
                 <div style={{ position: "relative", width: 106, height: 106 }}>
@@ -803,6 +908,20 @@ function CruiseSurface({
                       onClick={() => void toggleFavoriteFromProfile(selectedPublicProfile.userId)}
                     >
                       {favorites.has(selectedPublicProfile.userId) ? "★ STARRED" : "☆ STAR"}
+                    </button>
+                  ) : null}
+                  {selectedPublicProfile && selectedPublicProfile.userId !== (session.userId ?? "") ? (
+                    <button
+                      type="button"
+                      style={{
+                        ...buttonSecondary(false),
+                        color: "#ffb347",
+                        borderColor: "rgba(255,179,71,0.65)",
+                        minWidth: 126
+                      }}
+                      onClick={() => void sendFireFromProfile(chatKeyFromProfileUserId(selectedPublicProfile.userId))}
+                    >
+                      🔥 FIRE
                     </button>
                   ) : null}
                   {selectedPublicProfile && selectedPublicProfile.userId !== (session.userId ?? "") ? (
@@ -1050,7 +1169,8 @@ function CruiseChat({
   discoverFilter,
   publicProfiles,
   favorites,
-  mediaUrlById
+  mediaUrlById,
+  onUnreadCountChange
 }: Readonly<{
   api: Api;
   session: Session;
@@ -1085,6 +1205,7 @@ function CruiseChat({
   }>;
   favorites: ReadonlySet<string>;
   mediaUrlById: Record<string, string>;
+  onUnreadCountChange?(count: number): void;
 }>): React.ReactElement {
   const [messagesByPeerKey, setMessagesByPeerKey] = useState<Record<string, ReadonlyArray<ChatMessage>>>({});
   const [conversationMetaByPeerKey, setConversationMetaByPeerKey] = useState<Record<string, { lastAt: number; lastText: string }>>({});
@@ -1112,10 +1233,28 @@ function CruiseChat({
   const wsHeartbeatRef = useRef<number | null>(null);
   const wsReconnectRef = useRef<number | null>(null);
   const wsFailuresRef = useRef<number>(0);
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const activeCallIdRef = useRef<string | null>(null);
   const activeCallPeerRef = useRef<string | null>(null);
   const [remoteVideoStream, setRemoteVideoStream] = useState<MediaStream | null>(null);
+  const [favoritesOnly, setFavoritesOnly] = useState<boolean>(discoverFilter === "favorites");
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
+  const [onlineStatusFilter, setOnlineStatusFilter] = useState<"all" | "online" | "offline">(
+    discoverFilter === "online" ? "online" : "all"
+  );
+  const [hasPicturesOnly, setHasPicturesOnly] = useState<boolean>(false);
+  const [filterMinAge, setFilterMinAge] = useState<string>("");
+  const [filterMaxAge, setFilterMaxAge] = useState<string>("");
+  const [filterRace, setFilterRace] = useState<string>("");
+  const [filterMinHeight, setFilterMinHeight] = useState<string>("");
+  const [filterMaxHeight, setFilterMaxHeight] = useState<string>("");
+  const [filterMinWeight, setFilterMinWeight] = useState<string>("");
+  const [filterMaxWeight, setFilterMaxWeight] = useState<string>("");
+  const [filterMinCockSize, setFilterMinCockSize] = useState<string>("");
+  const [filterMaxCockSize, setFilterMaxCockSize] = useState<string>("");
+  const [filterCutStatus, setFilterCutStatus] = useState<"" | "cut" | "uncut">("");
+  const [filterPosition, setFilterPosition] = useState<"" | "top" | "bottom" | "side">("");
 
   const me = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
   const peerKey = threadPeerKey ?? selectedPeerKey ?? "";
@@ -1137,33 +1276,77 @@ function CruiseChat({
     return next;
   }, [peerProfileByKey, publicProfiles]);
 
+  const baseCards = useMemo(
+    () =>
+      publicProfiles
+        .filter((p) => p.userId !== (session.userId ?? ""))
+        .map((p) => {
+          const key = chatKeyFromProfileUserId(p.userId);
+          const online = onlinePeerByKey.get(key);
+          return {
+            key,
+            userId: p.userId,
+            displayName: p.displayName,
+            age: p.age,
+            stats: p.stats,
+            meters: online && selfCoords ? Math.round(distanceMeters(selfCoords, { lat: online.lat, lng: online.lng })) : null,
+            isOnline: Boolean(online),
+            hasPicture: typeof p.mainPhotoMediaId === "string" && p.mainPhotoMediaId.trim().length > 0,
+            avatarUrl: p.mainPhotoMediaId ? mediaUrlById[p.mainPhotoMediaId] : undefined
+          };
+        }),
+    [mediaUrlById, onlinePeerByKey, publicProfiles, selfCoords, session.userId]
+  );
+
   const gridCards = useMemo(() => {
-    if (discoverFilter === "online") {
-      return onlinePeers.map((p) => ({
-        key: p.key,
-        displayName: displayNameByKey[p.key] ?? p.key,
-        age: peerProfileByKey[p.key]?.age,
-        meters: selfCoords ? Math.round(distanceMeters(selfCoords, { lat: p.lat, lng: p.lng })) : null,
-        isOnline: true,
-        avatarUrl: undefined as string | undefined
-      }));
-    }
-    return publicProfiles
-      .filter((p) => p.userId !== (session.userId ?? ""))
-      .filter((p) => (discoverFilter === "favorites" ? favorites.has(p.userId) : true))
-      .map((p) => {
-        const key = chatKeyFromProfileUserId(p.userId);
-        const online = onlinePeerByKey.get(key);
-        return {
-          key,
-          displayName: p.displayName,
-          age: p.age,
-          meters: online && selfCoords ? Math.round(distanceMeters(selfCoords, { lat: online.lat, lng: online.lng })) : null,
-          isOnline: Boolean(online),
-          avatarUrl: p.mainPhotoMediaId ? mediaUrlById[p.mainPhotoMediaId] : undefined
-        };
-      });
-  }, [discoverFilter, displayNameByKey, favorites, mediaUrlById, onlinePeerByKey, onlinePeers, peerProfileByKey, publicProfiles, selfCoords, session.userId]);
+    const minAge = filterMinAge.trim() ? Number(filterMinAge) : undefined;
+    const maxAge = filterMaxAge.trim() ? Number(filterMaxAge) : undefined;
+    const minHeight = filterMinHeight.trim() ? Number(filterMinHeight) : undefined;
+    const maxHeight = filterMaxHeight.trim() ? Number(filterMaxHeight) : undefined;
+    const minWeight = filterMinWeight.trim() ? Number(filterMinWeight) : undefined;
+    const maxWeight = filterMaxWeight.trim() ? Number(filterMaxWeight) : undefined;
+    const minCock = filterMinCockSize.trim() ? Number(filterMinCockSize) : undefined;
+    const maxCock = filterMaxCockSize.trim() ? Number(filterMaxCockSize) : undefined;
+
+    return baseCards.filter((p) => {
+      if (favoritesOnly && !favorites.has(p.userId)) return false;
+      if (onlineStatusFilter === "online" && !p.isOnline) return false;
+      if (onlineStatusFilter === "offline" && p.isOnline) return false;
+      if (hasPicturesOnly && !p.hasPicture) return false;
+      if (Number.isFinite(minAge) && (typeof p.age !== "number" || p.age < (minAge as number))) return false;
+      if (Number.isFinite(maxAge) && (typeof p.age !== "number" || p.age > (maxAge as number))) return false;
+
+      const race = typeof p.stats?.race === "string" ? p.stats.race : "";
+      if (filterRace.trim() && race.toLowerCase() !== filterRace.trim().toLowerCase()) return false;
+
+      if (Number.isFinite(minHeight) && (typeof p.stats?.heightInches !== "number" || p.stats.heightInches < (minHeight as number))) return false;
+      if (Number.isFinite(maxHeight) && (typeof p.stats?.heightInches !== "number" || p.stats.heightInches > (maxHeight as number))) return false;
+      if (Number.isFinite(minWeight) && (typeof p.stats?.weightLbs !== "number" || p.stats.weightLbs < (minWeight as number))) return false;
+      if (Number.isFinite(maxWeight) && (typeof p.stats?.weightLbs !== "number" || p.stats.weightLbs > (maxWeight as number))) return false;
+      if (Number.isFinite(minCock) && (typeof p.stats?.cockSizeInches !== "number" || p.stats.cockSizeInches < (minCock as number))) return false;
+      if (Number.isFinite(maxCock) && (typeof p.stats?.cockSizeInches !== "number" || p.stats.cockSizeInches > (maxCock as number))) return false;
+      if (filterCutStatus && p.stats?.cutStatus !== filterCutStatus) return false;
+      if (filterPosition && p.stats?.position !== filterPosition) return false;
+      return true;
+    });
+  }, [
+    baseCards,
+    favorites,
+    favoritesOnly,
+    filterCutStatus,
+    filterMaxAge,
+    filterMaxCockSize,
+    filterMaxHeight,
+    filterMaxWeight,
+    filterMinAge,
+    filterMinCockSize,
+    filterMinHeight,
+    filterMinWeight,
+    filterPosition,
+    filterRace,
+    hasPicturesOnly,
+    onlineStatusFilter
+  ]);
   const unreadCandidateKeys = useMemo(
     () => Array.from(new Set(gridCards.map((c) => c.key).filter((k) => k.trim().length > 0))).slice(0, 8),
     [gridCards]
@@ -1174,6 +1357,10 @@ function CruiseChat({
     if (peerKey.trim()) keys.add(peerKey);
     return Array.from(keys).sort((a, b) => (conversationMetaByPeerKey[b]?.lastAt ?? 0) - (conversationMetaByPeerKey[a]?.lastAt ?? 0));
   }, [conversationMetaByPeerKey, peerKey]);
+  const unreadTotal = useMemo(
+    () => Object.values(unreadByPeerKey).reduce((sum, count) => sum + (Number.isFinite(count) ? count : 0), 0),
+    [unreadByPeerKey]
+  );
   const activePeerLabel = useMemo(
     () => (peerKey ? displayNameByKey[peerKey] ?? peerProfileByKey[peerKey]?.displayName ?? peerKey : ""),
     [displayNameByKey, peerKey, peerProfileByKey]
@@ -1193,6 +1380,10 @@ function CruiseChat({
         })),
     [conversationKeys, conversationMetaByPeerKey, displayNameByKey, me, peerKey, peerProfileByKey]
   );
+
+  useEffect(() => {
+    if (typeof onUnreadCountChange === "function") onUnreadCountChange(unreadTotal);
+  }, [onUnreadCountChange, unreadTotal]);
 
   useEffect(() => {
     const video = localVideoRef.current;
@@ -1272,11 +1463,39 @@ function CruiseChat({
   );
 
   function messagePreview(message: ChatMessage): string {
-    if (message.text && message.text.trim()) return message.text;
+    if (message.text && message.text.trim()) return displayMessageText(message.text);
     if (message.media?.kind === "image") return "[Photo]";
     if (message.media?.kind === "video") return "[Video]";
     if (message.media?.kind === "audio") return "[Voice]";
     return "";
+  }
+
+  function markMessageSeen(messageId: string): boolean {
+    if (!messageId) return false;
+    if (seenMessageIdsRef.current.has(messageId)) return false;
+    seenMessageIdsRef.current.add(messageId);
+    if (seenMessageIdsRef.current.size > 5000) {
+      const keep = Array.from(seenMessageIdsRef.current).slice(-2500);
+      seenMessageIdsRef.current = new Set(keep);
+    }
+    return true;
+  }
+
+  function notifyIncoming(message: ChatMessage, otherKey: string): void {
+    const peerLabel = displayNameByKey[otherKey] ?? peerProfileByKey[otherKey]?.displayName ?? otherKey;
+    const body = messagePreview(message) || "New activity";
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "granted") {
+      try {
+        void new Notification(`${peerLabel}`, { body });
+      } catch {
+        // best effort
+      }
+      return;
+    }
+    if (Notification.permission === "default") {
+      void Notification.requestPermission();
+    }
   }
 
   function parseGroupInviteRequest(text: string): { inviteId: string; inviterKey: string; primaryPeerKey: string } | null {
@@ -1294,6 +1513,7 @@ function CruiseChat({
   }
 
   function upsertIncomingMessage(message: ChatMessage): void {
+    if (!markMessageSeen(message.messageId)) return;
     const other = message.fromKey === me ? message.toKey : message.fromKey;
     setMessagesByPeerKey((prev) => {
       const list = prev[other] ?? [];
@@ -1316,6 +1536,7 @@ function CruiseChat({
       } else {
         setUnreadByPeerKey((prev) => ({ ...prev, [other]: (prev[other] ?? 0) + 1 }));
       }
+      notifyIncoming(message, other);
     }
     const request = parseGroupInviteRequest(message.text ?? "");
     if (request && message.toKey === me) {
@@ -1803,6 +2024,47 @@ function CruiseChat({
     setView("thread");
   }
 
+  function clearGridFilters(): void {
+    setFavoritesOnly(false);
+    setOnlineStatusFilter("all");
+    setHasPicturesOnly(false);
+    setFilterMinAge("");
+    setFilterMaxAge("");
+    setFilterRace("");
+    setFilterMinHeight("");
+    setFilterMaxHeight("");
+    setFilterMinWeight("");
+    setFilterMaxWeight("");
+    setFilterMinCockSize("");
+    setFilterMaxCockSize("");
+    setFilterCutStatus("");
+    setFilterPosition("");
+    setFiltersOpen(false);
+  }
+
+  useEffect(() => {
+    const onDiscoverControl = (evt: Event): void => {
+      const custom = evt as CustomEvent<{ action?: string }>;
+      const action = custom.detail?.action;
+      if (action === "reset") {
+        clearGridFilters();
+        setView("grid");
+        return;
+      }
+      if (action === "toggle_favorites") {
+        setFavoritesOnly((v) => !v);
+        setView("grid");
+        return;
+      }
+      if (action === "open_filters") {
+        setFiltersOpen(true);
+        setView("grid");
+      }
+    };
+    window.addEventListener("rd:discover-control", onDiscoverControl as EventListener);
+    return () => window.removeEventListener("rd:discover-control", onDiscoverControl as EventListener);
+  }, []);
+
   useEffect(() => {
     if (!openThreadRequest) return;
     if (openThreadRequest.nonce === lastThreadRequestNonceRef.current) return;
@@ -1811,10 +2073,22 @@ function CruiseChat({
     if (typeof onThreadRequestConsumed === "function") onThreadRequestConsumed();
   }, [onThreadRequestConsumed, openThreadRequest]);
 
+  useEffect(() => {
+    const onTabSelect = (evt: Event): void => {
+      const custom = evt as CustomEvent<{ tab?: TopTab }>;
+      if (custom.detail?.tab !== "discover") return;
+      setView("grid");
+      setThreadPeerKey(null);
+      setFiltersOpen(false);
+    };
+    window.addEventListener("rd:tab-select", onTabSelect as EventListener);
+    return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
+  }, []);
+
   if (view === "thread" && peerKey.trim()) {
     const peerLabel = displayNameByKey[peerKey] ?? peerProfileByKey[peerKey]?.displayName ?? peerKey;
     return (
-      <div style={{ display: "grid", gap: 10, marginInline: isMobile ? -10 : 0 }}>
+      <div style={{ display: "grid", gap: 0, marginInline: isMobile ? -10 : 0 }}>
         {pendingInviteNotifs.length > 0 ? (
           <div style={{ ...cardStyle(), display: "grid", gap: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 700 }}>INVITE REQUESTS</div>
@@ -1834,24 +2108,25 @@ function CruiseChat({
           </div>
         ) : null}
         {groupStatus ? <div style={{ color: "#26d5ff", fontSize: 12 }}>{groupStatus}</div> : null}
-        <div style={isMobile ? { minHeight: "calc(100dvh - 410px)", overflow: "auto" } : undefined}>
-          <ChatWindow
-            chatKind={channelToChatKind(channel)}
-            peerKey={peerKey}
-            currentUserKey={me}
-            messages={messages}
-            client={client}
-            title={`INSTANT THREAD: ${peerLabel}`}
-            peerSummary={{ displayName: peerLabel, avatarUrl: activePeerAvatarUrl }}
-            thirdParty={{
-              candidates: spokenThirdCandidates,
-              selectedKey: thirdCandidateKey,
-              onSelect: (key) => setThirdCandidateKey(key),
-              onAdd: () => void addThirdMember(),
-              disabled: busy
-            }}
-          />
-        </div>
+        <ChatWindow
+          chatKind={channelToChatKind(channel)}
+          peerKey={peerKey}
+          currentUserKey={me}
+          messages={messages}
+          client={client}
+          title={`INSTANT THREAD: ${peerLabel}`}
+          peerSummary={{ displayName: peerLabel, avatarUrl: activePeerAvatarUrl }}
+          thirdParty={{
+            candidates: spokenThirdCandidates,
+            selectedKey: thirdCandidateKey,
+            onSelect: (key) => setThirdCandidateKey(key),
+            onAdd: () => void addThirdMember(),
+            disabled: busy
+          }}
+          showHeader={false}
+          edgeToEdge={isMobile}
+          fillHeight={isMobile}
+        />
         {videoCallOpen ? (
           <div
             role="dialog"
@@ -1884,7 +2159,7 @@ function CruiseChat({
   }
 
   return (
-    <div style={{ display: "grid", gap: 12, marginInline: isMobile ? -10 : 0 }}>
+    <div style={{ display: "grid", gap: 0, marginInline: isMobile ? -10 : 0 }}>
       {pendingInviteNotifs.length > 0 ? (
         <div style={{ ...cardStyle(), display: "grid", gap: 8 }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>INVITE REQUESTS</div>
@@ -1904,14 +2179,91 @@ function CruiseChat({
         </div>
       ) : null}
       {groupStatus ? <div style={{ color: "#26d5ff", fontSize: 12 }}>{groupStatus}</div> : null}
-      <div style={cardStyle()}>
-        <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>GRID</div>
-          <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(92px, 1fr))" }}>
-            {gridCards.length === 0 ? (
-              <div style={{ color: "#b9bec9", fontSize: 13 }}>
-                {discoverFilter === "favorites" ? "No starred favorites yet." : discoverFilter === "online" ? "No other users online yet." : "No profiles available yet."}
+      <div style={{ padding: 10, borderBottom: "1px solid rgba(255,58,77,0.28)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8 }}>
+          <button type="button" style={buttonSecondary(false)} onClick={clearGridFilters}>
+            GUYS
+          </button>
+          <button
+            type="button"
+            style={favoritesOnly ? buttonPrimary(false) : buttonSecondary(false)}
+            onClick={() => setFavoritesOnly((v) => !v)}
+            aria-label="Toggle favorites only"
+          >
+            ★
+          </button>
+          <button type="button" style={buttonSecondary(false)} onClick={() => setFiltersOpen(true)}>
+            FILTER
+          </button>
+        </div>
+      </div>
+      {filtersOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 40,
+            background: "rgba(0,0,0,0.72)",
+            display: "grid",
+            placeItems: "center",
+            padding: 14
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Discover filters"
+          onClick={() => setFiltersOpen(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle(), width: "min(760px, 100%)", maxHeight: "86vh", overflow: "auto" }}>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>FILTER USERS</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={hasPicturesOnly} onChange={(e) => setHasPicturesOnly(e.target.checked)} />
+                  Has pictures
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span className="rd-label">Online status</span>
+                  <select style={fieldStyle()} value={onlineStatusFilter} onChange={(e) => setOnlineStatusFilter(e.target.value as "all" | "online" | "offline")}>
+                    <option value="all">All</option>
+                    <option value="online">Online</option>
+                    <option value="offline">Offline</option>
+                  </select>
+                </label>
               </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                <input style={fieldStyle()} placeholder="Min age" value={filterMinAge} onChange={(e) => setFilterMinAge(e.target.value)} />
+                <input style={fieldStyle()} placeholder="Max age" value={filterMaxAge} onChange={(e) => setFilterMaxAge(e.target.value)} />
+                <input style={fieldStyle()} placeholder="Race" value={filterRace} onChange={(e) => setFilterRace(e.target.value)} />
+                <select style={fieldStyle()} value={filterCutStatus} onChange={(e) => setFilterCutStatus(e.target.value as "" | "cut" | "uncut")}>
+                  <option value="">Cut / Uncut</option>
+                  <option value="cut">Cut</option>
+                  <option value="uncut">Uncut</option>
+                </select>
+                <input style={fieldStyle()} placeholder="Min height (in)" value={filterMinHeight} onChange={(e) => setFilterMinHeight(e.target.value)} />
+                <input style={fieldStyle()} placeholder="Max height (in)" value={filterMaxHeight} onChange={(e) => setFilterMaxHeight(e.target.value)} />
+                <input style={fieldStyle()} placeholder="Min weight (lbs)" value={filterMinWeight} onChange={(e) => setFilterMinWeight(e.target.value)} />
+                <input style={fieldStyle()} placeholder="Max weight (lbs)" value={filterMaxWeight} onChange={(e) => setFilterMaxWeight(e.target.value)} />
+                <input style={fieldStyle()} placeholder="Min cock size (in)" value={filterMinCockSize} onChange={(e) => setFilterMinCockSize(e.target.value)} />
+                <input style={fieldStyle()} placeholder="Max cock size (in)" value={filterMaxCockSize} onChange={(e) => setFilterMaxCockSize(e.target.value)} />
+                <select style={fieldStyle()} value={filterPosition} onChange={(e) => setFilterPosition(e.target.value as "" | "top" | "bottom" | "side")}>
+                  <option value="">Position</option>
+                  <option value="top">Top</option>
+                  <option value="bottom">Bottom</option>
+                  <option value="side">Side</option>
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <button type="button" style={buttonSecondary(false)} onClick={clearGridFilters}>RESET</button>
+                <button type="button" style={buttonPrimary(false)} onClick={() => setFiltersOpen(false)}>DONE</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <div style={{ display: "grid", gap: 0 }}>
+          <div style={{ display: "grid", gap: 0, gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+            {gridCards.length === 0 ? (
+              <div style={{ color: "#b9bec9", fontSize: 13, padding: 12, gridColumn: "1 / -1" }}>No users match current filters.</div>
             ) : (
               gridCards.map((p) => (
                 <button
@@ -1920,11 +2272,11 @@ function CruiseChat({
                   onClick={() => onOpenProfile(p.key)}
                   style={{
                     background: "rgba(0,0,0,0.5)",
-                    border: "2px solid rgba(255,58,77,0.72)",
-                    borderRadius: 4,
-                    padding: 4,
+                    border: "1px solid rgba(255,58,77,0.35)",
+                    borderRadius: 0,
+                    padding: 0,
                     display: "grid",
-                    gap: 4,
+                    gap: 0,
                     color: "#fff",
                     cursor: "pointer"
                   }}
@@ -1933,60 +2285,14 @@ function CruiseChat({
                     <img
                       src={p.avatarUrl ?? avatarForKey(p.key)}
                       alt="User avatar"
-                      style={{ width: "100%", height: "100%", borderRadius: 2, objectFit: "cover", border: "1px solid #0fd9ff" }}
+                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
                     />
                     {p.isOnline ? <span style={{ position: "absolute", top: 4, left: 4, width: 10, height: 10, borderRadius: "50%", background: "#26d5ff", border: "2px solid #000" }} /> : null}
-                    {unreadByPeerKey[p.key] ? (
-                      <span
-                        style={{
-                          position: "absolute",
-                          top: 4,
-                          right: 4,
-                          minWidth: 18,
-                          height: 18,
-                          borderRadius: 999,
-                          background: "#26d5ff",
-                          color: "#001018",
-                          border: "1px solid #000",
-                          fontSize: 10,
-                          fontWeight: 700,
-                          display: "grid",
-                          placeItems: "center",
-                          paddingInline: 4
-                        }}
-                        aria-label={`${unreadByPeerKey[p.key]} unread messages`}
-                        title={`${unreadByPeerKey[p.key]} unread`}
-                      >
-                        {unreadByPeerKey[p.key]}
-                      </span>
-                    ) : null}
                   </div>
-                  <div style={{ fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {p.displayName}
-                    {typeof p.age === "number" ? ` / ${p.age}` : ""}
-                  </div>
-                  <div style={{ fontSize: 9, color: "#9fb6bf" }}>
-                    {typeof p.meters === "number" ? `${p.meters}m` : p.isOnline ? "online" : "offline"}
-                  </div>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenProfile(p.key);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") onOpenProfile(p.key);
-                    }}
-                    style={{ color: "#26d5ff", fontSize: 9 }}
-                  >
-                    PROFILE
-                  </span>
                 </button>
               ))
             )}
           </div>
-        </div>
       </div>
     </div>
   );
@@ -2356,9 +2662,14 @@ function ThreadsPanel({
   onThreadRequestConsumed?: () => void;
   isMobile: boolean;
 }>): React.ReactElement {
-  const [rows, setRows] = useState<ReadonlyArray<{ key: string; displayName: string; preview: string; at: number }>>([]);
+  const [rows, setRows] = useState<ReadonlyArray<{ key: string; displayName: string; preview: string; at: number; avatarUrl?: string }>>(
+    []
+  );
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
   const [messages, setMessages] = useState<ReadonlyArray<ChatMessage>>([]);
+  const [threadView, setThreadView] = useState<"messages" | "profile">("messages");
+  const [threadProfile, setThreadProfile] = useState<UserProfile | null>(null);
+  const [threadProfileLoading, setThreadProfileLoading] = useState<boolean>(false);
   const [thirdCandidateKey, setThirdCandidateKey] = useState<string>("");
   const [thirdMemberKey, setThirdMemberKey] = useState<string | null>(null);
   const [pendingSentInvites, setPendingSentInvites] = useState<Record<string, { candidateKey: string }>>({});
@@ -2388,8 +2699,12 @@ function ThreadsPanel({
         const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
         const [profilesRes, presenceRes] = await Promise.all([api.getPublicProfiles(), api.listActivePresence(session.sessionToken)]);
         const nameByKey: Record<string, string> = {};
+        const photoMediaIdByKey: Record<string, string> = {};
         for (const p of profilesRes.profiles) {
           nameByKey[chatKeyFromProfileUserId(p.userId)] = p.displayName;
+          if (typeof p.mainPhotoMediaId === "string" && p.mainPhotoMediaId.trim() !== "") {
+            photoMediaIdByKey[chatKeyFromProfileUserId(p.userId)] = p.mainPhotoMediaId;
+          }
         }
         const candidateKeys = Array.from(
           new Set<string>(
@@ -2399,7 +2714,7 @@ function ThreadsPanel({
             ].filter((k) => k && k !== meKey)
           )
         ).slice(0, 24);
-        const next: Array<{ key: string; displayName: string; preview: string; at: number }> = [];
+        const next: Array<{ key: string; displayName: string; preview: string; at: number; avatarUrl?: string }> = [];
         for (const key of candidateKeys) {
           try {
             const res = await api.listChat(session.sessionToken, "cruise", key);
@@ -2408,7 +2723,7 @@ function ThreadsPanel({
             const last = list[list.length - 1];
             const preview =
               typeof last.text === "string" && last.text.trim().length > 0
-                ? last.text
+                ? displayMessageText(last.text)
                 : last.media?.kind === "image"
                   ? "[Photo]"
                   : last.media?.kind === "video"
@@ -2425,6 +2740,26 @@ function ThreadsPanel({
           } catch {
             // ignore per-peer failures
           }
+        }
+        const mediaRows = await Promise.all(
+          next.map(async (row) => {
+            const mediaId = photoMediaIdByKey[row.key];
+            if (!mediaId) return null;
+            try {
+              const res = await api.getPublicMediaUrl(mediaId);
+              return { key: row.key, url: res.downloadUrl };
+            } catch {
+              return null;
+            }
+          })
+        );
+        const mediaByKey: Record<string, string> = {};
+        for (const media of mediaRows) {
+          if (!media) continue;
+          mediaByKey[media.key] = media.url;
+        }
+        for (const row of next) {
+          row.avatarUrl = mediaByKey[row.key];
         }
         if (cancelled) return;
         next.sort((a, b) => b.at - a.at);
@@ -2447,8 +2782,48 @@ function ThreadsPanel({
   useEffect(() => {
     if (!openThreadRequest?.key) return;
     setSelectedPeerKey(normalizePeerKey(openThreadRequest.key));
+    setThreadView("messages");
     if (typeof onThreadRequestConsumed === "function") onThreadRequestConsumed();
   }, [onThreadRequestConsumed, openThreadRequest]);
+
+  useEffect(() => {
+    const onTabSelect = (evt: Event): void => {
+      const custom = evt as CustomEvent<{ tab?: TopTab }>;
+      if (custom.detail?.tab !== "threads") return;
+      setSelectedPeerKey(null);
+      setThreadView("messages");
+    };
+    window.addEventListener("rd:tab-select", onTabSelect as EventListener);
+    return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPeerKey || threadView !== "profile") return;
+    const profileId = profileIdFromPresenceKey(selectedPeerKey);
+    if (!profileId) {
+      setThreadProfile(null);
+      return;
+    }
+    let cancelled = false;
+    setThreadProfileLoading(true);
+    void api
+      .getPublicProfile(profileId)
+      .then((res) => {
+        if (!cancelled) setThreadProfile(res.profile);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setThreadProfile(null);
+          setLastError(normalizeErrorMessage(e));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setThreadProfileLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, selectedPeerKey, setLastError, threadView]);
 
   useEffect(() => {
     if (!selectedPeerKey) {
@@ -2552,76 +2927,139 @@ function ThreadsPanel({
     }
   }
 
+  async function sendFireToSelectedPeer(): Promise<void> {
+    if (!selectedPeerKey) return;
+    try {
+      await api.sendChat(session.sessionToken, "cruise", selectedPeerKey, FIRE_SIGNAL_TEXT);
+      setGroupStatus("Fire sent.");
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
+  }
+
   if (selectedPeerKey) {
     const peerLabel = activeRow?.displayName ?? selectedPeerKey;
     return (
       <div
         style={{
           display: "grid",
-          gap: 10,
+          gap: 0,
           minHeight: isMobile ? "calc(100dvh - 150px)" : undefined,
-          marginInline: isMobile ? -10 : 0
+          marginInline: isMobile ? -10 : 0,
+          marginBlock: 0
         }}
       >
-        <div style={{ ...cardStyle(), display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>INSTANT MESSAGE</div>
-          <button type="button" style={buttonSecondary(false)} onClick={() => setSelectedPeerKey(null)}>
-            BACK TO THREADS
+        <div style={{ position: "sticky", top: 0, zIndex: 46, background: "rgba(8,8,12,0.96)", borderBottom: "1px solid rgba(255,58,77,0.35)", padding: "6px 10px", display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={() => setThreadView((prev) => (prev === "messages" ? "profile" : "messages"))}
+            style={{ background: "transparent", border: 0, color: "#26d5ff", fontSize: 13, fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase", padding: 0, cursor: "pointer" }}
+          >
+            {threadView === "messages" ? "View Profile" : "Back to Thread"}
           </button>
         </div>
-        <ChatWindow
-          chatKind={"cruise"}
-          peerKey={selectedPeerKey}
-          currentUserKey={meKey}
-          messages={messages}
-          client={client}
-          title={`INSTANT THREAD: ${peerLabel}`}
-          peerSummary={{ displayName: peerLabel }}
-          thirdParty={{
-            candidates: thirdCandidates,
-            selectedKey: thirdCandidateKey,
-            onSelect: (key) => setThirdCandidateKey(key),
-            onAdd: () => void sendThirdInvite(),
-            disabled: false
-          }}
-        />
+        {threadView === "messages" ? (
+          <ChatWindow
+            chatKind={"cruise"}
+            peerKey={selectedPeerKey}
+            currentUserKey={meKey}
+            messages={messages}
+            client={client}
+            title={`INSTANT THREAD: ${peerLabel}`}
+            peerSummary={{ displayName: peerLabel }}
+            thirdParty={{
+              candidates: thirdCandidates,
+              selectedKey: thirdCandidateKey,
+              onSelect: (key) => setThirdCandidateKey(key),
+              onAdd: () => void sendThirdInvite(),
+              disabled: false
+            }}
+            showHeader={false}
+            edgeToEdge={true}
+            fillHeight={isMobile}
+          />
+        ) : (
+          <div style={{ padding: 12, display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "88px 1fr", gap: 12, alignItems: "center" }}>
+              <img
+                src={activeRow?.avatarUrl ?? avatarForKey(selectedPeerKey)}
+                alt="Profile avatar"
+                style={{ width: 88, height: 88, borderRadius: "50%", objectFit: "cover", border: "2px solid #ff3047" }}
+              />
+              <div style={{ display: "grid", gap: 4 }}>
+                <div style={{ fontSize: 24, fontWeight: 700 }}>{threadProfile?.displayName ?? peerLabel}</div>
+                <div style={{ color: "#26d5ff", fontSize: 14 }}>Instant Messaging Available</div>
+              </div>
+            </div>
+            {threadProfileLoading ? <div style={{ color: "#9fb6bf", fontSize: 14 }}>Loading profile...</div> : null}
+            {!threadProfileLoading ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ color: "#ced3dc", fontSize: 14, lineHeight: 1.5 }}>
+                  <div>Age: {threadProfile?.age ?? "-"}</div>
+                  <div>Race: {threadProfile?.stats?.race ?? "-"}</div>
+                  <div>Height: {threadProfile?.stats?.heightInches ?? "-"}</div>
+                  <div>Weight: {threadProfile?.stats?.weightLbs ?? "-"}</div>
+                  <div>Cock Size: {threadProfile?.stats?.cockSizeInches ?? "-"}</div>
+                  <div>Cut / Uncut: {threadProfile?.stats?.cutStatus ?? "-"}</div>
+                  <div>Position: {threadProfile?.stats?.position ?? "-"}</div>
+                  <div style={{ marginTop: 8 }}>Bio: {threadProfile?.bio ?? "-"}</div>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    style={{ ...buttonSecondary(false), color: "#ffb347", borderColor: "rgba(255,179,71,0.65)" }}
+                    onClick={() => void sendFireToSelectedPeer()}
+                  >
+                    🔥 FIRE
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div style={cardStyle()}>
-        <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>THREADS</div>
-          <div style={{ display: "grid", gap: 8 }}>
-            {rows.length === 0 ? (
-              <div style={{ color: "#b9bec9", fontSize: 14 }}>No conversations yet.</div>
-            ) : (
-              rows.map((row) => (
-                <button
-                  key={row.key}
-                  type="button"
-                  onClick={() => setSelectedPeerKey(row.key)}
-                  style={{
-                    border: "1px solid rgba(255,58,77,0.38)",
-                    borderRadius: 12,
-                    padding: 10,
-                    background: "rgba(0,0,0,0.35)",
-                    textAlign: "left",
-                    color: "#fff",
-                    cursor: "pointer"
-                  }}
-                >
-                  <div style={{ fontWeight: 700 }}>{row.displayName}</div>
-                  <div style={{ color: "#b9bec9", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.preview}</div>
-                </button>
-              ))
-            )}
-          </div>
-          {groupStatus ? <div style={{ color: "#26d5ff", fontSize: 12 }}>{groupStatus}</div> : null}
-        </div>
-      </div>
+    <div style={{ display: "grid", gap: 0, marginInline: isMobile ? -10 : 0, marginBlock: 0 }}>
+      {rows.length === 0 ? (
+        <div style={{ color: "#b9bec9", fontSize: 14, padding: 14 }}>No conversations yet.</div>
+      ) : (
+        rows.map((row) => (
+          <button
+            key={row.key}
+            type="button"
+            onClick={() => setSelectedPeerKey(row.key)}
+            style={{
+              border: 0,
+              borderBottom: "1px solid rgba(255,58,77,0.24)",
+              borderRadius: 0,
+              padding: "10px 12px",
+              background: "rgba(0,0,0,0.2)",
+              textAlign: "left",
+              color: "#fff",
+              cursor: "pointer",
+              display: "grid",
+              gridTemplateColumns: "52px 1fr",
+              gap: 10,
+              alignItems: "center",
+              width: "100%"
+            }}
+          >
+            <img
+              src={row.avatarUrl ?? avatarForKey(row.key)}
+              alt={`${row.displayName} avatar`}
+              style={{ width: 52, height: 52, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(38,213,255,0.9)" }}
+            />
+            <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+              <div style={{ fontWeight: 700 }}>{row.displayName}</div>
+              <div style={{ color: "#b9bec9", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.preview}</div>
+            </div>
+          </button>
+        ))
+      )}
+      {groupStatus ? <div style={{ color: "#26d5ff", fontSize: 12, padding: 10 }}>{groupStatus}</div> : null}
     </div>
   );
 }
@@ -2651,7 +3089,9 @@ function PublicPostings({
   const [eventInvites, setEventInvites] = useState<ReadonlyArray<PublicPosting>>([]);
   const [inviteTargetByEventId, setInviteTargetByEventId] = useState<Record<string, string>>({});
 
-  const canPost = session.userType !== "guest";
+  const canPostAds = true;
+  const canPostEvents = session.userType !== "guest";
+  const canCreateSpots = true;
 
   async function refresh(): Promise<void> {
     try {
@@ -2661,8 +3101,9 @@ function PublicPostings({
         api.listCruisingSpots(),
         session.userType === "guest" ? Promise.resolve({ postings: [] as ReadonlyArray<PublicPosting> }) : api.listEventInvites(session.sessionToken)
       ]);
-      setAds(adsRes.postings);
-      setEvents(eventsRes.postings);
+      // Public postings should render oldest -> newest so new posts land at the bottom.
+      setAds([...adsRes.postings].sort((a, b) => a.createdAtMs - b.createdAtMs));
+      setEvents([...eventsRes.postings].sort((a, b) => a.createdAtMs - b.createdAtMs));
       setSpots(spotsRes.spots);
       setEventInvites(invitesRes.postings);
     } catch (e) {
@@ -2674,9 +3115,19 @@ function PublicPostings({
     void refresh();
   }, []);
 
+  useEffect(() => {
+    const onTabSelect = (evt: Event): void => {
+      const custom = evt as CustomEvent<{ tab?: TopTab }>;
+      if (custom.detail?.tab !== "public") return;
+      setMobileTab("ads");
+    };
+    window.addEventListener("rd:tab-select", onTabSelect as EventListener);
+    return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
+  }, []);
+
   async function submit(type: "ad" | "event"): Promise<void> {
-    if (!canPost) {
-      setLastError("Anonymous users cannot create public postings.");
+    if (type === "event" && !canPostEvents) {
+      setLastError("Anonymous users cannot create event postings.");
       return;
     }
     const title = type === "ad" ? adTitle : eventTitle;
@@ -2697,7 +3148,7 @@ function PublicPostings({
   }
 
   async function inviteToEvent(postingId: string): Promise<void> {
-    if (!canPost) {
+    if (!canPostEvents) {
       setLastError("Anonymous users cannot invite to events.");
       return;
     }
@@ -2729,10 +3180,6 @@ function PublicPostings({
   }
 
   async function createSpot(): Promise<void> {
-    if (!canPost) {
-      setLastError("Anonymous users cannot create permanent cruising spots.");
-      return;
-    }
     try {
       await api.createCruisingSpot(session.sessionToken, { name: spotName, address: spotAddress, description: spotDescription });
       setSpotName("");
@@ -2761,24 +3208,25 @@ function PublicPostings({
     const setTitle = kind === "ads" ? setAdTitle : setEventTitle;
     const setBody = kind === "ads" ? setAdBody : setEventBody;
     const submitKind = kind === "ads" ? "ad" : "event";
+    const canPostThis = kind === "ads" ? canPostAds : canPostEvents;
 
     return (
-      <div style={cardStyle()}>
+      <div style={{ border: "1px solid rgba(255,58,77,0.38)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.2)" }}>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>{title}</div>
-          <input value={draftTitle} onChange={(e) => setTitle(e.target.value)} placeholder={`${title} title`} style={fieldStyle()} aria-label={`${title} title`} disabled={!canPost} />
-          <textarea value={draftBody} onChange={(e) => setBody(e.target.value)} placeholder={`Write ${title.toLowerCase()} details`} style={{ ...fieldStyle(), minHeight: 86, resize: "vertical" }} aria-label={`${title} details`} disabled={!canPost} />
-          <button type="button" onClick={() => void submit(submitKind)} style={canPost ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPost}>
+          <input value={draftTitle} onChange={(e) => setTitle(e.target.value)} placeholder={`${title} title`} style={fieldStyle()} aria-label={`${title} title`} disabled={!canPostThis} />
+          <textarea value={draftBody} onChange={(e) => setBody(e.target.value)} placeholder={`Write ${title.toLowerCase()} details`} style={{ ...fieldStyle(), minHeight: 86, resize: "vertical" }} aria-label={`${title} details`} disabled={!canPostThis} />
+          <button type="button" onClick={() => void submit(submitKind)} style={canPostThis ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPostThis}>
             POST {title}
           </button>
-          {!canPost ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view postings but cannot post.</div> : null}
+          {!canPostThis ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view events but cannot post events.</div> : null}
 
           <div style={{ display: "grid", gap: 8, marginTop: 6 }}>
             {list.length === 0 ? (
               <div style={{ color: "#b9bec9", fontSize: 14 }}>No {title.toLowerCase()} yet.</div>
             ) : (
               list.map((p) => (
-                <div key={p.postingId} style={{ ...cardStyle(), padding: 10, borderRadius: 14 }}>
+                <div key={p.postingId} style={{ borderTop: "1px solid rgba(255,58,77,0.25)", paddingTop: 10, paddingBottom: 10 }}>
                   <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.title}</div>
                   <div style={{ color: "#9fb6bf", fontSize: 12, marginBottom: 6 }}>Host: {p.authorUserId}</div>
                   <div style={{ color: "#ced3dc", fontSize: 14, whiteSpace: "pre-wrap" }}>{p.body}</div>
@@ -2825,7 +3273,7 @@ function PublicPostings({
   };
 
   const spotsPanel = (
-    <div style={cardStyle()}>
+    <div style={{ border: "1px solid rgba(255,58,77,0.38)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.2)" }}>
       <div style={{ display: "grid", gap: 10 }}>
         <div style={{ fontSize: 20, fontWeight: 700 }}>CRUISING SPOTS</div>
         <input
@@ -2833,32 +3281,32 @@ function PublicPostings({
           onChange={(e) => setSpotName(e.target.value)}
           placeholder="Spot name"
           style={fieldStyle()}
-          disabled={!canPost}
+          disabled={!canCreateSpots}
         />
         <input
           value={spotAddress}
           onChange={(e) => setSpotAddress(e.target.value)}
           placeholder="Spot address"
           style={fieldStyle()}
-          disabled={!canPost}
+          disabled={!canCreateSpots}
         />
         <textarea
           value={spotDescription}
           onChange={(e) => setSpotDescription(e.target.value)}
           placeholder="Spot description"
           style={{ ...fieldStyle(), minHeight: 80, resize: "vertical" }}
-          disabled={!canPost}
+          disabled={!canCreateSpots}
         />
-        <button type="button" style={canPost ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPost} onClick={() => void createSpot()}>
+        <button type="button" style={canCreateSpots ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canCreateSpots} onClick={() => void createSpot()}>
           CREATE SPOT
         </button>
-        {!canPost ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can check in but cannot create spots.</div> : null}
+        {!canCreateSpots ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can check in but cannot create spots.</div> : null}
         <div style={{ display: "grid", gap: 8 }}>
           {spots.length === 0 ? (
             <div style={{ color: "#b9bec9", fontSize: 14 }}>No cruising spots yet.</div>
           ) : (
             spots.map((spot) => (
-              <div key={spot.spotId} style={{ ...cardStyle(), padding: 10, borderRadius: 14 }}>
+              <div key={spot.spotId} style={{ borderTop: "1px solid rgba(255,58,77,0.25)", paddingTop: 10, paddingBottom: 10 }}>
                 <div style={{ fontWeight: 700 }}>{spot.name}</div>
                 <div style={{ color: "#9fb6bf", fontSize: 12, marginTop: 4 }}>Created by: {spot.creatorUserId}</div>
                 <div style={{ color: "#9fb6bf", fontSize: 12, marginTop: 2 }}>{spot.address}</div>
@@ -2879,17 +3327,14 @@ function PublicPostings({
   );
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div style={cardStyle()}>
-        <div style={{ fontSize: 20, fontWeight: 700 }}>PUBLIC POSTINGS</div>
-      </div>
+    <div style={{ display: "grid", gap: 8, marginInline: isMobile ? -10 : 0 }}>
 
       {isMobile ? (
         <>
           {mobileTab === "ads" ? panel("ads") : null}
           {mobileTab === "events" ? panel("events") : null}
           {mobileTab === "spots" ? spotsPanel : null}
-          <div style={{ ...cardStyle(), position: "sticky", bottom: 12, zIndex: 3 }}>
+          <div style={{ position: "sticky", bottom: "calc(86px + env(safe-area-inset-bottom, 0px))", zIndex: 31, background: "rgba(0,0,0,0.35)", padding: 8 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
               <button type="button" style={mobileTab === "ads" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setMobileTab("ads")}>ADS</button>
               <button type="button" style={mobileTab === "events" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setMobileTab("events")}>EVENTS</button>
@@ -2903,7 +3348,7 @@ function PublicPostings({
           {panel("events")}
           <div style={{ gridColumn: "1 / -1" }}>{spotsPanel}</div>
           {session.userType !== "guest" && eventInvites.length > 0 ? (
-            <div style={{ ...cardStyle(), gridColumn: "1 / -1", display: "grid", gap: 8 }}>
+            <div style={{ border: "1px solid rgba(255,58,77,0.25)", gridColumn: "1 / -1", display: "grid", gap: 8, padding: 10 }}>
               <div style={{ fontSize: 16, fontWeight: 700 }}>EVENT INVITES</div>
               {eventInvites.map((event) => (
                 <div key={event.postingId} style={{ display: "grid", gap: 6, border: "1px solid rgba(255,58,77,0.4)", borderRadius: 10, padding: 8 }}>
@@ -2931,7 +3376,8 @@ function SubmissionsPanel({ api, session, setLastError }: Readonly<{ api: Api; s
   async function refresh(): Promise<void> {
     try {
       const res = await api.listSubmissions();
-      setList(res.submissions);
+      // Submissions should render newest first.
+      setList([...res.submissions].sort((a, b) => b.createdAtMs - a.createdAtMs));
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -2973,13 +3419,8 @@ function SubmissionsPanel({ api, session, setLastError }: Readonly<{ api: Api; s
   const canCreate = session.userType !== "guest";
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div style={cardStyle()}>
-        <div style={{ fontSize: 20, fontWeight: 700 }}>SUBMISSIONS</div>
-        <div style={{ color: "#b9bec9", marginTop: 6 }}>Short erotic stories with views and star ratings.</div>
-      </div>
-
-      <div style={cardStyle()}>
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ border: "1px solid rgba(255,58,77,0.35)", padding: 10, background: "rgba(0,0,0,0.2)" }}>
         <div style={{ display: "grid", gap: 10 }}>
           <input style={fieldStyle()} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Story title" disabled={!canCreate} />
           <textarea style={{ ...fieldStyle(), minHeight: 120 }} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write your story" disabled={!canCreate} />
@@ -2994,7 +3435,7 @@ function SubmissionsPanel({ api, session, setLastError }: Readonly<{ api: Api; s
         {list.map((s) => {
           const avg = s.ratingCount > 0 ? (s.ratingSum / s.ratingCount).toFixed(2) : "0.00";
           return (
-            <div key={s.submissionId} style={cardStyle()}>
+            <div key={s.submissionId} style={{ border: "1px solid rgba(255,58,77,0.28)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.22)" }}>
               <div style={{ fontSize: 18, fontWeight: 700 }}>{s.title}</div>
               <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", marginTop: 6 }}>{s.body}</div>
               <div style={{ color: "#b9bec9", fontSize: 13, marginTop: 8 }}>Views: {s.viewCount} | Rating: {avg} ({s.ratingCount})</div>
@@ -3020,6 +3461,21 @@ function PromotedProfilesPanel({
   setLastError
 }: Readonly<{ api: Api; session: Session; setLastError(value: string | null): void }>): React.ReactElement {
   const [listings, setListings] = useState<ReadonlyArray<{ listingId: string; userId: string; title: string; body: string; displayName: string; createdAtMs: number }>>([]);
+  const [avatarUrlByUserId, setAvatarUrlByUserId] = useState<Record<string, string>>({});
+  const [selectedProfile, setSelectedProfile] = useState<{
+    userId: string;
+    displayName: string;
+    age: number;
+    bio: string;
+    stats?: {
+      race?: string;
+      heightInches?: number;
+      weightLbs?: number;
+      cockSizeInches?: number;
+      cutStatus?: "cut" | "uncut";
+      position?: "top" | "bottom" | "side";
+    };
+  } | null>(null);
   const [feeCents, setFeeCents] = useState<number>(2000);
   const [title, setTitle] = useState<string>("");
   const [body, setBody] = useState<string>("");
@@ -3032,8 +3488,28 @@ function PromotedProfilesPanel({
   async function refresh(): Promise<void> {
     try {
       const res = await api.listPromotedProfiles();
-      setListings(res.listings);
+      setListings([...res.listings].sort((a, b) => b.createdAtMs - a.createdAtMs));
       setFeeCents(res.feeCents);
+      const uniqueUserIds = Array.from(new Set(res.listings.map((item) => item.userId))).filter((v) => v.trim().length > 0);
+      const rows = await Promise.all(
+        uniqueUserIds.map(async (userId) => {
+          try {
+            const profile = await api.getPublicProfile(userId);
+            const mediaId = profile.profile.mainPhotoMediaId;
+            if (!mediaId) return null;
+            const media = await api.getPublicMediaUrl(mediaId);
+            return { userId, url: media.downloadUrl };
+          } catch {
+            return null;
+          }
+        })
+      );
+      const next: Record<string, string> = {};
+      for (const row of rows) {
+        if (!row) continue;
+        next[row.userId] = row.url;
+      }
+      setAvatarUrlByUserId(next);
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -3080,9 +3556,18 @@ function PromotedProfilesPanel({
     }
   }
 
+  async function openListingProfile(userId: string): Promise<void> {
+    try {
+      const res = await api.getPublicProfile(userId);
+      setSelectedProfile(res.profile as any);
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
+  }
+
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div style={cardStyle()}>
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ border: "1px solid rgba(255,58,77,0.35)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.22)" }}>
         <div style={{ display: "grid", gap: 8 }}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>PROMOTED PROFILES</div>
           <div style={{ color: "#b9bec9", fontSize: 14 }}>Publishing requires a ${Math.round(feeCents / 100)} fee per profile.</div>
@@ -3090,7 +3575,7 @@ function PromotedProfilesPanel({
         </div>
       </div>
 
-      <div style={cardStyle()}>
+      <div style={{ border: "1px solid rgba(255,58,77,0.35)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.22)" }}>
         <div style={{ display: "grid", gap: 10 }}>
           <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Display name" style={fieldStyle()} disabled={!canPost} />
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Headline" style={fieldStyle()} disabled={!canPost} />
@@ -3112,14 +3597,64 @@ function PromotedProfilesPanel({
           <div style={{ color: "#b9bec9", fontSize: 14 }}>No promoted profiles yet.</div>
         ) : (
           listings.map((listing) => (
-            <div key={listing.listingId} style={cardStyle()}>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>{listing.title}</div>
-              <div style={{ color: "#26d5ff", fontSize: 13, marginTop: 4 }}>{listing.displayName}</div>
-              <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", marginTop: 8 }}>{listing.body}</div>
+            <div key={listing.listingId} style={{ border: "1px solid rgba(255,58,77,0.25)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.22)" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "72px 1fr", gap: 10, alignItems: "start" }}>
+                <img
+                  src={avatarUrlByUserId[listing.userId] ?? avatarForKey(`user:${listing.userId}`)}
+                  alt={`${listing.displayName} profile`}
+                  style={{ width: 72, height: 72, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(38,213,255,0.9)" }}
+                />
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{listing.title}</div>
+                  <div style={{ color: "#26d5ff", fontSize: 13 }}>{listing.displayName}</div>
+                  <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", fontSize: 14 }}>{listing.body}</div>
+                  <button
+                    type="button"
+                    style={buttonSecondary(false)}
+                    onClick={() => void openListingProfile(listing.userId)}
+                  >
+                    VIEW PROFILE
+                  </button>
+                </div>
+              </div>
             </div>
           ))
         )}
       </div>
+      {selectedProfile ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 40,
+            background: "rgba(0,0,0,0.72)",
+            display: "grid",
+            placeItems: "center",
+            padding: 14
+          }}
+          onClick={() => setSelectedProfile(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ border: "1px solid rgba(255,58,77,0.35)", borderRadius: 0, padding: 12, width: "min(560px, 100%)", background: "rgba(0,0,0,0.88)" }}
+          >
+            <div style={{ fontSize: 22, fontWeight: 700 }}>{selectedProfile.displayName}</div>
+            <div style={{ color: "#ced3dc", marginTop: 6 }}>Age: {selectedProfile.age}</div>
+            <div style={{ color: "#ced3dc", marginTop: 2 }}>Race: {selectedProfile.stats?.race ?? "-"}</div>
+            <div style={{ color: "#ced3dc", marginTop: 2 }}>Height: {selectedProfile.stats?.heightInches ?? "-"}</div>
+            <div style={{ color: "#ced3dc", marginTop: 2 }}>Weight: {selectedProfile.stats?.weightLbs ?? "-"}</div>
+            <div style={{ color: "#ced3dc", marginTop: 2 }}>Cock Size: {selectedProfile.stats?.cockSizeInches ?? "-"}</div>
+            <div style={{ color: "#ced3dc", marginTop: 2 }}>Cut / Uncut: {selectedProfile.stats?.cutStatus ?? "-"}</div>
+            <div style={{ color: "#ced3dc", marginTop: 2 }}>Position: {selectedProfile.stats?.position ?? "-"}</div>
+            <div style={{ color: "#ced3dc", marginTop: 10, whiteSpace: "pre-wrap" }}>{selectedProfile.bio}</div>
+            <div style={{ marginTop: 10 }}>
+              <button type="button" style={buttonSecondary(false)} onClick={() => setSelectedProfile(null)}>
+                CLOSE
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3632,6 +4167,43 @@ function SettingsPanel({
     }
   }
 
+  async function detectActualLocation(): Promise<void> {
+    if (!navigator.geolocation) {
+      const msg = "Geolocation is unavailable on this device.";
+      setStatus(msg);
+      setLastError(msg);
+      return;
+    }
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 15_000,
+          maximumAge: 0
+        });
+      });
+      const lat = Number(pos.coords.latitude.toFixed(6));
+      const lng = Number(pos.coords.longitude.toFixed(6));
+      setDraft((prev) => ({ ...prev, travelEnabled: true, travelLat: String(lat), travelLng: String(lng) }));
+      try {
+        localStorage.setItem("reddoor_travel_center", JSON.stringify({ enabled: true, lat, lng }));
+      } catch {
+        // ignore storage limitations
+      }
+      try {
+        await api.updatePresence(session.sessionToken, lat, lng, "online");
+      } catch {
+        // presence update is best-effort
+      }
+      window.dispatchEvent(new CustomEvent("rd:location-updated", { detail: { lat, lng } }));
+      setStatus("Actual location detected. Save privacy settings to persist it.");
+    } catch (e) {
+      const msg = normalizeErrorMessage(e);
+      setStatus(msg);
+      setLastError(msg);
+    }
+  }
+
   async function seedFakeUsers(): Promise<void> {
     try {
       const lat = draft.travelLat.trim() ? Number(draft.travelLat) : undefined;
@@ -3680,6 +4252,7 @@ function SettingsPanel({
           ) : null}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" style={buttonPrimary(false)} onClick={() => void savePrivacy()}>SAVE PRIVACY</button>
+            <button type="button" style={buttonSecondary(false)} onClick={() => void detectActualLocation()}>DETECT ACTUAL LOCATION</button>
             <button type="button" style={buttonSecondary(false)} onClick={() => void seedFakeUsers()}>SEED FAKE USERS</button>
             <button type="button" style={buttonSecondary(false)} onClick={() => onLogout?.()}>LOGOUT</button>
           </div>
@@ -3730,6 +4303,7 @@ export function Router({
   busy,
   setBusy,
   setLastError,
+  onUnreadCountChange,
   hideModeCard,
   onLogout
 }: Readonly<{
@@ -3743,6 +4317,7 @@ export function Router({
   busy: boolean;
   setBusy(value: boolean): void;
   setLastError(value: string | null): void;
+  onUnreadCountChange?(count: number): void;
   hideModeCard?: boolean;
   onLogout?(): void;
 }>): React.ReactElement {
@@ -3763,7 +4338,15 @@ export function Router({
         setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
         setActiveTab("threads");
       }}
+      onUnreadCountChange={onUnreadCountChange}
     />
+  );
+
+  const unifiedSettingsSurface = (
+    <div style={{ display: "grid", gap: 12 }}>
+      <SettingsProfile api={api} session={session} setLastError={setLastError} />
+      <SettingsPanel api={api} session={session} setLastError={setLastError} onLogout={onLogout} />
+    </div>
   );
 
   return (
@@ -3782,8 +4365,7 @@ export function Router({
         />
       ) : null}
       {activeTab === "public" ? <PublicPostings api={api} session={session} isMobile={isMobile} setLastError={setLastError} /> : null}
-      {activeTab === "profile" ? <SettingsProfile api={api} session={session} setLastError={setLastError} /> : null}
-      {activeTab === "settings" ? <SettingsPanel api={api} session={session} setLastError={setLastError} onLogout={onLogout} /> : null}
+      {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setLastError} /> : null}
       {activeTab === "promoted" ? <PromotedProfilesPanel api={api} session={session} setLastError={setLastError} /> : null}
     </div>

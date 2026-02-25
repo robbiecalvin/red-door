@@ -133,28 +133,18 @@ export function CruiseMap({
   }, [geo]);
 
   return (
-    <section
-      aria-label="Cruise mode map"
-      style={{
-        background: "#000000",
-        color: "#FFFFFF",
-        fontFamily: "var(--ui)",
-        padding: 16,
-        display: "grid",
-        gap: 12
-      }}
-    >
+    <section aria-label="Cruise mode map" style={{ background: "#000000", color: "#FFFFFF", fontFamily: "var(--ui)", display: "grid", gap: 8, height: "100%" }}>
       {banner ? (
         <div
           role="alert"
           aria-live="polite"
           style={{
-            background: "#111111",
-            border: "2px solid #C00000",
-            borderRadius: 8,
-            padding: 12,
+            background: "rgba(0,0,0,0.7)",
+            border: "1px solid rgba(255,58,77,0.45)",
+            borderRadius: 0,
+            padding: 8,
             color: "#AAAAAA",
-            fontSize: 14,
+            fontSize: 12,
             lineHeight: 1.4
           }}
         >
@@ -167,12 +157,12 @@ export function CruiseMap({
           role="alert"
           aria-live="polite"
           style={{
-            background: "#111111",
-            border: "2px solid #C00000",
-            borderRadius: 8,
-            padding: 12,
+            background: "rgba(0,0,0,0.7)",
+            border: "1px solid rgba(255,58,77,0.45)",
+            borderRadius: 0,
+            padding: 8,
             color: "#F22F2F",
-            fontSize: 14,
+            fontSize: 12,
             lineHeight: 1.4
           }}
         >
@@ -180,15 +170,7 @@ export function CruiseMap({
         </div>
       ) : null}
 
-      <div
-        style={{
-          background: "#111111",
-          border: "2px solid #C00000",
-          borderRadius: 8,
-          overflow: "hidden",
-          height: typeof height === "number" || typeof height === "string" ? height : 520
-        }}
-      >
+      <div style={{ background: "#111111", border: 0, borderRadius: 0, overflow: "hidden", height: typeof height === "number" || typeof height === "string" ? height : 520 }}>
         <MapView initialView={view} markers={markers} visible={visible} />
       </div>
     </section>

@@ -81,13 +81,17 @@ textarea {
 }
 
 .rd-shell {
-  min-height: 100%;
+  height: 100dvh;
   display: grid;
   grid-template-columns: 1fr;
   grid-template-rows: auto 1fr;
   width: 100%;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow: hidden;
+}
+
+.rd-shell.mobile-framed {
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .rd-topbar {
@@ -178,6 +182,9 @@ textarea {
   padding: 18px 16px 22px;
   width: 100%;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
 }
 
 .rd-home-main {
@@ -350,6 +357,10 @@ textarea {
   gap: 10px;
 }
 
+.rd-mobile-title-spacer {
+  min-height: 1px;
+}
+
 .rd-mobile-pill {
   border-radius: 10px;
   border-color: rgba(0, 0, 0, 0.72);
@@ -368,6 +379,24 @@ textarea {
   box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.14);
 }
 
+.rd-mobile-avatar-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin-top: 24px;
+  margin-bottom: 2px;
+}
+
+.rd-mobile-corner-settings {
+  justify-self: end;
+  min-height: 38px;
+  padding: 8px 12px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  background: rgba(0, 0, 0, 0.72);
+  border-color: rgba(255, 58, 77, 0.65);
+}
+
 .rd-mobile-avatar {
   width: 92px;
   height: 92px;
@@ -377,6 +406,13 @@ textarea {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 18px 28px rgba(0, 0, 0, 0.48);
   overflow: hidden;
   position: relative;
+  padding: 0;
+  cursor: pointer;
+}
+
+.rd-mobile-avatar.is-open {
+  border-color: rgba(0, 212, 255, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 0 3px rgba(0, 212, 255, 0.2), 0 18px 28px rgba(0, 0, 0, 0.48);
 }
 
 .rd-mobile-avatar-img {
@@ -395,6 +431,26 @@ textarea {
   border-radius: 999px;
   background: #26d5ff;
   border: 2px solid #000000;
+}
+
+.rd-mobile-quick-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 220px;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.86);
+  border: 1px solid rgba(255, 55, 74, 0.65);
+  box-shadow: 0 12px 20px rgba(0, 0, 0, 0.45);
+  display: none;
+  gap: 8px;
+  z-index: 20;
+}
+
+.rd-mobile-quick-menu.is-open {
+  display: grid;
 }
 
 .rd-mobile-info {
@@ -535,16 +591,16 @@ textarea {
 }
 
 .rd-mobile-nav {
-  position: sticky;
-  bottom: 0;
-  z-index: 12;
+  position: relative;
+  z-index: 40;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding: 10px 12px calc(8px + env(safe-area-inset-bottom, 0px));
   background: linear-gradient(180deg, rgba(128, 0, 10, 0.96), rgba(86, 0, 7, 0.98));
   border-top: 1px solid rgba(255, 55, 74, 0.65);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.38);
+  flex-shrink: 0;
 }
 
 .rd-mobile-nav-btn {
@@ -561,6 +617,7 @@ textarea {
   cursor: pointer;
   display: grid;
   place-items: center;
+  position: relative;
 }
 
 .rd-mobile-nav-icon {
@@ -574,7 +631,30 @@ textarea {
   box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.14);
 }
 
+.rd-mobile-nav-badge {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: #ff2136;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
 @media (max-width: 900px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
   .rd-topbar.mobile {
     position: sticky;
     top: 0;
@@ -583,11 +663,16 @@ textarea {
   }
 
   .rd-topbar.mobile .rd-topbar-inner {
-    padding: 8px 10px 6px;
+    padding:
+      calc(env(safe-area-inset-top, 0px) + 24px)
+      calc(10px + env(safe-area-inset-right, 0px))
+      10px
+      calc(10px + env(safe-area-inset-left, 0px));
   }
 
   .rd-main.mobile {
-    padding: 10px 10px 80px;
+    padding: 10px 10px 10px;
+    overflow-y: auto;
     overflow-x: clip;
   }
 

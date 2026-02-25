@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatKind, ChatMediaAttachment, ChatMessage, ServiceError } from "./chat.types";
 
+const FIRE_SIGNAL_TEXT = "FIRE_SIGNAL|1";
+
 export type ChatApiClient = Readonly<{
   sendMessage(chatKind: ChatKind, toKey: string, text: string, media?: ChatMediaAttachment): Promise<ChatMessage>;
   initiateMediaUpload(mimeType: string, sizeBytes: number): Promise<{ objectKey: string; uploadUrl: string }>;
@@ -23,6 +25,10 @@ function parseLocationPayload(text: string): { lat: number; lng: number; link: s
   return { lat, lng, link: `https://maps.google.com/?q=${lat},${lng}` };
 }
 
+function displayMessageText(text: string): string {
+  return text.trim() === FIRE_SIGNAL_TEXT ? "🔥 I'm into you" : text;
+}
+
 export function ChatWindow({
   chatKind,
   peerKey,
@@ -31,7 +37,10 @@ export function ChatWindow({
   client,
   title,
   peerSummary,
-  thirdParty
+  thirdParty,
+  edgeToEdge,
+  showHeader,
+  fillHeight
 }: Readonly<{
   chatKind: ChatKind;
   peerKey: string;
@@ -47,6 +56,9 @@ export function ChatWindow({
     onAdd(): void;
     disabled?: boolean;
   }>;
+  edgeToEdge?: boolean;
+  showHeader?: boolean;
+  fillHeight?: boolean;
 }>): React.ReactElement {
   const [draft, setDraft] = useState<string>("");
   const [lastError, setLastError] = useState<string | null>(null);
@@ -57,6 +69,11 @@ export function ChatWindow({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const isEdgeToEdge = edgeToEdge === true;
+  const headerVisible = showHeader !== false;
+  const fixedComposer = isEdgeToEdge && fillHeight === true;
 
   const sorted = useMemo(() => [...messages].sort((a, b) => a.createdAtMs - b.createdAtMs), [messages]);
   const mediaObjectKeys = useMemo(
@@ -204,61 +221,65 @@ export function ChatWindow({
     <section
       aria-label="Chat"
       style={{
-        background: "#000000",
+        background: isEdgeToEdge ? "transparent" : "#000000",
         color: "#FFFFFF",
         fontFamily: "Montserrat, sans-serif",
-        padding: 16,
+        padding: isEdgeToEdge ? 0 : 16,
         display: "grid",
-        gap: 12
+        gap: isEdgeToEdge ? 0 : 12,
+        gridTemplateRows: headerVisible ? "auto auto 1fr auto" : "1fr auto",
+        minHeight: fillHeight ? "calc(100dvh - 196px)" : undefined
       }}
     >
-      <header
-        style={{
-          height: 56,
-          display: "grid",
-          alignItems: "center",
-          background: "#000000"
-        }}
-      >
-        <div style={{ textAlign: "center", fontSize: 20, fontWeight: 600 }}>{title}</div>
-        {peerSummary ? (
-          <div
-            style={{
-              marginTop: 4,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              color: "#b7d8e0",
-              fontSize: 13
-            }}
-          >
-            <span>Chat with:</span>
-            {peerSummary.avatarUrl ? (
-              <img
-                src={peerSummary.avatarUrl}
-                alt={`${peerSummary.displayName} avatar`}
-                style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", border: "1px solid rgba(38,213,255,0.8)" }}
-              />
-            ) : (
-              <span
-                aria-hidden
-                style={{
-                  width: 24,
-                  height: 24,
-                  borderRadius: "50%",
-                  border: "1px solid rgba(38,213,255,0.8)",
-                  background: "rgba(255,255,255,0.08)"
-                }}
-              />
-            )}
-            <span style={{ color: "#fff", fontWeight: 600 }}>{peerSummary.displayName}</span>
+      {headerVisible ? (
+        <header
+          style={{
+            height: 56,
+            display: "grid",
+            alignItems: "center",
+            background: "#000000"
+          }}
+        >
+          <div style={{ textAlign: "center", fontSize: 20, fontWeight: 600 }}>{title}</div>
+          {peerSummary ? (
+            <div
+              style={{
+                marginTop: 4,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                color: "#b7d8e0",
+                fontSize: 13
+              }}
+            >
+              <span>Chat with:</span>
+              {peerSummary.avatarUrl ? (
+                <img
+                  src={peerSummary.avatarUrl}
+                  alt={`${peerSummary.displayName} avatar`}
+                  style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", border: "1px solid rgba(38,213,255,0.8)" }}
+                />
+              ) : (
+                <span
+                  aria-hidden
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: "50%",
+                    border: "1px solid rgba(38,213,255,0.8)",
+                    background: "rgba(255,255,255,0.08)"
+                  }}
+                />
+              )}
+              <span style={{ color: "#fff", fontWeight: 600 }}>{peerSummary.displayName}</span>
+            </div>
+          ) : null}
+          <div style={{ textAlign: "center", fontSize: 12, color: "#AAAAAA" }}>
+            {chatKind === "cruise" ? "CRUISE CHAT (EPHEMERAL)" : "DATE CHAT (PERSISTENT)"}
           </div>
-        ) : null}
-        <div style={{ textAlign: "center", fontSize: 12, color: "#AAAAAA" }}>
-          {chatKind === "cruise" ? "CRUISE CHAT (EPHEMERAL)" : "DATE CHAT (PERSISTENT)"}
-        </div>
-      </header>
+        </header>
+      ) : null}
 
       {lastError ? (
         <div
@@ -281,13 +302,16 @@ export function ChatWindow({
       <div
         aria-label="Messages"
         style={{
-          background: "#111111",
-          border: "2px solid #C00000",
-          borderRadius: 8,
+          background: isEdgeToEdge ? "#09090b" : "#111111",
+          border: isEdgeToEdge ? "none" : "2px solid #C00000",
+          borderRadius: isEdgeToEdge ? 0 : 8,
           padding: 12,
-          display: "grid",
+          display: "flex",
+          flexDirection: "column",
           gap: 12,
-          minHeight: 320
+          minHeight: isEdgeToEdge ? 0 : 320,
+          paddingBottom: fixedComposer ? 148 : 12,
+          overflowY: "auto"
         }}
       >
         {sorted.length === 0 ? (
@@ -296,9 +320,9 @@ export function ChatWindow({
           sorted.map((m) => {
             const mine = m.fromKey === currentUserKey;
             const bubbleBg = mine ? "#C00000" : "#444444";
-            const align: React.CSSProperties = mine ? { justifySelf: "end" } : { justifySelf: "start" };
+            const rowAlign: React.CSSProperties = mine ? { alignItems: "flex-end" } : { alignItems: "flex-start" };
             return (
-              <div key={m.messageId} style={{ display: "grid", gap: 4, ...align }}>
+              <div key={m.messageId} style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%", ...rowAlign }}>
                 {(() => {
                   const location = parseLocationPayload(m.text ?? "");
                   if (!location) return null;
@@ -315,7 +339,8 @@ export function ChatWindow({
                         background: bubbleBg,
                         borderRadius: 14,
                         padding: 8,
-                        maxWidth: 320
+                        width: "auto",
+                        maxWidth: "80%"
                       }}
                     >
                       <div style={{ fontSize: 12, color: "#d8ecff" }}>Shared location</div>
@@ -336,12 +361,16 @@ export function ChatWindow({
                     color: "#FFFFFF",
                     borderRadius: 18,
                     padding: "8px 12px",
-                    maxWidth: "85%",
+                    width: "auto",
+                    maxWidth: "80%",
                     fontSize: 16,
-                    lineHeight: 1.4
+                    lineHeight: 1.4,
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                    wordBreak: "break-word"
                   }}
                 >
-                  {m.text && !parseLocationPayload(m.text) ? <div style={{ marginBottom: m.media ? 8 : 0 }}>{m.text}</div> : null}
+                  {m.text && !parseLocationPayload(m.text) ? <div style={{ marginBottom: m.media ? 8 : 0 }}>{displayMessageText(m.text)}</div> : null}
                   {m.media ? (
                     <div>
                       {m.media.kind === "image" ? (
@@ -365,9 +394,9 @@ export function ChatWindow({
                     </div>
                   ) : null}
                 </div>
-                <div style={{ fontSize: 10, color: "#AAAAAA", ...align }}>{formatTime(m.createdAtMs)}</div>
+                <div style={{ fontSize: 10, color: "#AAAAAA" }}>{formatTime(m.createdAtMs)}</div>
                 {mine ? (
-                  <div style={{ fontSize: 10, color: "#6fdcff", ...align }}>
+                  <div style={{ fontSize: 10, color: "#6fdcff" }}>
                     {typeof m.readAtMs === "number" ? "Read" : typeof m.deliveredAtMs === "number" ? "Delivered" : ""}
                   </div>
                 ) : null}
@@ -384,18 +413,22 @@ export function ChatWindow({
         }}
         aria-label="Message input"
         style={{
-          background: "#111111",
-          border: "2px solid #C00000",
-          borderRadius: 8,
+          background: isEdgeToEdge ? "linear-gradient(180deg, rgba(96,0,12,0.96), rgba(58,0,8,0.98))" : "#111111",
+          border: isEdgeToEdge ? "none" : "2px solid #C00000",
+          borderRadius: isEdgeToEdge ? 0 : 8,
           padding: 12,
           display: "grid",
           gridTemplateColumns: "1fr auto auto",
           gap: 12,
-          alignItems: "start"
+          alignItems: "start",
+          position: fixedComposer ? "fixed" : "static",
+          left: fixedComposer ? 0 : undefined,
+          right: fixedComposer ? 0 : undefined,
+          bottom: fixedComposer ? "calc(env(safe-area-inset-bottom, 0px) + 66px)" : undefined,
+          zIndex: fixedComposer ? 45 : undefined
         }}
       >
-        <label style={{ display: "grid", gap: 6 }}>
-          <span style={{ fontSize: 12, color: "#AAAAAA" }}>MESSAGE</span>
+        <label style={{ display: "grid" }}>
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -420,6 +453,24 @@ export function ChatWindow({
             ref={fileInputRef}
             type="file"
             accept="image/*,video/*,audio/*"
+            disabled={sending}
+            onChange={(e) => void onAttachFile(e)}
+            style={{ display: "none" }}
+          />
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            disabled={sending}
+            onChange={(e) => void onAttachFile(e)}
+            style={{ display: "none" }}
+          />
+          <input
+            ref={videoInputRef}
+            type="file"
+            accept="video/*"
+            capture="environment"
             disabled={sending}
             onChange={(e) => void onAttachFile(e)}
             style={{ display: "none" }}
@@ -450,7 +501,8 @@ export function ChatWindow({
               style={{
                 position: "absolute",
                 right: 0,
-                top: 48,
+                top: fixedComposer ? undefined : 48,
+                bottom: fixedComposer ? 48 : undefined,
                 zIndex: 5,
                 minWidth: 220,
                 display: "grid",
@@ -461,6 +513,44 @@ export function ChatWindow({
                 background: "rgba(10,11,16,0.98)"
               }}
             >
+              <button
+                type="button"
+                disabled={sending}
+                onClick={() => {
+                  setActionsOpen(false);
+                  photoInputRef.current?.click();
+                }}
+                style={{
+                  background: "rgba(0,0,0,0.6)",
+                  color: "#3fdfff",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  fontSize: 13,
+                  fontWeight: 700
+                }}
+              >
+                Take Photo
+              </button>
+              <button
+                type="button"
+                disabled={sending}
+                onClick={() => {
+                  setActionsOpen(false);
+                  videoInputRef.current?.click();
+                }}
+                style={{
+                  background: "rgba(0,0,0,0.6)",
+                  color: "#3fdfff",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  fontSize: 13,
+                  fontWeight: 700
+                }}
+              >
+                Record Video
+              </button>
               <button
                 type="button"
                 disabled={sending}
@@ -478,7 +568,7 @@ export function ChatWindow({
                   fontWeight: 700
                 }}
               >
-                Attach Media
+                Choose Media
               </button>
               <button
                 type="button"

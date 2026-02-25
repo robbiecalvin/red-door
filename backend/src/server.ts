@@ -113,6 +113,14 @@ function randomInRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
 
+function parseAllowedOrigins(raw: string): ReadonlySet<string> {
+  const values = raw
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
+  return new Set(values);
+}
+
 function extensionForMimeType(mimeType: string): string {
   if (mimeType === "image/jpeg") return "jpg";
   if (mimeType === "image/png") return "png";
@@ -365,7 +373,25 @@ async function main(): Promise<void> {
   });
 
   const app = express();
+  const allowedOrigins = parseAllowedOrigins(
+    process.env.CORS_ALLOWED_ORIGINS ??
+      "capacitor://localhost,http://localhost,http://127.0.0.1,ionic://localhost"
+  );
   app.disable("x-powered-by");
+  app.use((req, res, next) => {
+    const originHeader = req.headers.origin;
+    const origin = typeof originHeader === "string" ? originHeader.trim() : "";
+    if (origin !== "" && allowedOrigins.has(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Session-Token");
+    }
+    if (req.method === "OPTIONS") {
+      return res.status(204).end();
+    }
+    next();
+  });
   app.use(express.json({ limit: "8kb" }));
 
   app.get("/health", (_req, res) => {
@@ -456,7 +482,7 @@ async function main(): Promise<void> {
   });
 
   app.post("/auth/verify-age", (req, res) => {
-    const sessionToken = (req.body as any)?.sessionToken;
+    const sessionToken = (req.body as any)?.sessionToken ?? getSessionToken(req);
     const ageYears = (req.body as any)?.ageYears;
     const result = authService.verifyAge(sessionToken, ageYears);
     if (!result.ok) return sendError(res, result.error);
@@ -631,15 +657,20 @@ async function main(): Promise<void> {
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const address = typeof (req.body as any)?.address === "string" ? (req.body as any).address : "";
     const geocoded = await geocodeAddress(address);
-    if (!geocoded) {
-      return sendError(res, { code: "INVALID_INPUT", message: "Unable to resolve spot address." });
-    }
+    const bodyLat = Number((req.body as any)?.lat);
+    const bodyLng = Number((req.body as any)?.lng);
+    const fallbackLatRaw = Number(process.env.DUALMODE_DEFAULT_CENTER_LAT ?? "40.7484");
+    const fallbackLngRaw = Number(process.env.DUALMODE_DEFAULT_CENTER_LNG ?? "-73.9857");
+    const fallbackLat = Number.isFinite(fallbackLatRaw) ? fallbackLatRaw : 40.7484;
+    const fallbackLng = Number.isFinite(fallbackLngRaw) ? fallbackLngRaw : -73.9857;
+    const lat = geocoded?.lat ?? (Number.isFinite(bodyLat) ? bodyLat : fallbackLat);
+    const lng = geocoded?.lng ?? (Number.isFinite(bodyLng) ? bodyLng : fallbackLng);
     const result = cruisingSpotsService.create(sessionResult.value, {
       name: (req.body as any)?.name,
       description: (req.body as any)?.description,
       address,
-      lat: geocoded.lat,
-      lng: geocoded.lng
+      lat,
+      lng
     });
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ spot: result.value });

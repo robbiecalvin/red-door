@@ -21,6 +21,7 @@ export type Result<T> = ResultOk<T> | ResultErr;
 export type SessionLike = Readonly<{
   userType: "guest" | "registered" | "subscriber";
   userId?: string;
+  sessionToken?: string;
   ageVerified: boolean;
 }>;
 
@@ -79,6 +80,23 @@ function requirePostingIdentity(session: SessionLike): Result<{ userId: string }
   return ok({ userId: session.userId });
 }
 
+function requireAge(session: SessionLike): Result<void> {
+  if (session.ageVerified !== true) {
+    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+  }
+  return ok(undefined);
+}
+
+function authorKeyForAds(session: SessionLike): Result<{ userId: string }> {
+  if (session.userType === "guest") {
+    const token = asText(session.sessionToken);
+    return ok({ userId: token ? `guest:${token}` : "guest:anonymous" });
+  }
+  const userId = asText(session.userId);
+  if (!userId) return err("INVALID_INPUT", "Invalid user identity.");
+  return ok({ userId });
+}
+
 export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => number; idFactory?: () => string }>): Readonly<{
   list(type?: unknown): Result<ReadonlyArray<Posting>>;
   create(session: SessionLike, input: PostingInput): Result<Posting>;
@@ -101,11 +119,10 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
     },
 
     create(session: SessionLike, input: PostingInput): Result<Posting> {
-      const auth = requirePostingIdentity(session);
-      if (!auth.ok) return auth;
-
       const type = asType(input.type);
       if (!type) return err("POSTING_TYPE_NOT_ALLOWED", "Invalid posting type.");
+      const auth = type === "ad" ? authorKeyForAds(session) : requirePostingIdentity(session);
+      if (!auth.ok) return auth as Result<Posting>;
 
       const title = asText(input.title);
       if (!title) return err("INVALID_INPUT", "Title is required.");

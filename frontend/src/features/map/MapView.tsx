@@ -46,12 +46,12 @@ function defaultRasterStyle(): Record<string, unknown> {
       basemap: {
         type: "raster",
         tiles: [
-          "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-          "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-          "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+          "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+          "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png"
         ],
         tileSize: 256,
-        attribution: "© OpenStreetMap contributors © CARTO"
+        attribution: "© OpenStreetMap contributors"
       }
     },
     layers: [
@@ -189,8 +189,13 @@ export function MapView({
     if (!map) return;
     if (!isVisible) return;
     map.resize();
-    map.setCenter([initialView.center.lng, initialView.center.lat]);
-    map.setZoom(initialView.zoom);
+    // Some mobile webviews need a post-layout tick before the map paints tiles.
+    const t = window.setTimeout(() => {
+      map.resize();
+      map.setCenter([initialView.center.lng, initialView.center.lat]);
+      map.setZoom(initialView.zoom);
+    }, 80);
+    return () => window.clearTimeout(t);
   }, [initialView.center.lat, initialView.center.lng, initialView.zoom, isVisible]);
 
   useEffect(() => {
@@ -198,6 +203,8 @@ export function MapView({
     if (!map) return;
     if (!isVisible) return;
     map.resize();
+    const t = window.setTimeout(() => map.resize(), 120);
+    return () => window.clearTimeout(t);
   }, [isVisible]);
 
   useEffect(() => {

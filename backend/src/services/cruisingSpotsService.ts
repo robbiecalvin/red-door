@@ -56,18 +56,6 @@ function actorKey(session: SessionLike): string {
   return `session:${token}`;
 }
 
-function requireMember(session: SessionLike): Result<{ userId: string }> {
-  if (session.userType === "guest") {
-    return err("ANONYMOUS_FORBIDDEN", "Anonymous users cannot create permanent cruising spots.");
-  }
-  if (session.ageVerified !== true) {
-    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
-  }
-  const userId = asText(session.userId);
-  if (!userId) return err("INVALID_INPUT", "Invalid user identity.");
-  return ok({ userId });
-}
-
 function requireAge(session: SessionLike): Result<void> {
   if (session.ageVerified !== true) {
     return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
@@ -110,8 +98,6 @@ export function createCruisingSpotsService(
       session: SessionLike,
       input: Readonly<{ name: unknown; description: unknown; address: unknown; lat: unknown; lng: unknown }>
     ): Result<CruisingSpot> {
-      const auth = requireMember(session);
-      if (!auth.ok) return auth as Result<CruisingSpot>;
       const name = asText(input.name);
       const description = asText(input.description);
       const address = asText(input.address);
@@ -131,7 +117,7 @@ export function createCruisingSpotsService(
         lat,
         lng,
         description,
-        creatorUserId: auth.value.userId,
+        creatorUserId: actorKey(session),
         createdAtMs: nowMs(),
         checkInCount: 0,
         actionCount: 0

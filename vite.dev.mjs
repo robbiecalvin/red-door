@@ -26,6 +26,8 @@ async function main() {
     define: {
       __DUALMODE_DEFAULT_CENTER_LAT__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LAT ?? "0"),
       __DUALMODE_DEFAULT_CENTER_LNG__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LNG ?? "0"),
+      __DUALMODE_API_BASE_PATH__: JSON.stringify(process.env.DUALMODE_API_BASE_PATH ?? "/api"),
+      __DUALMODE_WS_URL__: JSON.stringify(process.env.DUALMODE_WS_URL ?? ""),
     },
     esbuild: {
       jsx: "automatic",

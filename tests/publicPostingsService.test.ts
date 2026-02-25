@@ -7,12 +7,28 @@ describe("publicPostingsService", () => {
     expect(res.ok).toBe(true);
   });
 
-  it("Given a guest session When create is attempted Then ANONYMOUS_FORBIDDEN is returned", () => {
+  it("Given a guest session When creating an ad Then creation succeeds with guest author key", () => {
     const svc = createPublicPostingsService();
-    const res = svc.create({ userType: "guest", ageVerified: true }, { type: "ad", title: "t", body: "b" });
+    const res = svc.create({ userType: "guest", sessionToken: "s_1", ageVerified: true }, { type: "ad", title: "t", body: "b" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.value.authorUserId).toBe("guest:s_1");
+  });
+
+  it("Given a guest session When creating an event Then ANONYMOUS_FORBIDDEN is returned", () => {
+    const svc = createPublicPostingsService();
+    const res = svc.create({ userType: "guest", sessionToken: "s_1", ageVerified: true }, { type: "event", title: "t", body: "b" });
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.error.code).toBe("ANONYMOUS_FORBIDDEN");
+  });
+
+  it("Given a guest session without age verification When creating an ad Then creation still succeeds", () => {
+    const svc = createPublicPostingsService();
+    const res = svc.create({ userType: "guest", sessionToken: "s_2", ageVerified: false }, { type: "ad", title: "t2", body: "b2" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.value.authorUserId).toBe("guest:s_2");
   });
 
   it("Given a registered session When create is called Then posting is created", () => {
