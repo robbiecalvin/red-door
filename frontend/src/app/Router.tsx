@@ -4333,24 +4333,6 @@ export function Router({
   const isMobile = useIsMobile();
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
 
-  const discoverSurface = (
-    <CruiseSurface
-      api={api}
-      session={session}
-      settings={settings}
-      discoverFilter={discoverFilter}
-      busy={busy}
-      setBusy={setBusy}
-      setLastError={setLastError}
-      isMobile={isMobile}
-      onOpenThreadRequested={(key) => {
-        setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
-        setActiveTab("threads");
-      }}
-      onUnreadCountChange={onUnreadCountChange}
-    />
-  );
-
   const unifiedSettingsSurface = (
     <div style={{ display: "grid", gap: 12 }}>
       <SettingsProfile api={api} session={session} setLastError={setLastError} />
@@ -4362,7 +4344,23 @@ export function Router({
     <div style={{ display: "grid", gap: 12 }}>
       {!hideModeCard ? null : null}
 
-      <div style={{ display: activeTab === "discover" ? "block" : "none" }}>{discoverSurface}</div>
+      {activeTab === "discover" ? (
+        <CruiseSurface
+          api={api}
+          session={session}
+          settings={settings}
+          discoverFilter={discoverFilter}
+          busy={busy}
+          setBusy={setBusy}
+          setLastError={setLastError}
+          isMobile={isMobile}
+          onOpenThreadRequested={(key) => {
+            setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
+            setActiveTab("threads");
+          }}
+          onUnreadCountChange={onUnreadCountChange}
+        />
+      ) : null}
       {activeTab === "threads" ? (
         <ThreadsPanel
           api={api}

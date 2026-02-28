@@ -30,10 +30,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prepare Pages site
-        run: |
-          mkdir -p pages-site
-          cp index.html pages-site/index.html
+      - name: Build web app
+        env:
+          DUALMODE_API_BASE_PATH: "__local__"
+          DUALMODE_WS_URL: "__disabled__"
+        run: npm run build
+
+      - name: Add nojekyll marker
+        run: touch dist/.nojekyll
 
       - name: Configure Pages
         continue-on-error: true
@@ -58,7 +62,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: pages-site
+          path: dist
 
   deploy:
     environment:
