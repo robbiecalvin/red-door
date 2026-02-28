@@ -161,6 +161,10 @@ function requestLocationPermission(): void {
 }
 
 function resolveApiBasePath(): string {
+  const host = window.location.hostname.toLowerCase();
+  if (host.endsWith(".github.io")) {
+    return "__local__";
+  }
   const raw = typeof __DUALMODE_API_BASE_PATH__ === "string" ? __DUALMODE_API_BASE_PATH__.trim() : "";
   return raw.length > 0 ? raw.replace(/\/+$/, "") : "__local__";
 }
