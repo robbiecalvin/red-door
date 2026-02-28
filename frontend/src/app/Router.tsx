@@ -4390,7 +4390,7 @@ export function Router({
     <div style={{ display: "grid", gap: 12 }}>
       {!hideModeCard ? null : null}
 
-      {activeTab === "discover" ? (
+      <div style={{ display: activeTab === "discover" ? "block" : "none" }}>
         <CruiseSurface
           api={api}
           session={session}
@@ -4408,7 +4408,7 @@ export function Router({
           }}
           onUnreadCountChange={onUnreadCountChange}
         />
-      ) : null}
+      </div>
       {activeTab === "threads" ? (
         <ThreadsPanel
           api={api}
