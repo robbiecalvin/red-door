@@ -614,7 +614,8 @@ export function App(): React.ReactElement {
                       <div className="rd-mark" aria-hidden="true" />
                       <div className="rd-name">Red Door</div>
                     </div>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("discover", "chat")} aria-label="Discover">Discover</button>
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("discover", "map")} aria-label="Map">Map</button>
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("discover", "chat")} aria-label="Chat">Chat</button>
                     <button type="button" className="rd-btn" onClick={() => setTabAndRoute("threads")} aria-label="Inbox">
                       Inbox{unreadChatCount > 0 ? ` (${unreadChatCount})` : ""}
                     </button>
@@ -850,8 +851,21 @@ export function App(): React.ReactElement {
 
       {isMobile && session && session.ageVerified === true ? (
         <nav className="rd-mobile-nav" aria-label="Mobile navigation">
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`} onClick={() => setTabAndRoute("discover", "chat")} aria-label="Discover">
+          <button
+            type="button"
+            className={`rd-mobile-nav-btn ${activeTab === "discover" && discoverScreen === "map" ? "is-active" : ""}`}
+            onClick={() => setTabAndRoute("discover", "map")}
+            aria-label="Map"
+          >
             <span className="rd-mobile-nav-icon" aria-hidden="true">⌖</span>
+          </button>
+          <button
+            type="button"
+            className={`rd-mobile-nav-btn ${activeTab === "discover" && discoverScreen === "chat" ? "is-active" : ""}`}
+            onClick={() => setTabAndRoute("discover", "chat")}
+            aria-label="Chat"
+          >
+            <span className="rd-mobile-nav-icon" aria-hidden="true">◈</span>
           </button>
           <button type="button" className={`rd-mobile-nav-btn ${activeTab === "threads" ? "is-active" : ""}`} onClick={() => setTabAndRoute("threads")} aria-label="Inbox">
             <span className="rd-mobile-nav-icon" aria-hidden="true">💬</span>

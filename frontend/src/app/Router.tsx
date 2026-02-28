@@ -855,33 +855,10 @@ function CruiseSurface({
     <div style={{ display: "grid", gap: 8 }}>
       {isMobile ? (
         <>
-          <div style={{ display: mobileTab === "map" ? "block" : "none" }}>{mobileMapPanel}</div>
-          <div style={{ display: mobileTab === "chat" ? "block" : "none" }}>{chatPanel}</div>
-          <div
-            style={{
-              position: "fixed",
-              left: 10,
-              right: 10,
-              bottom: "calc(env(safe-area-inset-bottom, 0px) + 66px)",
-              zIndex: 41,
-              padding: 8,
-              background: "rgba(0,0,0,0.35)"
-            }}
-          >
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <button type="button" style={mobileTab === "map" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setDiscoverTab("map")}>MAP</button>
-              <button type="button" style={mobileTab === "chat" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setDiscoverTab("chat")}>CHAT</button>
-            </div>
-          </div>
+          {mobileTab === "map" ? mobileMapPanel : chatPanel}
         </>
       ) : (
-        <div style={{ display: "grid", gap: 12, alignItems: "start" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <button type="button" style={mobileTab === "map" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setDiscoverTab("map")}>MAP</button>
-            <button type="button" style={mobileTab === "chat" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setDiscoverTab("chat")}>CHAT</button>
-          </div>
-          {mobileTab === "map" ? mapPanel : chatPanel}
-        </div>
+        <div style={{ display: "grid", gap: 12, alignItems: "start" }}>{mobileTab === "map" ? mapPanel : chatPanel}</div>
       )}
 
       {selectedProfileKey ? (
