@@ -187,6 +187,17 @@ textarea {
   overflow-x: clip;
 }
 
+.rd-main.rd-main-full-map {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.rd-main.rd-main-full-map .rd-grid {
+  height: 100%;
+}
+
 .rd-home-main {
   max-width: 980px;
   padding-top: 36px;

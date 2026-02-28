@@ -241,6 +241,7 @@ export function App(): React.ReactElement {
   const [topAvatarUrl, setTopAvatarUrl] = useState<string | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
+  const isDesktopFullMap = !isMobile && session?.ageVerified === true && activeTab === "discover" && discoverScreen === "map";
 
   const persistSessionToken = useCallback((token: string): void => {
     safeLocalStorageSet(SESSION_TOKEN_KEY, token);
@@ -640,7 +641,7 @@ export function App(): React.ReactElement {
         </header>
       ) : null}
 
-      <main className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"}`}>
+      <main className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isDesktopFullMap ? "rd-main-full-map" : ""}`}>
         <div className="rd-grid">
           {!session ? (
             <>

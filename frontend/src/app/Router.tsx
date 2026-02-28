@@ -791,7 +791,7 @@ function CruiseSurface({
       avatarByKey={avatarUrlByKey}
       additionalMarkers={spotMarkers}
       defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
-      height={isMobile ? "calc(100vh - 340px)" : 600}
+      height={isMobile ? "calc(100vh - 340px)" : "calc(100dvh - 62px)"}
       visible
     />
   );
@@ -867,13 +867,15 @@ function CruiseSurface({
   );
 
   return (
-    <div style={{ display: "grid", gap: 8 }}>
+    <div style={!isMobile && mobileTab === "map" ? { height: "100%" } : { display: "grid", gap: 8 }}>
       {isMobile ? (
         <>
           {mobileTab === "map" ? mobileMapPanel : chatPanel}
         </>
       ) : (
-        <div style={{ display: "grid", gap: 12, alignItems: "start" }}>{mobileTab === "map" ? mapPanel : chatPanel}</div>
+        <div style={mobileTab === "map" ? { display: "grid", height: "100%", alignItems: "stretch" } : { display: "grid", gap: 12, alignItems: "start" }}>
+          {mobileTab === "map" ? mapPanel : chatPanel}
+        </div>
       )}
 
       {selectedProfileKey ? (
