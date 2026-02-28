@@ -30,8 +30,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build static web app
-        run: npm run build
+      - name: Prepare Pages site
+        run: |
+          mkdir -p pages-site
+          cp index.html pages-site/index.html
 
       - name: Configure Pages
         continue-on-error: true
@@ -56,7 +58,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: pages-site
 
   deploy:
     environment:
