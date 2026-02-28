@@ -1464,13 +1464,216 @@ function createLocalApiClient(): Readonly<{
       const nextUserIdByEmail = { ...state.userIdByEmail };
       const nextProfilesByUserId = { ...state.profilesByUserId };
       const nextPresenceByKey = { ...state.presenceByKey };
+      const nextMediaById = { ...state.mediaById };
+      const nextMediaIdByObjectKey = { ...state.mediaIdByObjectKey };
       const baseLat = Number.isFinite(centerLat as number) ? (centerLat as number) : 40.7484;
       const baseLng = Number.isFinite(centerLng as number) ? (centerLng as number) : -73.9857;
+
+      const demoProfiles: ReadonlyArray<
+        Readonly<{
+          displayName: string;
+          age: number;
+          bio: string;
+          race?: string;
+          heightInches?: number;
+          weightLbs?: number;
+          cockSizeInches?: number;
+          cutStatus?: ProfileCutStatus;
+          position?: ProfilePosition;
+          photoUrl: string;
+        }>
+      > = [
+        {
+          displayName: "Marco V.",
+          age: 29,
+          bio: "Gym after work, rooftop drinks, and late walks around Midtown.",
+          race: "Latino",
+          heightInches: 71,
+          weightLbs: 182,
+          cockSizeInches: 7,
+          cutStatus: "cut",
+          position: "top",
+          photoUrl: "https://randomuser.me/api/portraits/men/11.jpg"
+        },
+        {
+          displayName: "Ethan R.",
+          age: 33,
+          bio: "Tech by day, museum dates and cocktails by night.",
+          race: "White",
+          heightInches: 73,
+          weightLbs: 195,
+          cockSizeInches: 7.5,
+          cutStatus: "uncut",
+          position: "top",
+          photoUrl: "https://randomuser.me/api/portraits/men/14.jpg"
+        },
+        {
+          displayName: "Andre K.",
+          age: 27,
+          bio: "Brooklyn runner, coffee addict, into chill hangs and chemistry.",
+          race: "Black",
+          heightInches: 70,
+          weightLbs: 168,
+          cockSizeInches: 6.5,
+          cutStatus: "cut",
+          position: "side",
+          photoUrl: "https://randomuser.me/api/portraits/men/22.jpg"
+        },
+        {
+          displayName: "Noah S.",
+          age: 31,
+          bio: "Usually near Chelsea. Into clean, discreet, and respectful vibes.",
+          race: "White",
+          heightInches: 72,
+          weightLbs: 176,
+          cockSizeInches: 7,
+          cutStatus: "cut",
+          position: "bottom",
+          photoUrl: "https://randomuser.me/api/portraits/men/27.jpg"
+        },
+        {
+          displayName: "Jalen M.",
+          age: 26,
+          bio: "Night owl, live music, and spontaneous plans.",
+          race: "Black",
+          heightInches: 74,
+          weightLbs: 205,
+          cockSizeInches: 8,
+          cutStatus: "uncut",
+          position: "top",
+          photoUrl: "https://randomuser.me/api/portraits/men/32.jpg"
+        },
+        {
+          displayName: "Luis C.",
+          age: 35,
+          bio: "Designer, foodie, and into low-key private meetups.",
+          race: "Latino",
+          heightInches: 69,
+          weightLbs: 170,
+          cockSizeInches: 6.5,
+          cutStatus: "cut",
+          position: "side",
+          photoUrl: "https://randomuser.me/api/portraits/men/36.jpg"
+        },
+        {
+          displayName: "Dev P.",
+          age: 30,
+          bio: "Pilates and parks. Prefer direct chat and no games.",
+          race: "South Asian",
+          heightInches: 68,
+          weightLbs: 162,
+          cockSizeInches: 6.5,
+          cutStatus: "uncut",
+          position: "bottom",
+          photoUrl: "https://randomuser.me/api/portraits/men/41.jpg"
+        },
+        {
+          displayName: "Tyler A.",
+          age: 28,
+          bio: "Bartender schedule, mostly free late nights.",
+          race: "White",
+          heightInches: 72,
+          weightLbs: 186,
+          cockSizeInches: 7.5,
+          cutStatus: "cut",
+          position: "top",
+          photoUrl: "https://randomuser.me/api/portraits/men/45.jpg"
+        },
+        {
+          displayName: "Micah D.",
+          age: 34,
+          bio: "Film nerd and traveler. Into conversation first.",
+          race: "Black",
+          heightInches: 71,
+          weightLbs: 178,
+          cockSizeInches: 7,
+          cutStatus: "uncut",
+          position: "side",
+          photoUrl: "https://randomuser.me/api/portraits/men/52.jpg"
+        },
+        {
+          displayName: "Adrian L.",
+          age: 25,
+          bio: "Uptown. Looking for fun, clean, and easygoing connections.",
+          race: "Latino",
+          heightInches: 70,
+          weightLbs: 167,
+          cockSizeInches: 6.5,
+          cutStatus: "cut",
+          position: "bottom",
+          photoUrl: "https://randomuser.me/api/portraits/men/58.jpg"
+        },
+        {
+          displayName: "Caleb W.",
+          age: 32,
+          bio: "Personal trainer. Confident, respectful, straightforward.",
+          race: "White",
+          heightInches: 75,
+          weightLbs: 214,
+          cockSizeInches: 8,
+          cutStatus: "cut",
+          position: "top",
+          photoUrl: "https://randomuser.me/api/portraits/men/63.jpg"
+        },
+        {
+          displayName: "Nico T.",
+          age: 27,
+          bio: "Coffee shops, playlists, and private meetups.",
+          race: "Asian",
+          heightInches: 69,
+          weightLbs: 160,
+          cockSizeInches: 6,
+          cutStatus: "uncut",
+          position: "side",
+          photoUrl: "https://randomuser.me/api/portraits/men/69.jpg"
+        }
+      ];
+
+      // Replace prior generated seed users so repeated seeding doesn't keep stale Explorer profiles.
+      const removedSeedIds = new Set<string>();
+      for (const [userId, user] of Object.entries(nextUsersById)) {
+        if (user.email.endsWith("@local.seed")) {
+          removedSeedIds.add(userId);
+          delete nextUsersById[userId];
+          delete nextProfilesByUserId[userId];
+          delete nextPresenceByKey[`user:${userId}`];
+        }
+      }
+      for (const [email, userId] of Object.entries(nextUserIdByEmail)) {
+        if (email.endsWith("@local.seed") || removedSeedIds.has(userId)) {
+          delete nextUserIdByEmail[email];
+        }
+      }
+      for (const [mediaId, rec] of Object.entries(nextMediaById)) {
+        if (removedSeedIds.has(rec.ownerUserId)) {
+          delete nextMediaById[mediaId];
+        }
+      }
+      for (const [objectKey, mediaId] of Object.entries(nextMediaIdByObjectKey)) {
+        if (!nextMediaById[mediaId]) {
+          delete nextMediaIdByObjectKey[objectKey];
+        }
+      }
+
       for (let i = 0; i < c; i += 1) {
+        const template = demoProfiles[i % demoProfiles.length];
         const id = randomId("seed");
-        const name = `Explorer ${String(i + 1).padStart(2, "0")}`;
-        const age = 22 + (i % 18);
+        const name = template.displayName;
+        const age = template.age;
         const email = `${id}@local.seed`;
+        const mediaId = randomId("media");
+        const objectKey = `profile/${id}/${mediaId}`;
+        const profileMedia: LocalMediaRecord = {
+          mediaId,
+          objectKey,
+          ownerUserId: id,
+          kind: "photo_main",
+          mimeType: "image/jpeg",
+          uploaded: true,
+          dataUrl: template.photoUrl,
+          createdAtMs: nowMs()
+        };
+
         nextUsersById[id] = {
           id,
           email,
@@ -1485,11 +1688,21 @@ function createLocalApiClient(): Readonly<{
           userId: id,
           displayName: name,
           age,
-          bio: "Looking around.",
-          stats: {},
+          bio: template.bio,
+          stats: {
+            race: template.race,
+            heightInches: template.heightInches,
+            weightLbs: template.weightLbs,
+            cockSizeInches: template.cockSizeInches,
+            cutStatus: template.cutStatus,
+            position: template.position
+          },
+          mainPhotoMediaId: mediaId,
           galleryMediaIds: [],
           updatedAtMs: nowMs()
         };
+        nextMediaById[mediaId] = profileMedia;
+        nextMediaIdByObjectKey[objectKey] = mediaId;
         const lat = baseLat + (Math.random() - 0.5) * 0.02;
         const lng = baseLng + (Math.random() - 0.5) * 0.02;
         nextPresenceByKey[`user:${id}`] = {
@@ -1507,7 +1720,9 @@ function createLocalApiClient(): Readonly<{
         usersById: nextUsersById,
         userIdByEmail: nextUserIdByEmail,
         profilesByUserId: nextProfilesByUserId,
-        presenceByKey: nextPresenceByKey
+        presenceByKey: nextPresenceByKey,
+        mediaById: nextMediaById,
+        mediaIdByObjectKey: nextMediaIdByObjectKey
       });
       return { seededCount: seeded.length, seeded };
     }
