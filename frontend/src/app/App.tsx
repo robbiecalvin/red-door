@@ -11,6 +11,7 @@ type TopTab = "discover" | "threads" | "public" | "profile" | "settings" | "subm
 type DiscoverFilter = "all" | "online" | "favorites";
 
 const SESSION_TOKEN_KEY = "reddoor_session_token";
+const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
 const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "public", "profile", "settings", "submissions", "promoted"]);
 const DEFAULT_TAB: TopTab = "discover";
 const FULL_PAGE_TAB_NAV = false;
@@ -87,12 +88,25 @@ function tokenFromLocationSearch(): string | null {
   }
 }
 
+function tokenFromWindowName(): string | null {
+  try {
+    const raw = typeof window.name === "string" ? window.name : "";
+    if (!raw.startsWith(WINDOW_NAME_TOKEN_PREFIX)) return null;
+    const token = raw.slice(WINDOW_NAME_TOKEN_PREFIX.length).trim();
+    return token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
 function initialSessionToken(): string | null {
   const local = safeLocalStorageGet(SESSION_TOKEN_KEY);
   if (local) return local;
   const session = safeSessionStorageGet(SESSION_TOKEN_KEY);
   if (session) return session;
-  return tokenFromLocationSearch();
+  const searchToken = tokenFromLocationSearch();
+  if (searchToken) return searchToken;
+  return tokenFromWindowName();
 }
 
 function loadSettingsFromEnv(): Settings {
@@ -218,11 +232,23 @@ export function App(): React.ReactElement {
   const persistSessionToken = useCallback((token: string): void => {
     safeLocalStorageSet(SESSION_TOKEN_KEY, token);
     safeSessionStorageSet(SESSION_TOKEN_KEY, token);
+    try {
+      window.name = `${WINDOW_NAME_TOKEN_PREFIX}${token}`;
+    } catch {
+      // Some embedded environments can block writes; ignore.
+    }
   }, []);
 
   const clearPersistedSessionToken = useCallback((): void => {
     safeLocalStorageRemove(SESSION_TOKEN_KEY);
     safeSessionStorageRemove(SESSION_TOKEN_KEY);
+    try {
+      if (window.name.startsWith(WINDOW_NAME_TOKEN_PREFIX)) {
+        window.name = "";
+      }
+    } catch {
+      // Ignore cleanup failures in constrained environments.
+    }
   }, []);
 
   useEffect(() => {
@@ -246,17 +272,22 @@ export function App(): React.ReactElement {
 
   useEffect(() => {
     if (!sessionToken) return;
+    if (session?.sessionToken === sessionToken) return;
     setBusy(true);
     setLastError(null);
     refreshSession(sessionToken)
       .catch((e) => {
+        if (session) {
+          setLastError(normalizeUiError(e, "Session refresh failed. Keeping current session."));
+          return;
+        }
         setLastError(normalizeUiError(e, "Session error."));
         clearPersistedSessionToken();
         setSessionToken(null);
         setSession(null);
       })
       .finally(() => setBusy(false));
-  }, [clearPersistedSessionToken, refreshSession, sessionToken]);
+  }, [clearPersistedSessionToken, refreshSession, session, sessionToken]);
 
   useEffect(() => {
     if (!session) {
@@ -514,15 +545,13 @@ export function App(): React.ReactElement {
       setActiveTab(tabFromLocation());
       return;
     }
-    if (!window.location.hash) {
-      window.history.replaceState(null, "", hashForTab(activeTab));
-    }
+    if (!window.location.hash) window.history.replaceState(null, "", hashForTab(tabFromLocation()));
     const onHashChange = (): void => {
       setActiveTab(tabFromHash());
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, [activeTab]);
+  }, []);
 
   const topAvatar = topAvatarUrl ?? avatarForSeed(session?.userId ?? session?.sessionToken ?? "guest");
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
