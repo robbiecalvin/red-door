@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  administration: write
   contents: read
   pages: write
   id-token: write
@@ -35,14 +34,19 @@ jobs:
         run: npm run build
 
       - name: Configure Pages
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
-            await github.request("PUT /repos/{owner}/{repo}/pages", {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              build_type: "workflow"
-            });
+            try {
+              await github.request("PUT /repos/{owner}/{repo}/pages", {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                build_type: "workflow"
+              });
+            } catch (error) {
+              core.warning(`Could not force Pages build_type to workflow: ${error.message}`);
+            }
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
