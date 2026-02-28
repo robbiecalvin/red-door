@@ -1342,7 +1342,7 @@ function CruiseChat({
     const minCock = filterMinCockSize.trim() ? Number(filterMinCockSize) : undefined;
     const maxCock = filterMaxCockSize.trim() ? Number(filterMaxCockSize) : undefined;
 
-    return baseCards.filter((p) => {
+    const filtered = baseCards.filter((p) => {
       if (favoritesOnly && !favorites.has(p.userId)) return false;
       if (onlineStatusFilter === "online" && !p.isOnline) return false;
       if (onlineStatusFilter === "offline" && p.isOnline) return false;
@@ -1362,6 +1362,14 @@ function CruiseChat({
       if (filterCutStatus && p.stats?.cutStatus !== filterCutStatus) return false;
       if (filterPosition && p.stats?.position !== filterPosition) return false;
       return true;
+    });
+    return [...filtered].sort((a, b) => {
+      const aMeters = typeof a.meters === "number" && Number.isFinite(a.meters) ? a.meters : Number.POSITIVE_INFINITY;
+      const bMeters = typeof b.meters === "number" && Number.isFinite(b.meters) ? b.meters : Number.POSITIVE_INFINITY;
+      if (aMeters !== bMeters) return aMeters - bMeters;
+      const nameCmp = a.displayName.localeCompare(b.displayName);
+      if (nameCmp !== 0) return nameCmp;
+      return a.key.localeCompare(b.key);
     });
   }, [
     baseCards,
