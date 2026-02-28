@@ -250,9 +250,19 @@ type LocalState = Readonly<{
 }>;
 
 const LOCAL_STATE_KEY = "reddoor_local_state_v1";
+const LOCAL_AUTH_STATE_KEY = "reddoor_local_auth_state_v1";
 const LOCAL_UPLOAD_PREFIX = "rdlocal://";
 // Full-page web navigation requires durable local state across reloads.
 const LOCAL_PERSIST_ENABLED = true;
+
+type LocalAuthState = Readonly<{
+  usersById: LocalState["usersById"];
+  userIdByEmail: LocalState["userIdByEmail"];
+  sessionsByToken: LocalState["sessionsByToken"];
+  profilesByUserId: LocalState["profilesByUserId"];
+  favoritesByUserId: LocalState["favoritesByUserId"];
+  blockedByActorKey: LocalState["blockedByActorKey"];
+}>;
 
 function isLocalApiMode(basePath: string): boolean {
   const trimmed = basePath.trim().toLowerCase();
@@ -316,22 +326,73 @@ function emptyLocalState(): LocalState {
 
 function loadLocalState(): LocalState {
   if (!LOCAL_PERSIST_ENABLED) return emptyLocalState();
+  const auth = loadLocalAuthState();
   try {
     const raw = localStorage.getItem(LOCAL_STATE_KEY);
-    if (!raw) return emptyLocalState();
+    if (!raw) {
+      return { ...emptyLocalState(), ...auth };
+    }
     const parsed = JSON.parse(raw) as LocalState;
-    return { ...emptyLocalState(), ...parsed };
+    return { ...emptyLocalState(), ...parsed, ...auth };
   } catch {
-    return emptyLocalState();
+    return { ...emptyLocalState(), ...auth };
   }
 }
 
 function saveLocalState(next: LocalState): void {
   if (!LOCAL_PERSIST_ENABLED) return;
+  saveLocalAuthState(next);
   try {
     localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(next));
   } catch {
     // Storage can be unavailable; local mode degrades to in-memory for this session.
+  }
+}
+
+function emptyLocalAuthState(): LocalAuthState {
+  return {
+    usersById: {},
+    userIdByEmail: {},
+    sessionsByToken: {},
+    profilesByUserId: {},
+    favoritesByUserId: {},
+    blockedByActorKey: {}
+  };
+}
+
+function loadLocalAuthState(): LocalAuthState {
+  if (!LOCAL_PERSIST_ENABLED) return emptyLocalAuthState();
+  try {
+    const raw = localStorage.getItem(LOCAL_AUTH_STATE_KEY);
+    if (!raw) return emptyLocalAuthState();
+    const parsed = JSON.parse(raw) as Partial<LocalAuthState>;
+    return {
+      usersById: parsed.usersById ?? {},
+      userIdByEmail: parsed.userIdByEmail ?? {},
+      sessionsByToken: parsed.sessionsByToken ?? {},
+      profilesByUserId: parsed.profilesByUserId ?? {},
+      favoritesByUserId: parsed.favoritesByUserId ?? {},
+      blockedByActorKey: parsed.blockedByActorKey ?? {}
+    };
+  } catch {
+    return emptyLocalAuthState();
+  }
+}
+
+function saveLocalAuthState(next: LocalState): void {
+  if (!LOCAL_PERSIST_ENABLED) return;
+  const authState: LocalAuthState = {
+    usersById: next.usersById,
+    userIdByEmail: next.userIdByEmail,
+    sessionsByToken: next.sessionsByToken,
+    profilesByUserId: next.profilesByUserId,
+    favoritesByUserId: next.favoritesByUserId,
+    blockedByActorKey: next.blockedByActorKey
+  };
+  try {
+    localStorage.setItem(LOCAL_AUTH_STATE_KEY, JSON.stringify(authState));
+  } catch {
+    // Best-effort backup for auth continuity across page navigation.
   }
 }
 
