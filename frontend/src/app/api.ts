@@ -332,6 +332,8 @@ function saveLocalState(next: LocalState): void {
 }
 
 let inMemoryFallbackState: LocalState | null = null;
+let pendingPersistState: LocalState | null = null;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function readState(): LocalState {
   if (inMemoryFallbackState) return inMemoryFallbackState;
@@ -340,9 +342,25 @@ function readState(): LocalState {
   return state;
 }
 
-function writeState(state: LocalState): void {
+function flushPendingPersist(): void {
+  if (!pendingPersistState) return;
+  saveLocalState(pendingPersistState);
+  pendingPersistState = null;
+}
+
+function schedulePersist(state: LocalState): void {
+  pendingPersistState = state;
+  if (persistTimer !== null) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    flushPendingPersist();
+  }, 250);
+}
+
+function writeState(state: LocalState, persist = true): void {
   inMemoryFallbackState = state;
-  saveLocalState(state);
+  if (!persist) return;
+  schedulePersist(state);
 }
 
 function actorKeyForSession(session: Session): string {
@@ -744,13 +762,16 @@ function createLocalApiClient(): Readonly<{
         status,
         updatedAtMs: nowMs()
       };
-      writeState({
+      writeState(
+        {
         ...state,
         presenceByKey: {
           ...state.presenceByKey,
           [key]: nextPresence
         }
-      });
+      },
+        false
+      );
       return { ok: true, presence: clone(nextPresence) };
     },
     async listActivePresence(): Promise<{ presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
