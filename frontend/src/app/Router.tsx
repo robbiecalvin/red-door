@@ -35,6 +35,7 @@ type Settings = Readonly<{
 type TopTab = "discover" | "threads" | "public" | "profile" | "settings" | "submissions" | "promoted";
 type DiscoverFilter = "all" | "online" | "favorites";
 type MobileCruiseTab = "map" | "chat";
+type DiscoverScreen = MobileCruiseTab;
 type MobilePublicTab = "ads" | "events" | "spots";
 type MessageChannel = "instant" | "direct";
 const FIRE_SIGNAL_TEXT = "FIRE_SIGNAL|1";
@@ -262,6 +263,8 @@ function CruiseSurface({
   setBusy,
   setLastError,
   isMobile,
+  discoverScreen,
+  onDiscoverScreenChange,
   onOpenThreadRequested,
   onUnreadCountChange
 }: Readonly<{
@@ -273,10 +276,12 @@ function CruiseSurface({
   setBusy(value: boolean): void;
   setLastError(value: string | null): void;
   isMobile: boolean;
+  discoverScreen: DiscoverScreen;
+  onDiscoverScreenChange(value: DiscoverScreen): void;
   onOpenThreadRequested(key: string): void;
   onUnreadCountChange?(count: number): void;
 }>): React.ReactElement {
-  const [mobileTab, setMobileTab] = useState<MobileCruiseTab>("map");
+  const [mobileTab, setMobileTab] = useState<MobileCruiseTab>(discoverScreen);
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
   const [selectedProfileKey, setSelectedProfileKey] = useState<string | null>(null);
   const [selfCoords, setSelfCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -327,6 +332,10 @@ function CruiseSurface({
   const [travelCenter, setTravelCenter] = useState<{ lat: number; lng: number } | null>(() => readTravelCenter());
   const { state: presenceState, lastErrorMessage: realtimeError } = useCruisePresence({ wsUrl: wsProxyUrl(), sessionToken: session.sessionToken });
   const presence = useMemo(() => Array.from(presenceState.byKey.values()), [presenceState.byKey]);
+
+  useEffect(() => {
+    setMobileTab(discoverScreen);
+  }, [discoverScreen]);
 
   useEffect(() => {
     const refreshTravelCenter = (): void => {
@@ -752,6 +761,11 @@ function CruiseSurface({
     [cruisingSpots]
   );
 
+  const setDiscoverTab = (next: MobileCruiseTab): void => {
+    setMobileTab(next);
+    onDiscoverScreenChange(next);
+  };
+
   const mapPanel = (
     <CruiseMap
       wsUrl={wsProxyUrl()}
@@ -794,7 +808,7 @@ function CruiseSurface({
           style={buttonSecondary(false)}
           onClick={() => {
             window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "open_filters" } }));
-            setMobileTab("chat");
+            setDiscoverTab("chat");
           }}
         >
           FILTER
@@ -855,15 +869,18 @@ function CruiseSurface({
             }}
           >
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <button type="button" style={mobileTab === "map" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setMobileTab("map")}>MAP</button>
-              <button type="button" style={mobileTab === "chat" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setMobileTab("chat")}>CHAT</button>
+              <button type="button" style={mobileTab === "map" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setDiscoverTab("map")}>MAP</button>
+              <button type="button" style={mobileTab === "chat" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setDiscoverTab("chat")}>CHAT</button>
             </div>
           </div>
         </>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 12, alignItems: "start" }}>
-          {mapPanel}
-          {chatPanel}
+        <div style={{ display: "grid", gap: 12, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <button type="button" style={mobileTab === "map" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setDiscoverTab("map")}>MAP</button>
+            <button type="button" style={mobileTab === "chat" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setDiscoverTab("chat")}>CHAT</button>
+          </div>
+          {mobileTab === "map" ? mapPanel : chatPanel}
         </div>
       )}
 
@@ -4333,6 +4350,8 @@ export function Router({
   settings,
   activeTab,
   setActiveTab,
+  discoverScreen,
+  onDiscoverScreenChange,
   discoverFilter,
   busy,
   setBusy,
@@ -4347,6 +4366,8 @@ export function Router({
   settings: Settings;
   activeTab: TopTab;
   setActiveTab(tab: TopTab): void;
+  discoverScreen: DiscoverScreen;
+  onDiscoverScreenChange(value: DiscoverScreen): void;
   discoverFilter: DiscoverFilter;
   busy: boolean;
   setBusy(value: boolean): void;
@@ -4379,6 +4400,8 @@ export function Router({
           setBusy={setBusy}
           setLastError={setLastError}
           isMobile={isMobile}
+          discoverScreen={discoverScreen}
+          onDiscoverScreenChange={onDiscoverScreenChange}
           onOpenThreadRequested={(key) => {
             setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
             setActiveTab("threads");

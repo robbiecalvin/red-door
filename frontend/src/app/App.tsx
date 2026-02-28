@@ -9,6 +9,7 @@ import welcomeDoorImage from "../assets/appbackground.png";
 type AuthView = "guest" | "register" | "login";
 type TopTab = "discover" | "threads" | "public" | "profile" | "settings" | "submissions" | "promoted";
 type DiscoverFilter = "all" | "online" | "favorites";
+type DiscoverScreen = "map" | "chat";
 
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
@@ -173,9 +174,15 @@ function avatarForSeed(seed: string): string {
 }
 
 function tabFromHash(): TopTab {
-  const raw = window.location.hash.trim();
-  const slug = raw.replace(/^#\/?/, "").split("/")[0]?.toLowerCase() ?? "";
-  return TAB_SET.has(slug as TopTab) ? (slug as TopTab) : DEFAULT_TAB;
+  const raw = window.location.hash.trim().replace(/^#\/?/, "").split("/")[0]?.toLowerCase() ?? "";
+  if (raw === "discover-map" || raw === "discover-chat") return "discover";
+  return TAB_SET.has(raw as TopTab) ? (raw as TopTab) : DEFAULT_TAB;
+}
+
+function discoverScreenFromHash(): DiscoverScreen {
+  const raw = window.location.hash.trim().replace(/^#\/?/, "").split("/")[0]?.toLowerCase() ?? "";
+  if (raw === "discover-map") return "map";
+  return "chat";
 }
 
 function tabFromPathname(): TopTab | null {
@@ -191,8 +198,9 @@ function tabFromLocation(): TopTab {
   return tabFromHash();
 }
 
-function hashForTab(tab: TopTab): string {
-  return `#/${tab}`;
+function hashForTab(tab: TopTab, discoverScreen: DiscoverScreen): string {
+  if (tab !== "discover") return `#/${tab}`;
+  return discoverScreen === "map" ? "#/discover-map" : "#/discover-chat";
 }
 
 function urlForTab(tab: TopTab, sessionToken?: string | null): string {
@@ -217,6 +225,7 @@ export function App(): React.ReactElement {
 
   const [authView, setAuthView] = useState<AuthView>("guest");
   const [activeTab, setActiveTab] = useState<TopTab>(() => tabFromLocation());
+  const [discoverScreen, setDiscoverScreen] = useState<DiscoverScreen>(() => discoverScreenFromHash());
   const [discoverFilter, setDiscoverFilter] = useState<DiscoverFilter>("all");
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
@@ -515,7 +524,7 @@ export function App(): React.ReactElement {
     }
   }, [unreadChatCount]);
 
-  const setTabAndRoute = useCallback((tab: TopTab): void => {
+  const setTabAndRoute = useCallback((tab: TopTab, nextDiscoverScreen?: DiscoverScreen): void => {
     if (FULL_PAGE_TAB_NAV) {
       const nextUrl = urlForTab(tab, sessionToken);
       const currentPath = window.location.pathname;
@@ -533,21 +542,33 @@ export function App(): React.ReactElement {
       return;
     }
     setActiveTab(tab);
-    const nextHash = hashForTab(tab);
+    const discoverTarget = nextDiscoverScreen ?? discoverScreen;
+    if (tab === "discover") setDiscoverScreen(discoverTarget);
+    const nextHash = hashForTab(tab, discoverTarget);
     if (window.location.hash !== nextHash) {
       window.history.pushState(null, "", nextHash);
     }
     window.dispatchEvent(new CustomEvent("rd:tab-select", { detail: { tab } }));
-  }, [sessionToken]);
+  }, [discoverScreen, sessionToken]);
+
+  const setDiscoverScreenAndRoute = useCallback((next: DiscoverScreen): void => {
+    setDiscoverScreen(next);
+    if (activeTab !== "discover") return;
+    const nextHash = hashForTab("discover", next);
+    if (window.location.hash !== nextHash) {
+      window.history.pushState(null, "", nextHash);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (FULL_PAGE_TAB_NAV) {
       setActiveTab(tabFromLocation());
       return;
     }
-    if (!window.location.hash) window.history.replaceState(null, "", hashForTab(tabFromLocation()));
+    if (!window.location.hash) window.history.replaceState(null, "", hashForTab(tabFromLocation(), "chat"));
     const onHashChange = (): void => {
       setActiveTab(tabFromHash());
+      setDiscoverScreen(discoverScreenFromHash());
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -593,7 +614,7 @@ export function App(): React.ReactElement {
                       <div className="rd-mark" aria-hidden="true" />
                       <div className="rd-name">Red Door</div>
                     </div>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("discover")} aria-label="Discover">Discover</button>
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("discover", "chat")} aria-label="Discover">Discover</button>
                     <button type="button" className="rd-btn" onClick={() => setTabAndRoute("threads")} aria-label="Inbox">
                       Inbox{unreadChatCount > 0 ? ` (${unreadChatCount})` : ""}
                     </button>
@@ -813,6 +834,8 @@ export function App(): React.ReactElement {
                 settings={settings}
                 activeTab={activeTab}
                 setActiveTab={setTabAndRoute}
+                discoverScreen={discoverScreen}
+                onDiscoverScreenChange={setDiscoverScreenAndRoute}
                 discoverFilter={discoverFilter}
                 busy={busy}
                 setBusy={setBusy}
@@ -827,7 +850,7 @@ export function App(): React.ReactElement {
 
       {isMobile && session && session.ageVerified === true ? (
         <nav className="rd-mobile-nav" aria-label="Mobile navigation">
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`} onClick={() => setTabAndRoute("discover")} aria-label="Discover">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`} onClick={() => setTabAndRoute("discover", "chat")} aria-label="Discover">
             <span className="rd-mobile-nav-icon" aria-hidden="true">⌖</span>
           </button>
           <button type="button" className={`rd-mobile-nav-btn ${activeTab === "threads" ? "is-active" : ""}`} onClick={() => setTabAndRoute("threads")} aria-label="Inbox">
