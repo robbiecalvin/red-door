@@ -21,31 +21,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build web app
-        env:
-          DUALMODE_API_BASE_PATH: "__local__"
-          DUALMODE_WS_URL: "__disabled__"
-        run: npm run build
-
-      - name: Add nojekyll marker
+      - name: Prepare Pages site from committed static files
         run: |
-          touch dist/.nojekyll
-          cp dist/index.html dist/discover.html
-          cp dist/index.html dist/threads.html
-          cp dist/index.html dist/public.html
-          cp dist/index.html dist/profile.html
-          cp dist/index.html dist/settings.html
-          cp dist/index.html dist/submissions.html
-          cp dist/index.html dist/promoted.html
+          rm -rf pages-site
+          mkdir -p pages-site/assets
+          cp index.html pages-site/index.html
+          cp discover.html pages-site/discover.html
+          cp threads.html pages-site/threads.html
+          cp public.html pages-site/public.html
+          cp profile.html pages-site/profile.html
+          cp settings.html pages-site/settings.html
+          cp submissions.html pages-site/submissions.html
+          cp promoted.html pages-site/promoted.html
+          cp -R assets/. pages-site/assets/
+          touch pages-site/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Configure Pages
         continue-on-error: true
@@ -62,15 +56,10 @@ jobs:
               core.warning(`Could not force Pages build_type to workflow: ${error.message}`);
             }
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: pages-site
 
   deploy:
     environment:
