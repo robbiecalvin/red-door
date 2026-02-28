@@ -610,7 +610,6 @@ export function App(): React.ReactElement {
                 {session.ageVerified === true ? (
                   <>
                     <div className="rd-brand" aria-label="Red Door">
-                      <div className="rd-mark" aria-hidden="true" />
                       <div className="rd-name">Red Door</div>
                     </div>
                     <button type="button" className="rd-btn" onClick={() => setTabAndRoute("discover", "map")} aria-label="Map">Map</button>

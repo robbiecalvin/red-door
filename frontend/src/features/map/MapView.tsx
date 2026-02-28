@@ -68,10 +68,12 @@ function markerEl(m: MapMarker): HTMLButtonElement {
   const el = document.createElement("button");
   el.type = "button";
   el.setAttribute("aria-label", m.label ?? "Presence marker");
-  el.style.width = "36px";
-  el.style.height = "36px";
+  el.style.width = "40px";
+  el.style.height = "40px";
   el.style.borderRadius = "999px";
   el.style.border = `2px solid ${m.color}`;
+  el.style.touchAction = "manipulation";
+  el.style.userSelect = "none";
   if (m.markerType === "spot") {
     el.style.background = "radial-gradient(circle at 30% 30%, #ff4f60, #a70013)";
     el.style.display = "grid";
@@ -89,6 +91,7 @@ function markerEl(m: MapMarker): HTMLButtonElement {
   }
   el.style.padding = "0";
   el.style.cursor = typeof m.onClick === "function" ? "pointer" : "default";
+  el.style.pointerEvents = "auto";
   return el;
 }
 
@@ -227,10 +230,14 @@ export function MapView({
 
       const markerButton = markerEl(m);
       if (typeof m.onClick === "function") {
-        markerButton.addEventListener("click", (evt) => {
+        const trigger = (evt: Event): void => {
           evt.preventDefault();
+          evt.stopPropagation();
           m.onClick?.();
-        });
+        };
+        markerButton.addEventListener("click", trigger);
+        markerButton.addEventListener("touchend", trigger, { passive: false });
+        markerButton.addEventListener("pointerup", trigger);
       }
       const marker = new ml.Marker({ element: markerButton } as unknown as Record<string, unknown>)
         .setLngLat([m.position.lng, m.position.lat]);
