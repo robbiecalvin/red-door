@@ -220,6 +220,21 @@ function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: 
   return earthRadius * c;
 }
 
+function readTravelCenter(): { lat: number; lng: number } | null {
+  try {
+    const raw = localStorage.getItem("reddoor_travel_center");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { enabled?: unknown; lat?: unknown; lng?: unknown };
+    if (parsed.enabled !== true) return null;
+    if (typeof parsed.lat === "number" && Number.isFinite(parsed.lat) && typeof parsed.lng === "number" && Number.isFinite(parsed.lng)) {
+      return { lat: parsed.lat, lng: parsed.lng };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function useIsMobile(): boolean {
   const [isMobile, setIsMobile] = useState<boolean>(() => window.matchMedia("(max-width: 900px)").matches);
 
@@ -309,22 +324,27 @@ function CruiseSurface({
   const [seedAttempted, setSeedAttempted] = useState<boolean>(false);
   const [cruisingSpots, setCruisingSpots] = useState<ReadonlyArray<CruisingSpot>>([]);
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
+  const [travelCenter, setTravelCenter] = useState<{ lat: number; lng: number } | null>(() => readTravelCenter());
   const { state: presenceState, lastErrorMessage: realtimeError } = useCruisePresence({ wsUrl: wsProxyUrl(), sessionToken: session.sessionToken });
   const presence = useMemo(() => Array.from(presenceState.byKey.values()), [presenceState.byKey]);
-  const travelCenter = (() => {
-    try {
-      const raw = localStorage.getItem("reddoor_travel_center");
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { enabled?: unknown; lat?: unknown; lng?: unknown };
-      if (parsed.enabled !== true) return null;
-      if (typeof parsed.lat === "number" && Number.isFinite(parsed.lat) && typeof parsed.lng === "number" && Number.isFinite(parsed.lng)) {
-        return { lat: parsed.lat, lng: parsed.lng };
+
+  useEffect(() => {
+    const refreshTravelCenter = (): void => {
+      setTravelCenter(readTravelCenter());
+    };
+    const onStorage = (evt: StorageEvent): void => {
+      if (evt.key === null || evt.key === "reddoor_travel_center") {
+        refreshTravelCenter();
       }
-      return null;
-    } catch {
-      return null;
-    }
-  })();
+    };
+    refreshTravelCenter();
+    window.addEventListener("rd:location-updated", refreshTravelCenter as EventListener);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("rd:location-updated", refreshTravelCenter as EventListener);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
 
   const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
   const mergedPresence = useMemo(() => {
@@ -3819,6 +3839,11 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
             enabled: res.profile.travelMode?.enabled === true,
             lat: res.profile.travelMode?.lat,
             lng: res.profile.travelMode?.lng
+          })
+        );
+        window.dispatchEvent(
+          new CustomEvent("rd:location-updated", {
+            detail: { lat: res.profile.travelMode?.lat, lng: res.profile.travelMode?.lng }
           })
         );
       } catch {
