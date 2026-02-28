@@ -221,6 +221,13 @@ function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: 
   return earthRadius * c;
 }
 
+function formatDistanceLabel(distanceInMeters: number): string {
+  if (!Number.isFinite(distanceInMeters) || distanceInMeters < 0) return "-";
+  if (distanceInMeters < 1_000) return `${Math.round(distanceInMeters)} m`;
+  if (distanceInMeters < 10_000) return `${(distanceInMeters / 1_000).toFixed(1)} km`;
+  return `${Math.round(distanceInMeters / 1_000)} km`;
+}
+
 function readTravelCenter(): { lat: number; lng: number } | null {
   try {
     const raw = localStorage.getItem("reddoor_travel_center");
@@ -370,6 +377,14 @@ function CruiseSurface({
     if (!selfCoords) return onlinePeers;
     return [...onlinePeers].sort((a, b) => distanceMeters(selfCoords, { lat: a.lat, lng: a.lng }) - distanceMeters(selfCoords, { lat: b.lat, lng: b.lng }));
   }, [onlinePeers, selfCoords]);
+  const selectedProfileDistanceLabel = useMemo(() => {
+    if (!selectedProfileKey) return null;
+    if (selectedProfileKey === meKey) return "0 m";
+    if (!selfCoords) return null;
+    const target = mergedPresence.find((p) => p.key === selectedProfileKey);
+    if (!target) return null;
+    return formatDistanceLabel(distanceMeters(selfCoords, { lat: target.lat, lng: target.lng }));
+  }, [meKey, mergedPresence, selectedProfileKey, selfCoords]);
 
   useEffect(() => {
     let cancelled = false;
@@ -959,6 +974,7 @@ function CruiseSurface({
               </div>
               <div style={{ color: "#ced3dc", fontSize: 14, lineHeight: 1.5 }}>
                 <div>Age: {selectedPublicProfile?.age ?? "-"}</div>
+                <div>Distance: {selectedProfileDistanceLabel ?? "-"}</div>
                 <div>Race: {selectedPublicProfile?.stats?.race ?? "-"}</div>
                 <div>Height: {selectedPublicProfile?.stats?.heightInches ?? "-"}</div>
                 <div>Weight: {selectedPublicProfile?.stats?.weightLbs ?? "-"}</div>
