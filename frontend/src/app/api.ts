@@ -251,6 +251,7 @@ type LocalState = Readonly<{
 
 const LOCAL_STATE_KEY = "reddoor_local_state_v1";
 const LOCAL_UPLOAD_PREFIX = "rdlocal://";
+const LOCAL_PERSIST_ENABLED = false;
 
 function isLocalApiMode(basePath: string): boolean {
   const trimmed = basePath.trim().toLowerCase();
@@ -313,6 +314,7 @@ function emptyLocalState(): LocalState {
 }
 
 function loadLocalState(): LocalState {
+  if (!LOCAL_PERSIST_ENABLED) return emptyLocalState();
   try {
     const raw = localStorage.getItem(LOCAL_STATE_KEY);
     if (!raw) return emptyLocalState();
@@ -324,6 +326,7 @@ function loadLocalState(): LocalState {
 }
 
 function saveLocalState(next: LocalState): void {
+  if (!LOCAL_PERSIST_ENABLED) return;
   try {
     localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(next));
   } catch {
@@ -349,6 +352,7 @@ function flushPendingPersist(): void {
 }
 
 function schedulePersist(state: LocalState): void {
+  if (!LOCAL_PERSIST_ENABLED) return;
   pendingPersistState = state;
   if (persistTimer !== null) return;
   persistTimer = setTimeout(() => {
