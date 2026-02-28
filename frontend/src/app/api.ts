@@ -336,8 +336,6 @@ function saveLocalState(next: LocalState): void {
 }
 
 let inMemoryFallbackState: LocalState | null = null;
-let pendingPersistState: LocalState | null = null;
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function readState(): LocalState {
   if (inMemoryFallbackState) return inMemoryFallbackState;
@@ -346,26 +344,10 @@ function readState(): LocalState {
   return state;
 }
 
-function flushPendingPersist(): void {
-  if (!pendingPersistState) return;
-  saveLocalState(pendingPersistState);
-  pendingPersistState = null;
-}
-
-function schedulePersist(state: LocalState): void {
-  if (!LOCAL_PERSIST_ENABLED) return;
-  pendingPersistState = state;
-  if (persistTimer !== null) return;
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    flushPendingPersist();
-  }, 250);
-}
-
 function writeState(state: LocalState, persist = true): void {
   inMemoryFallbackState = state;
   if (!persist) return;
-  schedulePersist(state);
+  saveLocalState(state);
 }
 
 function actorKeyForSession(session: Session): string {
