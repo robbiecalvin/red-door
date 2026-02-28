@@ -261,11 +261,28 @@ export function App(): React.ReactElement {
     setLastError(null);
     setAuthInfo("");
     try {
-      const res = await api.register(email, password, phoneE164);
-      setPendingVerificationEmail(res.email);
-      setAuthView("register");
-      setVerificationCode("");
-      setAuthInfo("Verification code sent to your phone. Enter the 6-digit code.");
+      await api.register(email, password, phoneE164);
+      try {
+        const loginRes = await api.login(email, password);
+        safeLocalStorageSet(SESSION_TOKEN_KEY, loginRes.session.sessionToken);
+        setSessionToken(loginRes.session.sessionToken);
+        setSession(loginRes.session);
+        setPendingVerificationEmail("");
+        setVerificationCode("");
+        setAuthInfo("");
+      } catch (loginError) {
+        const err = loginError as ServiceError;
+        const message = normalizeUiError(loginError, "Register failed.");
+        const requiresVerification =
+          err?.code === "EMAIL_VERIFICATION_REQUIRED" || message.toLowerCase().includes("verification required");
+        if (!requiresVerification) {
+          throw loginError;
+        }
+        setPendingVerificationEmail(email.trim());
+        setAuthView("register");
+        setVerificationCode("");
+        setAuthInfo("Verification code sent to your phone. Enter the 6-digit code.");
+      }
     } catch (e) {
       setLastError(normalizeUiError(e, "Register failed."));
     } finally {

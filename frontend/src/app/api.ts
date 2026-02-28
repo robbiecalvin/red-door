@@ -621,16 +621,14 @@ function createLocalApiClient(): Readonly<{
         email: normalizedEmail,
         password,
         phoneE164,
-        verified: false,
+        verified: true,
         userType: "registered",
         tier: "free"
       };
-      const code = "111111";
       writeState({
         ...state,
         usersById: { ...state.usersById, [userId]: user },
         userIdByEmail: { ...state.userIdByEmail, [normalizedEmail]: userId },
-        verificationCodesByEmail: { ...state.verificationCodesByEmail, [normalizedEmail]: code },
         profilesByUserId: {
           ...state.profilesByUserId,
           [userId]: defaultProfile(userId, normalizedEmail.split("@")[0] || undefined)
