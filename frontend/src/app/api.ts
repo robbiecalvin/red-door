@@ -1137,12 +1137,46 @@ function createLocalApiClient(): Readonly<{
       });
       return { mediaId, objectKey, uploadUrl: `${LOCAL_UPLOAD_PREFIX}profile/${objectKey}`, expiresInSeconds: 60 * 10 };
     },
-    async completeMediaUpload(_sessionToken: string, mediaId: string): Promise<{ media: unknown }> {
+    async completeMediaUpload(sessionToken: string, mediaId: string): Promise<{ media: unknown }> {
       const state = readState();
+      const session = requireUserSession(state, sessionToken);
+      const userId = session.userId as string;
       const media = state.mediaById[mediaId];
       if (!media || !media.uploaded || !media.dataUrl) {
         throw { code: "MEDIA_UPLOAD_INCOMPLETE", message: "Upload incomplete." } as ServiceError;
       }
+      if (media.ownerUserId !== userId) {
+        throw { code: "UNAUTHORIZED_ACTION", message: "You cannot modify another user's media." } as ServiceError;
+      }
+      const existingProfile = state.profilesByUserId[userId] ?? defaultProfile(userId);
+      let nextProfile: UserProfile = existingProfile;
+      if (media.kind === "photo_main") {
+        nextProfile = {
+          ...existingProfile,
+          mainPhotoMediaId: mediaId,
+          updatedAtMs: nowMs()
+        };
+      } else if (media.kind === "photo_gallery") {
+        const hasMedia = existingProfile.galleryMediaIds.includes(mediaId);
+        nextProfile = {
+          ...existingProfile,
+          galleryMediaIds: hasMedia ? existingProfile.galleryMediaIds : [...existingProfile.galleryMediaIds, mediaId],
+          updatedAtMs: nowMs()
+        };
+      } else if (media.kind === "video") {
+        nextProfile = {
+          ...existingProfile,
+          videoMediaId: mediaId,
+          updatedAtMs: nowMs()
+        };
+      }
+      writeState({
+        ...state,
+        profilesByUserId: {
+          ...state.profilesByUserId,
+          [userId]: nextProfile
+        }
+      });
       return { media: clone(media) };
     },
     async getFavorites(sessionToken: string): Promise<{ favorites: ReadonlyArray<string> }> {

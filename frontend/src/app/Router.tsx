@@ -3715,10 +3715,11 @@ function emptyProfileDraft(): ProfileDraft {
 }
 
 function toProfileDraft(profile: UserProfile): ProfileDraft {
+  const parsedBio = splitProfileBio(profile.bio);
   return {
     displayName: profile.displayName,
     age: String(profile.age),
-    bio: profile.bio,
+    bio: parsedBio.bio,
     heightInches: profile.stats.heightInches !== undefined ? String(profile.stats.heightInches) : "",
     race: profile.stats.race ?? "",
     cockSizeInches: profile.stats.cockSizeInches !== undefined ? String(profile.stats.cockSizeInches) : "",
@@ -3729,8 +3730,34 @@ function toProfileDraft(profile: UserProfile): ProfileDraft {
     travelEnabled: profile.travelMode?.enabled === true,
     travelLat: typeof profile.travelMode?.lat === "number" ? String(profile.travelMode.lat) : "",
     travelLng: typeof profile.travelMode?.lng === "number" ? String(profile.travelMode.lng) : "",
-    lookingForMore: profile.bio
+    lookingForMore: parsedBio.lookingForMore
   };
+}
+
+function splitProfileBio(rawBio: string): Readonly<{ bio: string; lookingForMore: string }> {
+  const normalized = rawBio.replace(/\r\n/g, "\n").trim();
+  const marker = "Looking For More:";
+  const markerPattern = /Looking For More:\s*/g;
+  const matches = Array.from(normalized.matchAll(markerPattern));
+  if (matches.length === 0) {
+    return { bio: normalized, lookingForMore: "" };
+  }
+  const firstMarker = matches[0];
+  const lastMarker = matches[matches.length - 1];
+  const markerStart = typeof firstMarker.index === "number" ? firstMarker.index : normalized.indexOf(marker);
+  const markerEnd = (typeof lastMarker.index === "number" ? lastMarker.index : normalized.lastIndexOf(marker)) + lastMarker[0].length;
+  const bio = normalized.slice(0, Math.max(0, markerStart)).trim();
+  const lookingForMore = normalized.slice(Math.max(0, markerEnd)).trim();
+  return { bio, lookingForMore };
+}
+
+function buildProfileBio(bio: string, lookingForMore: string): string {
+  const parsedExisting = splitProfileBio(bio);
+  const baseBio = parsedExisting.bio.trim();
+  const looking = lookingForMore.trim();
+  if (!looking) return baseBio;
+  if (!baseBio) return `${looking}`;
+  return `${baseBio}\n\nLooking For More: ${looking}`;
 }
 
 function parseOptionalInt(v: string): number | undefined {
@@ -3814,9 +3841,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
     setLastError(null);
     try {
       const ageNum = Number(draft.age);
-      const mergedBio = draft.lookingForMore.trim()
-        ? `${draft.bio.trim()}\n\nLooking For More: ${draft.lookingForMore.trim()}`.trim()
-        : draft.bio;
+      const mergedBio = buildProfileBio(draft.bio, draft.lookingForMore);
       const travelLat = draft.travelLat.trim() ? Number(draft.travelLat) : undefined;
       const travelLng = draft.travelLng.trim() ? Number(draft.travelLng) : undefined;
       const payload = {
