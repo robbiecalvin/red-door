@@ -13,7 +13,7 @@ type DiscoverFilter = "all" | "online" | "favorites";
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "public", "profile", "settings", "submissions", "promoted"]);
 const DEFAULT_TAB: TopTab = "discover";
-const FULL_PAGE_TAB_NAV = true;
+const FULL_PAGE_TAB_NAV = false;
 const Router = React.lazy(async () => {
   const mod = await import("./Router");
   return { default: mod.Router };
