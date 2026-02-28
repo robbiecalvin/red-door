@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
-import { Router } from "./Router";
 import { apiClient, type ServiceError, type Session } from "./api";
 import placeholderA from "../assets/reddoor-placeholder-1.svg";
 import placeholderB from "../assets/reddoor-placeholder-2.svg";
@@ -12,6 +11,12 @@ type TopTab = "discover" | "threads" | "public" | "profile" | "settings" | "subm
 type DiscoverFilter = "all" | "online" | "favorites";
 
 const SESSION_TOKEN_KEY = "reddoor_session_token";
+const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "public", "profile", "settings", "submissions", "promoted"]);
+const DEFAULT_TAB: TopTab = "discover";
+const Router = React.lazy(async () => {
+  const mod = await import("./Router");
+  return { default: mod.Router };
+});
 
 type Settings = Readonly<{
   defaultCenterLat: number;
@@ -109,6 +114,16 @@ function avatarForSeed(seed: string): string {
   return AVATARS[Math.abs(h) % AVATARS.length];
 }
 
+function tabFromHash(): TopTab {
+  const raw = window.location.hash.trim();
+  const slug = raw.replace(/^#\/?/, "").split("/")[0]?.toLowerCase() ?? "";
+  return TAB_SET.has(slug as TopTab) ? (slug as TopTab) : DEFAULT_TAB;
+}
+
+function hashForTab(tab: TopTab): string {
+  return `#/${tab}`;
+}
+
 export function App(): React.ReactElement {
   const api = useMemo(() => apiClient(resolveApiBasePath()), []);
 
@@ -121,7 +136,7 @@ export function App(): React.ReactElement {
   const [busy, setBusy] = useState<boolean>(false);
 
   const [authView, setAuthView] = useState<AuthView>("guest");
-  const [activeTab, setActiveTab] = useState<TopTab>("discover");
+  const [activeTab, setActiveTab] = useState<TopTab>(() => tabFromHash());
   const [discoverFilter, setDiscoverFilter] = useState<DiscoverFilter>("all");
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
@@ -365,10 +380,25 @@ export function App(): React.ReactElement {
     }
   }, [unreadChatCount]);
 
-  function selectTab(tab: TopTab): void {
+  const setTabAndRoute = useCallback((tab: TopTab): void => {
     setActiveTab(tab);
+    const nextHash = hashForTab(tab);
+    if (window.location.hash !== nextHash) {
+      window.history.pushState(null, "", nextHash);
+    }
     window.dispatchEvent(new CustomEvent("rd:tab-select", { detail: { tab } }));
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!window.location.hash) {
+      window.history.replaceState(null, "", hashForTab(activeTab));
+    }
+    const onHashChange = (): void => {
+      setActiveTab(tabFromHash());
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [activeTab]);
 
   const topAvatar = topAvatarUrl ?? avatarForSeed(session?.userId ?? session?.sessionToken ?? "guest");
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
@@ -386,7 +416,7 @@ export function App(): React.ReactElement {
                     type="button"
                     className="rd-mobile-avatar"
                     aria-label="Open my profile"
-                    onClick={() => selectTab("profile")}
+                    onClick={() => setTabAndRoute("profile")}
                   >
                     <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
                     <span className="rd-mobile-avatar-dot" />
@@ -395,7 +425,7 @@ export function App(): React.ReactElement {
                 <button
                   type="button"
                   className="rd-btn rd-mobile-corner-settings"
-                  onClick={() => selectTab("settings")}
+                  onClick={() => setTabAndRoute("settings")}
                   aria-label="Open settings"
                 >
                   Settings
@@ -405,18 +435,18 @@ export function App(): React.ReactElement {
               <>
                 {session.ageVerified === true ? (
                   <>
-                    <button type="button" className="rd-btn" onClick={() => selectTab("settings")} aria-label="Settings">Settings</button>
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("settings")} aria-label="Settings">Settings</button>
                     <div className="rd-brand" aria-label="Red Door">
                       <div className="rd-mark" aria-hidden="true" />
                       <div className="rd-name">Red Door</div>
                     </div>
-                    <button type="button" className="rd-btn" onClick={() => selectTab("discover")} aria-label="Discover">Discover</button>
-                    <button type="button" className="rd-btn" onClick={() => selectTab("threads")} aria-label="Inbox">
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("discover")} aria-label="Discover">Discover</button>
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("threads")} aria-label="Inbox">
                       Inbox{unreadChatCount > 0 ? ` (${unreadChatCount})` : ""}
                     </button>
-                    <button type="button" className="rd-btn" onClick={() => selectTab("public")} aria-label="Public postings">Public</button>
-                    <button type="button" className="rd-btn" onClick={() => selectTab("submissions")} aria-label="Submissions">Submissions</button>
-                    <button type="button" className="rd-btn" onClick={() => selectTab("promoted")} aria-label="Promoted profiles">Promoted</button>
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("public")} aria-label="Public postings">Public</button>
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("submissions")} aria-label="Submissions">Submissions</button>
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("promoted")} aria-label="Promoted profiles">Promoted</button>
                     <div className="rd-spacer" />
                     <div className="rd-chip" aria-label="Session">
                       <span className="rd-dot on" aria-hidden="true" />
@@ -424,7 +454,7 @@ export function App(): React.ReactElement {
                         {session.userType.toUpperCase()} | {session.mode.toUpperCase()}
                       </span>
                     </div>
-                    <button type="button" className="rd-btn" onClick={() => selectTab("settings")} aria-label="Settings">Settings</button>
+                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("settings")} aria-label="Settings">Settings</button>
                   </>
                 ) : null}
               </>
@@ -622,40 +652,42 @@ export function App(): React.ReactElement {
           ) : null}
 
           {session && session.ageVerified === true ? (
-            <Router
-              api={api}
-              session={session}
-              setSession={setSession}
-              settings={settings}
-              activeTab={activeTab}
-              setActiveTab={setActiveTab}
-              discoverFilter={discoverFilter}
-              busy={busy}
-              setBusy={setBusy}
-              setLastError={setLastError}
-              onUnreadCountChange={setUnreadChatCount}
-              onLogout={onLogout}
-            />
+            <Suspense fallback={<section className="rd-card"><div className="rd-card-body">Loading screen...</div></section>}>
+              <Router
+                api={api}
+                session={session}
+                setSession={setSession}
+                settings={settings}
+                activeTab={activeTab}
+                setActiveTab={setTabAndRoute}
+                discoverFilter={discoverFilter}
+                busy={busy}
+                setBusy={setBusy}
+                setLastError={setLastError}
+                onUnreadCountChange={setUnreadChatCount}
+                onLogout={onLogout}
+              />
+            </Suspense>
           ) : null}
         </div>
       </main>
 
       {isMobile && session && session.ageVerified === true ? (
         <nav className="rd-mobile-nav" aria-label="Mobile navigation">
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`} onClick={() => selectTab("discover")} aria-label="Discover">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`} onClick={() => setTabAndRoute("discover")} aria-label="Discover">
             <span className="rd-mobile-nav-icon" aria-hidden="true">⌖</span>
           </button>
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "threads" ? "is-active" : ""}`} onClick={() => selectTab("threads")} aria-label="Inbox">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "threads" ? "is-active" : ""}`} onClick={() => setTabAndRoute("threads")} aria-label="Inbox">
             <span className="rd-mobile-nav-icon" aria-hidden="true">💬</span>
             {unreadChatCount > 0 ? <span className="rd-mobile-nav-badge">{unreadChatCount > 99 ? "99+" : unreadChatCount}</span> : null}
           </button>
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "public" ? "is-active" : ""}`} onClick={() => selectTab("public")} aria-label="Public">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "public" ? "is-active" : ""}`} onClick={() => setTabAndRoute("public")} aria-label="Public">
             <span className="rd-mobile-nav-icon" aria-hidden="true">📣</span>
           </button>
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "submissions" ? "is-active" : ""}`} onClick={() => selectTab("submissions")} aria-label="Submissions">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "submissions" ? "is-active" : ""}`} onClick={() => setTabAndRoute("submissions")} aria-label="Submissions">
             <span className="rd-mobile-nav-icon" aria-hidden="true">✎</span>
           </button>
-          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "promoted" ? "is-active" : ""}`} onClick={() => selectTab("promoted")} aria-label="Promoted">
+          <button type="button" className={`rd-mobile-nav-btn ${activeTab === "promoted" ? "is-active" : ""}`} onClick={() => setTabAndRoute("promoted")} aria-label="Promoted">
             <span className="rd-mobile-nav-icon" aria-hidden="true">★</span>
           </button>
         </nav>

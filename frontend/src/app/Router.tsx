@@ -4362,7 +4362,7 @@ export function Router({
     <div style={{ display: "grid", gap: 12 }}>
       {!hideModeCard ? null : null}
 
-      <div style={{ display: activeTab === "discover" ? "block" : "none" }}>{discoverSurface}</div>
+      {activeTab === "discover" ? discoverSurface : null}
       {activeTab === "threads" ? (
         <ThreadsPanel
           api={api}
