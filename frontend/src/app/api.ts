@@ -251,7 +251,8 @@ type LocalState = Readonly<{
 
 const LOCAL_STATE_KEY = "reddoor_local_state_v1";
 const LOCAL_UPLOAD_PREFIX = "rdlocal://";
-const LOCAL_PERSIST_ENABLED = false;
+// Full-page web navigation requires durable local state across reloads.
+const LOCAL_PERSIST_ENABLED = true;
 
 function isLocalApiMode(basePath: string): boolean {
   const trimmed = basePath.trim().toLowerCase();
