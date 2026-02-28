@@ -52,6 +52,49 @@ function safeLocalStorageRemove(key: string): void {
   }
 }
 
+function safeSessionStorageGet(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSessionStorageSet(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // Storage may be blocked (privacy mode). Do not crash the UI.
+  }
+}
+
+function safeSessionStorageRemove(key: string): void {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // Storage may be blocked (privacy mode). Do not crash the UI.
+  }
+}
+
+function tokenFromLocationSearch(): string | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get("st");
+    const token = typeof raw === "string" ? raw.trim() : "";
+    return token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+function initialSessionToken(): string | null {
+  const local = safeLocalStorageGet(SESSION_TOKEN_KEY);
+  if (local) return local;
+  const session = safeSessionStorageGet(SESSION_TOKEN_KEY);
+  if (session) return session;
+  return tokenFromLocationSearch();
+}
+
 function loadSettingsFromEnv(): Settings {
   const fallbackLat = 40.7484;
   const fallbackLng = -73.9857;
@@ -138,12 +181,13 @@ function hashForTab(tab: TopTab): string {
   return `#/${tab}`;
 }
 
-function urlForTab(tab: TopTab): string {
+function urlForTab(tab: TopTab, sessionToken?: string | null): string {
   const path = window.location.pathname;
   const slash = path.lastIndexOf("/");
   const baseDir = slash >= 0 ? path.slice(0, slash + 1) : "/";
   const fileName = tab === DEFAULT_TAB ? "index.html" : `${tab}.html`;
-  return `${baseDir}${fileName}`;
+  const token = typeof sessionToken === "string" ? sessionToken.trim() : "";
+  return token.length > 0 ? `${baseDir}${fileName}?st=${encodeURIComponent(token)}` : `${baseDir}${fileName}`;
 }
 
 export function App(): React.ReactElement {
@@ -151,7 +195,7 @@ export function App(): React.ReactElement {
 
   const [settings] = useState<Settings>(() => loadSettingsFromEnv());
 
-  const [sessionToken, setSessionToken] = useState<string | null>(() => safeLocalStorageGet(SESSION_TOKEN_KEY));
+  const [sessionToken, setSessionToken] = useState<string | null>(() => initialSessionToken());
   const [session, setSession] = useState<Session | null>(null);
 
   const [lastError, setLastError] = useState<string | null>(null);
@@ -171,6 +215,27 @@ export function App(): React.ReactElement {
   const [onlineCount, setOnlineCount] = useState<number>(0);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
 
+  const persistSessionToken = useCallback((token: string): void => {
+    safeLocalStorageSet(SESSION_TOKEN_KEY, token);
+    safeSessionStorageSet(SESSION_TOKEN_KEY, token);
+  }, []);
+
+  const clearPersistedSessionToken = useCallback((): void => {
+    safeLocalStorageRemove(SESSION_TOKEN_KEY);
+    safeSessionStorageRemove(SESSION_TOKEN_KEY);
+  }, []);
+
+  useEffect(() => {
+    const fromQuery = tokenFromLocationSearch();
+    if (fromQuery) {
+      persistSessionToken(fromQuery);
+      if (window.location.search.includes("st=")) {
+        const cleanUrl = `${window.location.pathname}${window.location.hash}`;
+        window.history.replaceState(null, "", cleanUrl);
+      }
+    }
+  }, [persistSessionToken]);
+
   const refreshSession = useCallback(
     async (token: string): Promise<void> => {
       const res = await api.getSession(token);
@@ -186,12 +251,12 @@ export function App(): React.ReactElement {
     refreshSession(sessionToken)
       .catch((e) => {
         setLastError(normalizeUiError(e, "Session error."));
-        safeLocalStorageRemove(SESSION_TOKEN_KEY);
+        clearPersistedSessionToken();
         setSessionToken(null);
         setSession(null);
       })
       .finally(() => setBusy(false));
-  }, [refreshSession, sessionToken]);
+  }, [clearPersistedSessionToken, refreshSession, sessionToken]);
 
   useEffect(() => {
     if (!session) {
@@ -253,7 +318,7 @@ export function App(): React.ReactElement {
   }, [api, session]);
 
   function onLogout(): void {
-    safeLocalStorageRemove(SESSION_TOKEN_KEY);
+    clearPersistedSessionToken();
     setSessionToken(null);
     setSession(null);
     setLastError(null);
@@ -268,7 +333,7 @@ export function App(): React.ReactElement {
     setAuthInfo("");
     try {
       const res = await api.createGuest();
-      safeLocalStorageSet(SESSION_TOKEN_KEY, res.session.sessionToken);
+      persistSessionToken(res.session.sessionToken);
       setSessionToken(res.session.sessionToken);
       setSession(res.session);
     } catch (e) {
@@ -286,7 +351,7 @@ export function App(): React.ReactElement {
       await api.register(email, password, phoneE164);
       try {
         const loginRes = await api.login(email, password);
-        safeLocalStorageSet(SESSION_TOKEN_KEY, loginRes.session.sessionToken);
+        persistSessionToken(loginRes.session.sessionToken);
         setSessionToken(loginRes.session.sessionToken);
         setSession(loginRes.session);
         setPendingVerificationEmail("");
@@ -320,7 +385,7 @@ export function App(): React.ReactElement {
     try {
       const targetEmail = pendingVerificationEmail || email;
       const res = await api.verifyEmail(targetEmail, verificationCode.trim());
-      safeLocalStorageSet(SESSION_TOKEN_KEY, res.session.sessionToken);
+      persistSessionToken(res.session.sessionToken);
       setSessionToken(res.session.sessionToken);
       setSession(res.session);
     } catch (e) {
@@ -357,7 +422,7 @@ export function App(): React.ReactElement {
     setAuthInfo("");
     try {
       const res = await api.login(email, password);
-      safeLocalStorageSet(SESSION_TOKEN_KEY, res.session.sessionToken);
+      persistSessionToken(res.session.sessionToken);
       setSessionToken(res.session.sessionToken);
       setSession(res.session);
     } catch (e) {
@@ -421,7 +486,7 @@ export function App(): React.ReactElement {
 
   const setTabAndRoute = useCallback((tab: TopTab): void => {
     if (FULL_PAGE_TAB_NAV) {
-      const nextUrl = urlForTab(tab);
+      const nextUrl = urlForTab(tab, sessionToken);
       const currentPath = window.location.pathname;
       const currentSlash = currentPath.lastIndexOf("/");
       const currentBase = currentSlash >= 0 ? currentPath.slice(0, currentSlash + 1) : "/";
@@ -442,7 +507,7 @@ export function App(): React.ReactElement {
       window.history.pushState(null, "", nextHash);
     }
     window.dispatchEvent(new CustomEvent("rd:tab-select", { detail: { tab } }));
-  }, []);
+  }, [sessionToken]);
 
   useEffect(() => {
     if (FULL_PAGE_TAB_NAV) {

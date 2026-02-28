@@ -363,9 +363,17 @@ function emptyLocalAuthState(): LocalAuthState {
 function loadLocalAuthState(): LocalAuthState {
   if (!LOCAL_PERSIST_ENABLED) return emptyLocalAuthState();
   try {
-    const raw = localStorage.getItem(LOCAL_AUTH_STATE_KEY);
-    if (!raw) return emptyLocalAuthState();
-    const parsed = JSON.parse(raw) as Partial<LocalAuthState>;
+    const rawLocal = localStorage.getItem(LOCAL_AUTH_STATE_KEY);
+    const rawSession = (() => {
+      try {
+        return sessionStorage.getItem(LOCAL_AUTH_STATE_KEY);
+      } catch {
+        return null;
+      }
+    })();
+    const parsedLocal = rawLocal ? (JSON.parse(rawLocal) as Partial<LocalAuthState>) : {};
+    const parsedSession = rawSession ? (JSON.parse(rawSession) as Partial<LocalAuthState>) : {};
+    const parsed = { ...parsedLocal, ...parsedSession };
     return {
       usersById: parsed.usersById ?? {},
       userIdByEmail: parsed.userIdByEmail ?? {},
@@ -393,6 +401,11 @@ function saveLocalAuthState(next: LocalState): void {
     localStorage.setItem(LOCAL_AUTH_STATE_KEY, JSON.stringify(authState));
   } catch {
     // Best-effort backup for auth continuity across page navigation.
+  }
+  try {
+    sessionStorage.setItem(LOCAL_AUTH_STATE_KEY, JSON.stringify(authState));
+  } catch {
+    // sessionStorage may be unavailable in strict privacy contexts.
   }
 }
 
