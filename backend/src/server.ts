@@ -6,9 +6,9 @@ import express, { type Request, type Response } from "express";
 import { WebSocketServer } from "ws";
 import nodemailer from "nodemailer";
 
-import { createAuthService, type Mode, type ServiceError as AuthError } from "./services/authService";
+import { createAuthService, type AuthStateSnapshot, type Mode, type ServiceError as AuthError } from "./services/authService";
 import { createBlockService } from "./services/blockService";
-import { createChatService, type ServiceError as ChatError } from "./services/chatService";
+import { createChatService, type ChatPersistenceState, type ServiceError as ChatError } from "./services/chatService";
 import { createMatchingService, type ServiceError as MatchingError } from "./services/matchingService";
 import { createPresenceService, type ServiceError as PresenceError } from "./services/presenceService";
 import { createDatingFeedService } from "./services/datingFeedService";
@@ -23,6 +23,11 @@ import { createPromotedProfilesService, type ServiceError as PromotedProfilesErr
 import { createWebsocketGateway, type ServiceError as WsError } from "./realtime/websocketGateway";
 import { createInMemoryMediaRepository } from "./repositories/inMemoryMediaRepository";
 import { createInMemoryProfileRepository } from "./repositories/inMemoryProfileRepository";
+import { createPostgresAuthStateRepository } from "./repositories/postgresAuthStateRepository";
+import { createPostgresChatStateRepository } from "./repositories/postgresChatStateRepository";
+import { createPostgresMediaRepository } from "./repositories/postgresMediaRepository";
+import { createPostgresProfileRepository } from "./repositories/postgresProfileRepository";
+import { createPostgresPool, ensurePostgresSchema, resolvePostgresSettingsFromEnv } from "./repositories/postgresCore";
 import { createLocalObjectStorage, type LocalObjectStorage } from "./services/storage/localObjectStorage";
 import { createS3ObjectStorage } from "./services/storage/s3ObjectStorage";
 
@@ -111,6 +116,21 @@ function getModeFromBody(req: Request): Mode | null {
 
 function randomInRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
+}
+
+function requestOrigin(req: Request): string | null {
+  const xfProtoRaw = req.header("x-forwarded-proto");
+  const xfHostRaw = req.header("x-forwarded-host");
+  const proto = (typeof xfProtoRaw === "string" && xfProtoRaw.trim() ? xfProtoRaw.split(",")[0].trim() : req.protocol || "http").replace(/:$/, "");
+  const host = typeof xfHostRaw === "string" && xfHostRaw.trim() ? xfHostRaw.split(",")[0].trim() : req.get("host");
+  if (!host || !host.trim()) return null;
+  return `${proto}://${host.trim()}`;
+}
+
+function absolutizeStorageUrl(req: Request, url: string): string {
+  if (!url.startsWith("/")) return url;
+  const origin = requestOrigin(req);
+  return origin ? `${origin}${url}` : url;
 }
 
 function parseAllowedOrigins(raw: string): ReadonlySet<string> {
@@ -292,10 +312,6 @@ async function main(): Promise<void> {
     console.log(`[RedDoor] Verification code for ${destination}: ${code}`);
   };
 
-  const authService = createAuthService({
-    jwtSecret,
-    onVerificationCodeIssued: verificationCodeSender
-  });
   const blockService = createBlockService();
   const reportService = createReportService();
   const favoritesService = createFavoritesService();
@@ -304,7 +320,49 @@ async function main(): Promise<void> {
   const cruisingSpotsService = createCruisingSpotsService();
   const promotedProfilesService = createPromotedProfilesService();
 
-  const profileRepo = createInMemoryProfileRepository();
+  const postgresSettings = resolvePostgresSettingsFromEnv();
+  const postgresPool = postgresSettings ? createPostgresPool(postgresSettings) : null;
+  const authStateRepo = postgresPool ? createPostgresAuthStateRepository(postgresPool) : null;
+  const chatStateRepo = postgresPool ? createPostgresChatStateRepository(postgresPool) : null;
+  let initialAuthState: AuthStateSnapshot | undefined;
+  let initialChatState: ChatPersistenceState | undefined;
+  let authPersistQueue: Promise<void> = Promise.resolve();
+  let chatPersistQueue: Promise<void> = Promise.resolve();
+  const queueAuthStateSave = (state: AuthStateSnapshot): void => {
+    if (!authStateRepo) return;
+    authPersistQueue = authPersistQueue
+      .then(() => authStateRepo.saveState(state))
+      .catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`[RedDoor] Failed to persist auth state: ${message}`);
+      });
+  };
+  const queueChatStateSave = (state: ChatPersistenceState): void => {
+    if (!chatStateRepo) return;
+    chatPersistQueue = chatPersistQueue
+      .then(() => chatStateRepo.saveState(state))
+      .catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`[RedDoor] Failed to persist chat state: ${message}`);
+      });
+  };
+  if (postgresPool) {
+    await ensurePostgresSchema(postgresPool);
+    initialAuthState = authStateRepo ? await authStateRepo.loadState() : undefined;
+    initialChatState = chatStateRepo ? await chatStateRepo.loadState() : undefined;
+    console.log("[RedDoor] Persistence mode: PostgreSQL");
+  } else {
+    console.log("[RedDoor] Persistence mode: local file storage");
+  }
+
+  const authService = createAuthService({
+    jwtSecret,
+    onVerificationCodeIssued: verificationCodeSender,
+    initialState: initialAuthState,
+    onStateChanged: authStateRepo ? queueAuthStateSave : undefined
+  });
+
+  const profileRepo = postgresPool ? createPostgresProfileRepository(postgresPool) : createInMemoryProfileRepository();
   const profileService = createProfileService({ repo: profileRepo });
 
   const s3Bucket = process.env.S3_BUCKET ?? "";
@@ -314,7 +372,7 @@ async function main(): Promise<void> {
   const s3Endpoint = process.env.S3_ENDPOINT;
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
 
-  const mediaRepo = createInMemoryMediaRepository();
+  const mediaRepo = postgresPool ? createPostgresMediaRepository(postgresPool) : createInMemoryMediaRepository();
   const mediaStorage =
     s3Bucket && s3Region && s3AccessKeyId && s3SecretAccessKey
       ? createS3ObjectStorage({
@@ -359,7 +417,9 @@ async function main(): Promise<void> {
   const chatService = createChatService({
     cruiseRetentionHours: 24 * 365,
     maxHistoryDays: 365,
-    persistenceFilePath: path.resolve(process.cwd(), "backend/.data/chat.json"),
+    persistenceFilePath: postgresPool ? undefined : path.resolve(process.cwd(), "backend/.data/chat.json"),
+    initialState: initialChatState,
+    onStateChanged: chatStateRepo ? queueChatStateSave : undefined,
     blockChecker: {
       isBlocked(fromKey: string, toKey: string): boolean {
         return blockService.isBlocked(fromKey, toKey);
@@ -407,7 +467,7 @@ async function main(): Promise<void> {
     });
   });
 
-  app.put("/storage/local/upload/:encodedKey", express.raw({ type: "*/*", limit: "120mb" }), (req, res) => {
+  const handleLocalStorageUpload = (req: Request, res: Response): Response => {
     if (mediaStorageMode !== "local") {
       return res.status(404).json({ code: "NOT_FOUND", message: "Local storage endpoint is disabled." });
     }
@@ -422,9 +482,11 @@ async function main(): Promise<void> {
     const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? "");
     localStorage.putObject(key, body, mimeType);
     return res.status(200).end();
-  });
+  };
+  app.put("/storage/local/upload/:encodedKey", express.raw({ type: "*/*", limit: "120mb" }), handleLocalStorageUpload);
+  app.put("/api/storage/local/upload/:encodedKey", express.raw({ type: "*/*", limit: "120mb" }), handleLocalStorageUpload);
 
-  app.get("/storage/local/download/:encodedKey", (req, res) => {
+  const handleLocalStorageDownload = (req: Request, res: Response): Response => {
     if (mediaStorageMode !== "local") {
       return res.status(404).json({ code: "NOT_FOUND", message: "Local storage endpoint is disabled." });
     }
@@ -440,7 +502,9 @@ async function main(): Promise<void> {
     }
     res.setHeader("content-type", stored.mimeType);
     return res.status(200).send(stored.data);
-  });
+  };
+  app.get("/storage/local/download/:encodedKey", handleLocalStorageDownload);
+  app.get("/api/storage/local/download/:encodedKey", handleLocalStorageDownload);
 
   // Auth
   app.post("/auth/guest", (_req, res) => {
@@ -551,7 +615,10 @@ async function main(): Promise<void> {
       sizeBytes: (req.body as any)?.sizeBytes
     });
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json(result.value);
+    return res.status(200).json({
+      ...result.value,
+      uploadUrl: absolutizeStorageUrl(req, result.value.uploadUrl)
+    });
   });
 
   app.post("/profile/media/complete", async (req, res) => {
@@ -567,7 +634,10 @@ async function main(): Promise<void> {
     const mediaId = (req.params as any)?.mediaId;
     const result = await mediaService.getPublicDownloadUrl(typeof mediaId === "string" ? mediaId : "");
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json(result.value);
+    return res.status(200).json({
+      ...result.value,
+      downloadUrl: absolutizeStorageUrl(req, result.value.downloadUrl)
+    });
   });
 
   // Favorites
@@ -1037,7 +1107,7 @@ async function main(): Promise<void> {
       mimeType,
       expiresInSeconds: 60 * 5
     });
-    return res.status(200).json({ objectKey, uploadUrl, mimeType, expiresInSeconds: 300 });
+    return res.status(200).json({ objectKey, uploadUrl: absolutizeStorageUrl(req, uploadUrl), mimeType, expiresInSeconds: 300 });
   });
 
   app.get("/chat/media/url", async (req, res) => {
@@ -1056,7 +1126,7 @@ async function main(): Promise<void> {
       key: objectKey,
       expiresInSeconds: 60 * 10
     });
-    return res.status(200).json({ objectKey, downloadUrl, expiresInSeconds: 600 });
+    return res.status(200).json({ objectKey, downloadUrl: absolutizeStorageUrl(req, downloadUrl), expiresInSeconds: 600 });
   });
 
   app.post("/call/signal", (req, res) => {
@@ -1168,6 +1238,20 @@ async function main(): Promise<void> {
 
   server.listen(port, () => {
     console.log(`Red Door backend listening on http://localhost:${port}`);
+  });
+
+  const shutdown = async (): Promise<void> => {
+    await Promise.allSettled([authPersistQueue, chatPersistQueue]);
+    if (postgresPool) {
+      await postgresPool.end();
+    }
+  };
+
+  process.on("SIGINT", () => {
+    void shutdown().finally(() => process.exit(0));
+  });
+  process.on("SIGTERM", () => {
+    void shutdown().finally(() => process.exit(0));
   });
 }
 
