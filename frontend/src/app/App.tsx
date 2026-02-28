@@ -69,7 +69,7 @@ function normalizeUiError(e: unknown, fallback: string): string {
   if (e && typeof e === "object" && "message" in e && typeof (e as { message?: unknown }).message === "string") {
     const msg = (e as { message: string }).message;
     if (msg.toLowerCase().includes("failed to fetch")) {
-      return "Network error: failed to reach the backend via /api. Start the backend and confirm /health works, then refresh.";
+      return "Network error. If using local web mode, refresh and try again.";
     }
     return msg;
   }
@@ -98,7 +98,7 @@ function requestLocationPermission(): void {
 
 function resolveApiBasePath(): string {
   const raw = typeof __DUALMODE_API_BASE_PATH__ === "string" ? __DUALMODE_API_BASE_PATH__.trim() : "";
-  return raw.length > 0 ? raw.replace(/\/+$/, "") : "/api";
+  return raw.length > 0 ? raw.replace(/\/+$/, "") : "__local__";
 }
 
 const AVATARS = [placeholderA, placeholderB, placeholderC] as const;

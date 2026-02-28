@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   apiClient,
+  uploadToLocalSignedUrl,
   type MediaKind,
   type ProfileCutStatus,
   type ProfilePosition,
@@ -125,6 +126,7 @@ function normalizeErrorMessage(e: unknown): string {
 
 function wsProxyUrl(): string {
   const configured = typeof __DUALMODE_WS_URL__ === "string" ? __DUALMODE_WS_URL__.trim() : "";
+  if (configured === "__disabled__") return "";
   if (configured !== "") {
     if (configured.startsWith("ws://") || configured.startsWith("wss://")) return configured;
     try {
@@ -1445,6 +1447,7 @@ function CruiseChat({
         return { objectKey: res.objectKey, uploadUrl: res.uploadUrl };
       },
       async uploadToSignedUrl(uploadUrl, file, mimeType) {
+        if (await uploadToLocalSignedUrl(uploadUrl, file, mimeType)) return;
         const res = await fetch(uploadUrl, {
           method: "PUT",
           headers: { "content-type": mimeType },
@@ -1840,6 +1843,7 @@ function CruiseChat({
   useEffect(() => {
     let stopped = false;
     const wsUrl = wsProxyUrl();
+    if (!wsUrl) return;
 
     const clearTimers = (): void => {
       if (wsHeartbeatRef.current !== null) {
@@ -2543,6 +2547,7 @@ function DateChat({
         return { objectKey: res.objectKey, uploadUrl: res.uploadUrl };
       },
       async uploadToSignedUrl(uploadUrl, file, mimeType) {
+        if (await uploadToLocalSignedUrl(uploadUrl, file, mimeType)) return;
         const res = await fetch(uploadUrl, {
           method: "PUT",
           headers: { "content-type": mimeType },
@@ -2895,6 +2900,7 @@ function ThreadsPanel({
         return { objectKey: res.objectKey, uploadUrl: res.uploadUrl };
       },
       async uploadToSignedUrl(uploadUrl, file, mimeType) {
+        if (await uploadToLocalSignedUrl(uploadUrl, file, mimeType)) return;
         const res = await fetch(uploadUrl, { method: "PUT", headers: { "content-type": mimeType }, body: file });
         if (!res.ok) throw { code: "MEDIA_UPLOAD_INCOMPLETE", message: "Upload failed." } as ServiceError;
       },
@@ -3847,13 +3853,16 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         sizeBytes: file.size
       });
 
-      const uploadRes = await fetch(initiated.uploadUrl, {
-        method: "PUT",
-        headers: { "content-type": file.type || "application/octet-stream" },
-        body: file
-      });
-      if (!uploadRes.ok) {
-        throw { message: `Upload failed (${uploadRes.status}).` };
+      const handledLocally = await uploadToLocalSignedUrl(initiated.uploadUrl, file, file.type || "application/octet-stream");
+      if (!handledLocally) {
+        const uploadRes = await fetch(initiated.uploadUrl, {
+          method: "PUT",
+          headers: { "content-type": file.type || "application/octet-stream" },
+          body: file
+        });
+        if (!uploadRes.ok) {
+          throw { message: `Upload failed (${uploadRes.status}).` };
+        }
       }
 
       await api.completeMediaUpload(session.sessionToken, initiated.mediaId);

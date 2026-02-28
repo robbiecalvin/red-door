@@ -42,7 +42,7 @@ export function useCruisePresence(options: CruisePresenceOptions): Readonly<{
   const reconnectTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (options.disabled === true) {
+    if (options.disabled === true || options.wsUrl.trim() === "") {
       setByKey(new Map());
       setLastErrorMessage(null);
       if (reconnectTimerRef.current !== null) {
@@ -73,7 +73,15 @@ export function useCruisePresence(options: CruisePresenceOptions): Readonly<{
 
     const connect = (): void => {
       if (stopped) return;
-      const ws = new WebSocket(options.wsUrl);
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(options.wsUrl);
+      } catch {
+        consecutiveFailures += 1;
+        setLastErrorMessage("Realtime unavailable in this mode.");
+        scheduleReconnect();
+        return;
+      }
       wsRef.current = ws;
       let didOpen = false;
 
