@@ -13,6 +13,7 @@ type DiscoverFilter = "all" | "online" | "favorites";
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "public", "profile", "settings", "submissions", "promoted"]);
 const DEFAULT_TAB: TopTab = "discover";
+const FULL_PAGE_TAB_NAV = true;
 const Router = React.lazy(async () => {
   const mod = await import("./Router");
   return { default: mod.Router };
@@ -120,8 +121,29 @@ function tabFromHash(): TopTab {
   return TAB_SET.has(slug as TopTab) ? (slug as TopTab) : DEFAULT_TAB;
 }
 
+function tabFromPathname(): TopTab | null {
+  const file = window.location.pathname.split("/").pop()?.toLowerCase() ?? "";
+  if (!file || file === "index.html") return DEFAULT_TAB;
+  const slug = file.endsWith(".html") ? file.slice(0, -".html".length) : file;
+  return TAB_SET.has(slug as TopTab) ? (slug as TopTab) : null;
+}
+
+function tabFromLocation(): TopTab {
+  const fromPath = tabFromPathname();
+  if (fromPath) return fromPath;
+  return tabFromHash();
+}
+
 function hashForTab(tab: TopTab): string {
   return `#/${tab}`;
+}
+
+function urlForTab(tab: TopTab): string {
+  const path = window.location.pathname;
+  const slash = path.lastIndexOf("/");
+  const baseDir = slash >= 0 ? path.slice(0, slash + 1) : "/";
+  const fileName = tab === DEFAULT_TAB ? "index.html" : `${tab}.html`;
+  return `${baseDir}${fileName}`;
 }
 
 export function App(): React.ReactElement {
@@ -136,7 +158,7 @@ export function App(): React.ReactElement {
   const [busy, setBusy] = useState<boolean>(false);
 
   const [authView, setAuthView] = useState<AuthView>("guest");
-  const [activeTab, setActiveTab] = useState<TopTab>(() => tabFromHash());
+  const [activeTab, setActiveTab] = useState<TopTab>(() => tabFromLocation());
   const [discoverFilter, setDiscoverFilter] = useState<DiscoverFilter>("all");
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
@@ -398,6 +420,22 @@ export function App(): React.ReactElement {
   }, [unreadChatCount]);
 
   const setTabAndRoute = useCallback((tab: TopTab): void => {
+    if (FULL_PAGE_TAB_NAV) {
+      const nextUrl = urlForTab(tab);
+      const currentPath = window.location.pathname;
+      const currentSlash = currentPath.lastIndexOf("/");
+      const currentBase = currentSlash >= 0 ? currentPath.slice(0, currentSlash + 1) : "/";
+      const currentFile = currentPath.slice(currentBase.length) || "index.html";
+      const normalizedCurrentFile = currentFile.toLowerCase();
+      const targetFile = tab === DEFAULT_TAB ? "index.html" : `${tab}.html`;
+      if (normalizedCurrentFile !== targetFile.toLowerCase()) {
+        window.location.assign(nextUrl);
+        return;
+      }
+      setActiveTab(tab);
+      window.dispatchEvent(new CustomEvent("rd:tab-select", { detail: { tab } }));
+      return;
+    }
     setActiveTab(tab);
     const nextHash = hashForTab(tab);
     if (window.location.hash !== nextHash) {
@@ -407,6 +445,10 @@ export function App(): React.ReactElement {
   }, []);
 
   useEffect(() => {
+    if (FULL_PAGE_TAB_NAV) {
+      setActiveTab(tabFromLocation());
+      return;
+    }
     if (!window.location.hash) {
       window.history.replaceState(null, "", hashForTab(activeTab));
     }

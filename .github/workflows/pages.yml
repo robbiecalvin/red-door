@@ -37,7 +37,15 @@ jobs:
         run: npm run build
 
       - name: Add nojekyll marker
-        run: touch dist/.nojekyll
+        run: |
+          touch dist/.nojekyll
+          cp dist/index.html dist/discover.html
+          cp dist/index.html dist/threads.html
+          cp dist/index.html dist/public.html
+          cp dist/index.html dist/profile.html
+          cp dist/index.html dist/settings.html
+          cp dist/index.html dist/submissions.html
+          cp dist/index.html dist/promoted.html
 
       - name: Configure Pages
         continue-on-error: true
