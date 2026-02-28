@@ -12,6 +12,7 @@ type DiscoverFilter = "all" | "online" | "favorites";
 type DiscoverScreen = "map" | "chat";
 
 const SESSION_TOKEN_KEY = "reddoor_session_token";
+const API_BASE_OVERRIDE_KEY = "reddoor_api_base_path";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
 const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "public", "profile", "settings", "submissions", "promoted"]);
 const DEFAULT_TAB: TopTab = "discover";
@@ -89,6 +90,27 @@ function tokenFromLocationSearch(): string | null {
   }
 }
 
+function apiBaseOverrideFromLocationSearch(): string | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get("api");
+    const normalized = normalizeApiBasePath(raw ?? "");
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeApiBasePath(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  const lower = value.toLowerCase();
+  if (lower === "__local__" || lower === "local" || lower === "rdlocal") return "__local__";
+  if (value.startsWith("/") && !value.startsWith("//")) return value.replace(/\/+$/, "");
+  if (lower.startsWith("http://") || lower.startsWith("https://")) return value.replace(/\/+$/, "");
+  return null;
+}
+
 function tokenFromWindowName(): string | null {
   try {
     const raw = typeof window.name === "string" ? window.name : "";
@@ -161,12 +183,21 @@ function requestLocationPermission(): void {
 }
 
 function resolveApiBasePath(): string {
+  const queryOverride = apiBaseOverrideFromLocationSearch();
+  if (queryOverride) {
+    safeLocalStorageSet(API_BASE_OVERRIDE_KEY, queryOverride);
+    return queryOverride;
+  }
+  const persistedOverride = normalizeApiBasePath(safeLocalStorageGet(API_BASE_OVERRIDE_KEY) ?? "");
+  if (persistedOverride) {
+    return persistedOverride;
+  }
   const host = window.location.hostname.toLowerCase();
   if (host.endsWith(".github.io")) {
     return "__local__";
   }
-  const raw = typeof __DUALMODE_API_BASE_PATH__ === "string" ? __DUALMODE_API_BASE_PATH__.trim() : "";
-  return raw.length > 0 ? raw.replace(/\/+$/, "") : "__local__";
+  const envBasePath = normalizeApiBasePath(typeof __DUALMODE_API_BASE_PATH__ === "string" ? __DUALMODE_API_BASE_PATH__ : "");
+  return envBasePath ?? "__local__";
 }
 
 const AVATARS = [placeholderA, placeholderB, placeholderC] as const;
@@ -267,12 +298,12 @@ export function App(): React.ReactElement {
 
   useEffect(() => {
     const fromQuery = tokenFromLocationSearch();
-    if (fromQuery) {
-      persistSessionToken(fromQuery);
-      if (window.location.search.includes("st=")) {
-        const cleanUrl = `${window.location.pathname}${window.location.hash}`;
-        window.history.replaceState(null, "", cleanUrl);
-      }
+    if (fromQuery) persistSessionToken(fromQuery);
+    const apiOverride = apiBaseOverrideFromLocationSearch();
+    if (apiOverride) safeLocalStorageSet(API_BASE_OVERRIDE_KEY, apiOverride);
+    if (window.location.search.includes("st=") || window.location.search.includes("api=")) {
+      const cleanUrl = `${window.location.pathname}${window.location.hash}`;
+      window.history.replaceState(null, "", cleanUrl);
     }
   }, [persistSessionToken]);
 
