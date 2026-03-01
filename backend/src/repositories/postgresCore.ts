@@ -3,6 +3,7 @@ import { Pool } from "pg";
 export type PostgresSettings = Readonly<{
   connectionString: string;
   ssl?: boolean;
+  sourceEnvKey: "DATABASE_URL" | "NEON_DATABASE_URL";
 }>;
 
 function asBoolean(value: string | undefined): boolean {
@@ -10,13 +11,21 @@ function asBoolean(value: string | undefined): boolean {
 }
 
 export function resolvePostgresSettingsFromEnv(env: NodeJS.ProcessEnv = process.env): PostgresSettings | null {
-  const connectionString = env.DATABASE_URL;
+  const dbUrl = env.DATABASE_URL;
+  const neonDbUrl = env.NEON_DATABASE_URL;
+  const connectionString =
+    typeof dbUrl === "string" && dbUrl.trim() !== ""
+      ? dbUrl.trim()
+      : typeof neonDbUrl === "string" && neonDbUrl.trim() !== ""
+        ? neonDbUrl.trim()
+        : "";
   if (typeof connectionString !== "string" || connectionString.trim() === "") {
     return null;
   }
   return {
-    connectionString: connectionString.trim(),
-    ssl: asBoolean(env.DATABASE_SSL)
+    connectionString,
+    ssl: asBoolean(env.DATABASE_SSL),
+    sourceEnvKey: typeof dbUrl === "string" && dbUrl.trim() !== "" ? "DATABASE_URL" : "NEON_DATABASE_URL"
   };
 }
 

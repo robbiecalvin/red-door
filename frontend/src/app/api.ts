@@ -1165,10 +1165,17 @@ function createLocalApiClient(): Readonly<{
     },
     async getPublicProfiles(): Promise<{ profiles: ReadonlyArray<PublicProfile> }> {
       const state = readState();
-      return { profiles: clone(Object.values(state.profilesByUserId).map(toPublicProfile)) };
+      return {
+        profiles: clone(
+          Object.values(state.profilesByUserId)
+            .filter((profile) => !profile.userId.startsWith("guest:"))
+            .map(toPublicProfile)
+        )
+      };
     },
     async getPublicProfile(userId: string): Promise<{ profile: PublicProfile }> {
       const state = readState();
+      if (userId.startsWith("guest:")) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
       const profile = state.profilesByUserId[userId];
       if (!profile) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
       return { profile: clone(toPublicProfile(profile)) };

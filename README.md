@@ -40,8 +40,9 @@ Important for real mobile builds:
 - Set `DUALMODE_API_BASE_PATH` to your deployed backend origin (example: `https://api.example.com`)
 - Set `DUALMODE_WS_URL` to your websocket endpoint (example: `wss://api.example.com/ws`) if needed
 - Set backend `CORS_ALLOWED_ORIGINS` to include your app/web origins
-- For scalable persistence, set `DATABASE_URL` to your PostgreSQL instance. The backend auto-creates required tables on startup and persists auth sessions, chat history, profiles, and media metadata in Postgres.
+- For scalable persistence, set `DATABASE_URL` (or `NEON_DATABASE_URL`) to your PostgreSQL instance. The backend auto-creates required tables on startup and persists auth sessions, chat history, profiles, and media metadata in Postgres.
 - If your Postgres provider enforces TLS, set `DATABASE_SSL=true`.
+- For production safety, set `REQUIRE_DATABASE=true` so the backend fails fast if no PostgreSQL URL is configured.
 
 ## Local development (web-only, no backend)
 

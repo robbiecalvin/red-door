@@ -129,12 +129,55 @@ function absolutizeStorageUrl(req: Request, url: string): string {
   return origin ? `${origin}${url}` : url;
 }
 
-function parseAllowedOrigins(raw: string): ReadonlySet<string> {
+type AllowedOrigins = Readonly<{
+  exact: ReadonlySet<string>;
+  allowAny: boolean;
+  wildcardSuffixes: ReadonlyArray<string>;
+}>;
+
+function parseAllowedOrigins(raw: string): AllowedOrigins {
+  const exact = new Set<string>();
+  const wildcardSuffixes: string[] = [];
+  let allowAny = false;
   const values = raw
     .split(",")
     .map((v) => v.trim())
     .filter((v) => v.length > 0);
-  return new Set(values);
+  for (const value of values) {
+    if (value === "*") {
+      allowAny = true;
+      continue;
+    }
+    const protoSplit = value.indexOf("://");
+    const wildcardIndex = value.indexOf("*.");
+    if (protoSplit > 0 && wildcardIndex === protoSplit + 3) {
+      const suffix = value.slice(wildcardIndex + 1).trim().toLowerCase();
+      if (suffix.length > 2 && suffix.startsWith(".")) {
+        wildcardSuffixes.push(suffix);
+        continue;
+      }
+    }
+    exact.add(value);
+  }
+  return { exact, allowAny, wildcardSuffixes };
+}
+
+function isOriginAllowed(origin: string, allowed: AllowedOrigins): boolean {
+  if (allowed.allowAny) return true;
+  if (allowed.exact.has(origin)) return true;
+  let host = "";
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (!host) return false;
+  for (const suffix of allowed.wildcardSuffixes) {
+    if (host.endsWith(suffix) && host !== suffix.slice(1)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function extensionForMimeType(mimeType: string): string {
@@ -210,6 +253,7 @@ async function main(): Promise<void> {
   if (typeof jwtSecret !== "string" || jwtSecret.trim() === "") {
     throw new Error("Missing JWT_SECRET environment variable.");
   }
+  const requireDatabase = process.env.REQUIRE_DATABASE === "true";
 
   const smtpHost = process.env.SMTP_HOST ?? "";
   const smtpPortRaw = Number(process.env.SMTP_PORT ?? "");
@@ -312,6 +356,9 @@ async function main(): Promise<void> {
   const promotedProfilesService = createPromotedProfilesService();
 
   const postgresSettings = resolvePostgresSettingsFromEnv();
+  if (requireDatabase && !postgresSettings) {
+    throw new Error("REQUIRE_DATABASE=true but no PostgreSQL URL was found. Set DATABASE_URL or NEON_DATABASE_URL.");
+  }
   const postgresPool = postgresSettings ? createPostgresPool(postgresSettings) : null;
   const authStateRepo = postgresPool ? createPostgresAuthStateRepository(postgresPool) : null;
   const chatStateRepo = postgresPool ? createPostgresChatStateRepository(postgresPool) : null;
@@ -341,7 +388,7 @@ async function main(): Promise<void> {
     await ensurePostgresSchema(postgresPool);
     initialAuthState = authStateRepo ? await authStateRepo.loadState() : undefined;
     initialChatState = chatStateRepo ? await chatStateRepo.loadState() : undefined;
-    console.log("[RedDoor] Persistence mode: PostgreSQL");
+    console.log(`[RedDoor] Persistence mode: PostgreSQL (${postgresSettings?.sourceEnvKey})`);
   } else {
     console.log("[RedDoor] Persistence mode: local file storage");
   }
@@ -433,7 +480,7 @@ async function main(): Promise<void> {
   app.use((req, res, next) => {
     const originHeader = req.headers.origin;
     const origin = typeof originHeader === "string" ? originHeader.trim() : "";
-    if (origin !== "" && allowedOrigins.has(origin)) {
+    if (origin !== "" && isOriginAllowed(origin, allowedOrigins)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");

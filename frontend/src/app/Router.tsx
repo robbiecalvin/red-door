@@ -61,54 +61,63 @@ type ProfileDraft = Readonly<{
 function cardStyle(): React.CSSProperties {
   return {
     background:
-      "radial-gradient(500px 220px at 10% 0%, rgba(255,28,46,0.15), transparent 58%), linear-gradient(180deg, rgba(8,8,10,0.88), rgba(4,4,5,0.9))",
-    border: "1px solid rgba(255,56,74,0.56)",
+      "radial-gradient(560px 240px at 10% 0%, rgba(255,46,63,0.24), transparent 58%), radial-gradient(460px 200px at 100% 0%, rgba(162,20,35,0.2), transparent 58%), linear-gradient(180deg, rgba(15,4,7,0.86), rgba(5,3,6,0.9))",
+    border: "1px solid rgba(255,70,90,0.34)",
     borderRadius: 20,
-    padding: 14,
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 0 1px rgba(0,0,0,0.28), 0 16px 32px rgba(0,0,0,0.42)"
+    padding: 16,
+    boxShadow:
+      "inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 0 1px rgba(255,36,56,0.14), 0 18px 34px rgba(0,0,0,0.42)"
   };
 }
 
 function buttonPrimary(disabled: boolean): React.CSSProperties {
   return {
-    background: disabled ? "rgba(90,90,90,0.55)" : "linear-gradient(180deg, #ff2136, #c60012)",
-    border: "1px solid rgba(255,70,90,0.68)",
+    background: disabled
+      ? "linear-gradient(180deg, rgba(92, 92, 92, 0.7), rgba(60, 60, 60, 0.7))"
+      : "linear-gradient(180deg, #ff4c60 0%, #f1102b 45%, #c60017 100%)",
+    border: "1px solid rgba(255,95,110,0.64)",
     color: disabled ? "#999999" : "#FFFFFF",
-    padding: "10px 18px",
+    padding: "12px 20px",
     borderRadius: 12,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: 700,
-    letterSpacing: "0.04em",
+    letterSpacing: "0.06em",
     cursor: disabled ? "not-allowed" : "pointer",
     textTransform: "uppercase",
-    boxShadow: disabled ? "none" : "inset 0 1px 0 rgba(255,255,255,0.2), 0 10px 22px rgba(198,0,18,0.34)"
+    boxShadow: disabled
+      ? "none"
+      : "inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -10px 16px rgba(120,0,18,0.26), 0 12px 24px rgba(198,0,24,0.32)"
   };
 }
 
 function buttonSecondary(disabled: boolean): React.CSSProperties {
   return {
-    background: "rgba(0,0,0,0.58)",
-    border: "1px solid rgba(255,58,77,0.62)",
+    background: "linear-gradient(180deg, rgba(20, 8, 12, 0.88), rgba(8, 5, 8, 0.9))",
+    border: "1px solid rgba(255,95,110,0.36)",
     color: "#3fdfff",
-    padding: "10px 18px",
+    padding: "12px 18px",
     borderRadius: 12,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: 700,
-    letterSpacing: "0.03em",
+    letterSpacing: "0.05em",
     cursor: disabled ? "not-allowed" : "pointer",
     textTransform: "uppercase",
-    opacity: disabled ? 0.6 : 1
+    opacity: disabled ? 0.6 : 1,
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 10px 18px rgba(0,0,0,0.28)"
   };
 }
 
 function fieldStyle(): React.CSSProperties {
   return {
-    background: "rgba(6,7,10,0.92)",
+    background: "linear-gradient(180deg, rgba(8,8,12,0.96), rgba(4,4,8,0.98))",
     color: "#ffffff",
-    border: "1px solid rgba(255,64,82,0.48)",
-    borderRadius: 12,
-    padding: "10px 12px",
-    fontSize: 15
+    border: "1px solid rgba(255,80,98,0.22)",
+    borderRadius: 14,
+    padding: "13px 14px",
+    fontSize: 17,
+    lineHeight: 1.25,
+    boxShadow:
+      "inset 0 1px 0 rgba(255,255,255,0.05), inset 0 -10px 18px rgba(0,0,0,0.2), 0 7px 14px rgba(0,0,0,0.22)"
   };
 }
 
@@ -3174,6 +3183,18 @@ function PublicPostings({
     return userId;
   }
 
+  function displayNameForActorKey(actorKey: string): string {
+    const key = actorKey.trim();
+    if (!key) return "Member";
+    if (key.startsWith("user:")) {
+      return displayNameForUserId(key.slice("user:".length).trim());
+    }
+    if (key.startsWith("session:")) {
+      return "Guest";
+    }
+    return key;
+  }
+
   function avatarForUserId(userId: string): string {
     const profile = publicProfilesByUserId[userId];
     if (profile?.mainPhotoMediaId && mediaUrlById[profile.mainPhotoMediaId]) return mediaUrlById[profile.mainPhotoMediaId];
@@ -3718,10 +3739,12 @@ function PublicPostings({
         currentUserKey={myActorKey}
         messages={spotThreadMessages}
         client={spotChatClient}
-        title={`${selectedSpot.name} Chat`}
+        title={`${selectedSpot.name} Board`}
         showHeader={false}
         edgeToEdge={isMobile}
         fillHeight={isMobile}
+        presentation="board"
+        authorLabelForKey={displayNameForActorKey}
       />
     </div>
   ) : (

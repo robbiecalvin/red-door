@@ -187,4 +187,28 @@ describe("profileService", () => {
     if (res.ok) throw new Error("unreachable");
     expect(res.error).toEqual({ code: "INVALID_INPUT", message: "Bio contains disallowed language." });
   });
+
+  it("Given guest and registered profiles exist When listing public profiles Then guest profiles are excluded", async () => {
+    const repo = createInMemoryProfileRepository();
+    const svc = createProfileService({ repo, nowMs: () => 1_700_000_000_333 });
+
+    const guest = await svc.upsertMe(
+      { userType: "guest", sessionToken: "guest_public_hidden", ageVerified: true },
+      { displayName: "Guest Profile", age: 30, bio: "Guest", stats: {} }
+    );
+    expect(guest.ok).toBe(true);
+
+    const registered = await svc.upsertMe(
+      { userType: "registered", userId: "user_public_visible", ageVerified: true },
+      { displayName: "Registered Profile", age: 31, bio: "Registered", stats: {} }
+    );
+    expect(registered.ok).toBe(true);
+
+    const listed = await svc.listPublicProfiles();
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw new Error("unreachable");
+    const listedUserIds = listed.value.map((p) => p.userId);
+    expect(listedUserIds).toContain("user_public_visible");
+    expect(listedUserIds).not.toContain("guest:guest_public_hidden");
+  });
 });

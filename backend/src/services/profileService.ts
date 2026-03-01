@@ -112,6 +112,10 @@ function asTrimmedString(v: unknown): string | null {
   return t.length ? t : null;
 }
 
+function isGuestUserId(userId: string): boolean {
+  return userId.startsWith("guest:");
+}
+
 function asNumber(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
   return v;
@@ -361,6 +365,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
     async getPublicByUserId(userId: unknown): Promise<Result<PublicProfile>> {
       const id = asTrimmedString(userId);
       if (!id) return err("INVALID_INPUT", "userId is required.");
+      if (isGuestUserId(id)) return err("PROFILE_NOT_FOUND", "Profile not found.");
       const existing = await deps.repo.getByUserId(id);
       if (!existing) return err("PROFILE_NOT_FOUND", "Profile not found.");
       if (existing.discreetMode === true) return err("PROFILE_HIDDEN", "Profile is hidden.");
@@ -381,6 +386,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
     async listPublicProfiles(): Promise<Result<ReadonlyArray<PublicProfile>>> {
       const all = await deps.repo.listAll();
       const visible = all
+        .filter((p) => !isGuestUserId(p.userId))
         .filter((p) => p.discreetMode !== true)
         .map((p) => ({
           userId: p.userId,

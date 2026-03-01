@@ -29,6 +29,22 @@ function displayMessageText(text: string): string {
   return text.trim() === FIRE_SIGNAL_TEXT ? "🔥 I'm into you" : text;
 }
 
+function fallbackAuthorLabel(actorKey: string): string {
+  const trimmed = actorKey.trim();
+  if (trimmed.startsWith("user:")) {
+    const id = trimmed.slice("user:".length).trim();
+    return id ? `User ${id.slice(0, 8)}` : "User";
+  }
+  if (trimmed.startsWith("session:")) {
+    const id = trimmed.slice("session:".length).trim();
+    return id ? `Guest ${id.slice(0, 6)}` : "Guest";
+  }
+  if (trimmed.startsWith("spot:")) {
+    return "Spot";
+  }
+  return trimmed || "Member";
+}
+
 export function ChatWindow({
   chatKind,
   peerKey,
@@ -40,7 +56,9 @@ export function ChatWindow({
   thirdParty,
   edgeToEdge,
   showHeader,
-  fillHeight
+  fillHeight,
+  presentation,
+  authorLabelForKey
 }: Readonly<{
   chatKind: ChatKind;
   peerKey: string;
@@ -59,6 +77,8 @@ export function ChatWindow({
   edgeToEdge?: boolean;
   showHeader?: boolean;
   fillHeight?: boolean;
+  presentation?: "chat" | "board";
+  authorLabelForKey?: (actorKey: string) => string;
 }>): React.ReactElement {
   const [draft, setDraft] = useState<string>("");
   const [lastError, setLastError] = useState<string | null>(null);
@@ -74,6 +94,7 @@ export function ChatWindow({
   const isEdgeToEdge = edgeToEdge === true;
   const headerVisible = showHeader !== false;
   const fixedComposer = isEdgeToEdge && fillHeight === true;
+  const boardMode = presentation === "board";
 
   const sorted = useMemo(() => [...messages].sort((a, b) => a.createdAtMs - b.createdAtMs), [messages]);
   const mediaObjectKeys = useMemo(
@@ -315,14 +336,21 @@ export function ChatWindow({
         }}
       >
         {sorted.length === 0 ? (
-          <div style={{ color: "#AAAAAA", fontSize: 14, lineHeight: 1.4 }}>No messages.</div>
+          <div style={{ color: "#AAAAAA", fontSize: 14, lineHeight: 1.4 }}>{boardMode ? "No posts yet." : "No messages."}</div>
         ) : (
           sorted.map((m) => {
             const mine = m.fromKey === currentUserKey;
-            const bubbleBg = mine ? "#C00000" : "#444444";
-            const rowAlign: React.CSSProperties = mine ? { alignItems: "flex-end" } : { alignItems: "flex-start" };
+            const bubbleBg = boardMode ? "rgba(22,22,28,0.96)" : mine ? "#C00000" : "#444444";
+            const rowAlign: React.CSSProperties = boardMode ? { alignItems: "stretch" } : mine ? { alignItems: "flex-end" } : { alignItems: "flex-start" };
+            const author = authorLabelForKey ? authorLabelForKey(m.fromKey) : fallbackAuthorLabel(m.fromKey);
             return (
               <div key={m.messageId} style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%", ...rowAlign }}>
+                {boardMode ? (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, color: "#cfd4de", fontSize: 12 }}>
+                    <span style={{ fontWeight: 700, color: "#ffffff" }}>{author}</span>
+                    <span>{new Date(m.createdAtMs).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                  </div>
+                ) : null}
                 {(() => {
                   const location = parseLocationPayload(m.text ?? "");
                   if (!location) return null;
@@ -337,10 +365,11 @@ export function ChatWindow({
                         textDecoration: "none",
                         color: "#fff",
                         background: bubbleBg,
-                        borderRadius: 14,
+                        borderRadius: boardMode ? 12 : 14,
+                        border: boardMode ? "1px solid rgba(255,255,255,0.08)" : "none",
                         padding: 8,
                         width: "auto",
-                        maxWidth: "80%"
+                        maxWidth: boardMode ? "100%" : "80%"
                       }}
                     >
                       <div style={{ fontSize: 12, color: "#d8ecff" }}>Shared location</div>
@@ -359,11 +388,12 @@ export function ChatWindow({
                   style={{
                     background: bubbleBg,
                     color: "#FFFFFF",
-                    borderRadius: 18,
-                    padding: "8px 12px",
+                    borderRadius: boardMode ? 12 : 18,
+                    border: boardMode ? "1px solid rgba(255,255,255,0.08)" : "none",
+                    padding: boardMode ? "10px 12px" : "8px 12px",
                     width: "auto",
-                    maxWidth: "80%",
-                    fontSize: 16,
+                    maxWidth: boardMode ? "100%" : "80%",
+                    fontSize: boardMode ? 15 : 16,
                     lineHeight: 1.4,
                     whiteSpace: "pre-wrap",
                     overflowWrap: "anywhere",
@@ -394,8 +424,8 @@ export function ChatWindow({
                     </div>
                   ) : null}
                 </div>
-                <div style={{ fontSize: 10, color: "#AAAAAA" }}>{formatTime(m.createdAtMs)}</div>
-                {mine ? (
+                {!boardMode ? <div style={{ fontSize: 10, color: "#AAAAAA" }}>{formatTime(m.createdAtMs)}</div> : null}
+                {mine && !boardMode ? (
                   <div style={{ fontSize: 10, color: "#6fdcff" }}>
                     {typeof m.readAtMs === "number" ? "Read" : typeof m.deliveredAtMs === "number" ? "Delivered" : ""}
                   </div>
@@ -445,7 +475,7 @@ export function ChatWindow({
               lineHeight: 1.4,
               outline: "none"
             }}
-            aria-label="Message text"
+            aria-label={boardMode ? "Write a post" : "Message text"}
           />
         </label>
         <div style={{ position: "relative" }}>
@@ -667,9 +697,9 @@ export function ChatWindow({
             cursor: sending ? "not-allowed" : "pointer",
             height: 44
           }}
-          aria-label="Send message"
+          aria-label={boardMode ? "Post message" : "Send message"}
         >
-          SEND
+          {boardMode ? "POST" : "SEND"}
         </button>
       </form>
     </section>

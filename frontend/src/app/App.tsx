@@ -145,7 +145,7 @@ function normalizeUiError(e: unknown, fallback: string): string {
   if (e && typeof e === "object" && "message" in e && typeof (e as { message?: unknown }).message === "string") {
     const msg = (e as { message: string }).message;
     if (msg.toLowerCase().includes("failed to fetch")) {
-      return "Network error. If using local web mode, refresh and try again.";
+      return "Network error reaching the API. Check DUALMODE_API_BASE_PATH and backend CORS_ALLOWED_ORIGINS.";
     }
     return msg;
   }
