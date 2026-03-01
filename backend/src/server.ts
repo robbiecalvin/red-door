@@ -357,6 +357,7 @@ async function main(): Promise<void> {
 
   const authService = createAuthService({
     jwtSecret,
+    skipEmailVerification: true,
     onVerificationCodeIssued: verificationCodeSender,
     initialState: initialAuthState,
     onStateChanged: authStateRepo ? queueAuthStateSave : undefined

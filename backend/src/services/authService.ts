@@ -85,6 +85,12 @@ export type AuthService = Readonly<{
   setHybridOptIn(sessionToken: string, optIn: boolean): Result<Session>;
   setMode(sessionToken: string, mode: Mode): Result<Session>;
   listRegisteredUserIds(): ReadonlyArray<string>;
+  snapshotState(): AuthStateSnapshot;
+}>;
+
+export type AuthStateSnapshot = Readonly<{
+  users: ReadonlyArray<StoredUser>;
+  sessions: ReadonlyArray<Session>;
 }>;
 
 export type AuthServiceDeps = Readonly<{
@@ -94,6 +100,9 @@ export type AuthServiceDeps = Readonly<{
   userStoreFilePath?: string;
   verificationCodeTtlMinutes?: number;
   verificationCodeGenerator?: () => string;
+  skipEmailVerification?: boolean;
+  initialState?: AuthStateSnapshot;
+  onStateChanged?: (state: AuthStateSnapshot) => void;
   onVerificationCodeIssued?: (
     destination: string,
     code: string,
@@ -166,8 +175,10 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
   const nowMs = deps.nowMs ?? (() => Date.now());
   const guestSessionLifetimeMinutes = deps.guestSessionLifetimeMinutes ?? DEFAULT_GUEST_SESSION_LIFETIME_MINUTES;
   const verificationCodeTtlMinutes = deps.verificationCodeTtlMinutes ?? DEFAULT_VERIFICATION_CODE_TTL_MINUTES;
+  const skipEmailVerification = deps.skipEmailVerification === true;
   const jwtSecret = deps.jwtSecret;
   const userStoreFilePath = deps.userStoreFilePath ?? DEFAULT_USER_STORE_FILE_PATH;
+  const useFilePersistence = deps.initialState === undefined;
   const codeGenerator =
     deps.verificationCodeGenerator ??
     (() => {
@@ -180,6 +191,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       // Dev fallback when no SMTP provider is configured.
       console.log(`[RedDoor] Verification code via ${channel} for ${destination}: ${code}`);
     });
+  const onStateChanged = deps.onStateChanged;
 
   if (typeof jwtSecret !== "string" || jwtSecret.trim() === "") {
     // Deterministic, explicit failure: without a secret we cannot issue/verify JWTs.
@@ -196,7 +208,24 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
   const usersById = new Map<string, StoredUser>();
   const sessionsByToken = new Map<string, Session>();
 
+  function snapshotStateInternal(): AuthStateSnapshot {
+    return {
+      users: Array.from(usersById.values()),
+      sessions: Array.from(sessionsByToken.values())
+    };
+  }
+
+  function notifyStateChanged(): void {
+    if (!onStateChanged) return;
+    try {
+      onStateChanged(snapshotStateInternal());
+    } catch {
+      // Persistence hooks are best-effort and must not break auth paths.
+    }
+  }
+
   function persistUsers(): void {
+    if (!useFilePersistence) return;
     const dir = path.dirname(userStoreFilePath);
     fs.mkdirSync(dir, { recursive: true });
     const payload = {
@@ -256,6 +285,19 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     }
   }
 
+  function hydrateInitialState(state: AuthStateSnapshot): void {
+    for (const candidate of state.users) {
+      if (!candidate || typeof candidate !== "object") continue;
+      usersById.set(candidate.id, candidate);
+      usersByEmail.set(candidate.email, candidate);
+    }
+    for (const session of state.sessions) {
+      if (!session || typeof session !== "object") continue;
+      if (typeof session.sessionToken !== "string" || session.sessionToken.trim() === "") continue;
+      sessionsByToken.set(session.sessionToken, session);
+    }
+  }
+
   function userPublic(user: StoredUser): Pick<StoredUser, "id" | "email" | "userType" | "tier"> {
     return { id: user.id, email: user.email, userType: user.userType, tier: user.tier };
   }
@@ -286,7 +328,11 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     return updated;
   }
 
-  loadUsers();
+  if (deps.initialState) {
+    hydrateInitialState(deps.initialState);
+  } else {
+    loadUsers();
+  }
 
   function issueJWTInternal(
     user: Pick<StoredUser, "id" | "email" | "userType" | "tier">,
@@ -322,6 +368,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       expiresAtMs: issuedAtMs + 1000 * 60 * 60 * 24 * 365
     };
     sessionsByToken.set(sessionToken, session);
+    notifyStateChanged();
     return session;
   }
 
@@ -338,6 +385,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       expiresAtMs
     };
     sessionsByToken.set(sessionToken, session);
+    notifyStateChanged();
     return session;
   }
 
@@ -354,6 +402,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     const now = nowMs();
     if (now >= existing.expiresAtMs) {
       sessionsByToken.delete(sessionToken);
+      notifyStateChanged();
       return err("INVALID_SESSION", "Session expired.");
     }
 
@@ -396,7 +445,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         userType: "registered",
         tier: "free",
         ageVerified: false,
-        emailVerified: false,
+        // Web build currently runs without verification-code UX; treat new registrations as verified.
+        emailVerified: skipEmailVerification,
         verificationCodeSaltB64: null,
         verificationCodeHashB64: null,
         verificationCodeExpiresAtMs: null,
@@ -408,7 +458,10 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       usersByEmail.set(normalizedEmail, user);
       usersById.set(user.id, user);
       persistUsers();
-      setVerificationCode(user, now);
+      if (!skipEmailVerification) {
+        setVerificationCode(user, now);
+      }
+      notifyStateChanged();
       return ok({ email: normalizedEmail, verificationRequired: true });
     },
 
@@ -483,6 +536,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return err("UNAUTHORIZED_ACTION", "Email already verified.");
       }
       setVerificationCode(user, nowMs());
+      notifyStateChanged();
       return ok({ email: normalizedEmail, verificationRequired: true });
     },
 
@@ -503,19 +557,33 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (!safeEqual(expectedHash, actualHash)) {
         return err("UNAUTHORIZED_ACTION", "Invalid credentials.");
       }
+      let loginUser = user;
       if (!user.emailVerified) {
-        setVerificationCode(user, nowMs());
-        return err("EMAIL_VERIFICATION_REQUIRED", "Phone verification required before login.", {
-          email: user.email,
-          phoneE164: user.phoneE164
-        });
+        if (!skipEmailVerification) {
+          setVerificationCode(user, nowMs());
+          return err("EMAIL_VERIFICATION_REQUIRED", "Phone verification required before login.", {
+            email: user.email,
+            phoneE164: user.phoneE164
+          });
+        }
+        const autoVerifiedUser: StoredUser = {
+          ...user,
+          emailVerified: true,
+          verificationCodeSaltB64: null,
+          verificationCodeHashB64: null,
+          verificationCodeExpiresAtMs: null
+        };
+        usersByEmail.set(autoVerifiedUser.email, autoVerifiedUser);
+        usersById.set(autoVerifiedUser.id, autoVerifiedUser);
+        persistUsers();
+        loginUser = autoVerifiedUser;
       }
 
       const now = nowMs();
-      const token = issueJWTInternal(user, now);
-      const session = createSessionForUser(user, now);
+      const token = issueJWTInternal(loginUser, now);
+      const session = createSessionForUser(loginUser, now);
       return ok({
-        user: userPublic(user),
+        user: userPublic(loginUser),
         jwt: token,
         session
       });
@@ -564,6 +632,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
           persistUsers();
         }
       }
+      notifyStateChanged();
       return ok(updated);
     },
 
@@ -581,6 +650,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
       const updated: Session = { ...existing, hybridOptIn: optIn === true };
       sessionsByToken.set(existing.sessionToken, updated);
+      notifyStateChanged();
       return ok(updated);
     },
 
@@ -606,6 +676,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
       const updated: Session = { ...existing, mode: check.session.mode };
       sessionsByToken.set(existing.sessionToken, updated);
+      notifyStateChanged();
       return ok(updated);
     },
 
@@ -613,6 +684,10 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       return Array.from(usersById.values())
         .filter((u) => (u.userType === "registered" || u.userType === "subscriber") && u.emailVerified === true)
         .map((u) => u.id);
+    },
+
+    snapshotState(): AuthStateSnapshot {
+      return snapshotStateInternal();
     }
   };
 }
