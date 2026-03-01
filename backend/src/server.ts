@@ -159,6 +159,19 @@ function sessionKeyFromSession(session: Readonly<{ userId?: string; sessionToken
   return `session:${session.sessionToken}`;
 }
 
+function safeBroadcast(
+  broadcastFn: (type: string, payload: unknown) => void,
+  type: string,
+  payload: unknown
+): void {
+  try {
+    broadcastFn(type, payload);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`[RedDoor] Realtime broadcast failed for "${type}": ${message}`);
+  }
+}
+
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   const query = address.trim();
   if (!query) return null;
@@ -892,7 +905,7 @@ async function main(): Promise<void> {
   const presenceService = createPresenceService({
     broadcaster: {
       broadcast(type: string, payload: unknown): void {
-        gateway.broadcast(type, payload);
+        safeBroadcast(gateway.broadcast, type, payload);
       }
     }
   });
@@ -960,7 +973,7 @@ async function main(): Promise<void> {
     const { chatKind, toKey, text, media } = req.body as any;
     const result = chatService.sendMessage(sessionResult.value, { chatKind, toKey, text, media });
     if (!result.ok) return sendError(res, result.error);
-    gateway.broadcast("chat_message", { message: result.value });
+    safeBroadcast(gateway.broadcast, "chat_message", { message: result.value });
     return res.status(200).json({ message: result.value });
   });
 
@@ -1102,7 +1115,7 @@ async function main(): Promise<void> {
         context: { maxBytes: 1900 }
       });
     }
-    gateway.broadcast("call_signal", payload);
+    safeBroadcast(gateway.broadcast, "call_signal", payload);
     return res.status(200).json({ ok: true });
   });
 
