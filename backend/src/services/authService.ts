@@ -419,7 +419,11 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (typeof email !== "string" || !isLikelyValidEmail(email)) {
         return err("UNAUTHORIZED_ACTION", "Invalid email.");
       }
-      if (typeof phoneE164 !== "string" || !isLikelyValidPhoneE164(phoneE164)) {
+      const normalizedPhone = typeof phoneE164 === "string" ? phoneE164.trim() : "";
+      if (!skipEmailVerification && !isLikelyValidPhoneE164(normalizedPhone)) {
+        return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
+      }
+      if (skipEmailVerification && normalizedPhone.length > 0 && !isLikelyValidPhoneE164(normalizedPhone)) {
         return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
       }
       if (!isStrongPassword(password)) {
@@ -441,7 +445,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       const user: StoredUser = {
         id: crypto.randomUUID(),
         email: normalizedEmail,
-        phoneE164: phoneE164.trim(),
+        phoneE164: normalizedPhone.length > 0 ? normalizedPhone : null,
         userType: "registered",
         tier: "free",
         ageVerified: false,
