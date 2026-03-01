@@ -6,6 +6,7 @@ import {
   type MediaKind,
   type ProfileCutStatus,
   type ProfilePosition,
+  type PublicProfile,
   type PublicPosting,
   type CruisingSpot,
   type Session,
@@ -32,11 +33,10 @@ type Settings = Readonly<{
   defaultCenterLng: number;
 }>;
 
-type TopTab = "discover" | "threads" | "public" | "profile" | "settings" | "submissions" | "promoted";
+type TopTab = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted";
 type DiscoverFilter = "all" | "online" | "favorites";
 type MobileCruiseTab = "map" | "chat";
 type DiscoverScreen = MobileCruiseTab;
-type MobilePublicTab = "ads" | "events" | "spots";
 type MessageChannel = "instant" | "direct";
 const FIRE_SIGNAL_TEXT = "FIRE_SIGNAL|1";
 declare const __DUALMODE_WS_URL__: string | undefined;
@@ -123,6 +123,23 @@ function isString(v: unknown): v is string {
 function normalizeErrorMessage(e: unknown): string {
   const err = e as ServiceError;
   return isString(err?.message) ? err.message : "Action rejected.";
+}
+
+function formatEventDate(eventStartAtMs?: number): string {
+  if (typeof eventStartAtMs !== "number" || !Number.isFinite(eventStartAtMs) || eventStartAtMs <= 0) return "Date TBD";
+  return new Date(eventStartAtMs).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+}
+
+function formatEventTime(eventStartAtMs?: number): string {
+  if (typeof eventStartAtMs !== "number" || !Number.isFinite(eventStartAtMs) || eventStartAtMs <= 0) return "Time TBD";
+  return new Date(eventStartAtMs).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit"
+  });
 }
 
 function wsProxyUrl(): string {
@@ -3103,20 +3120,25 @@ function PublicPostings({
   api,
   session,
   isMobile,
+  screen,
   setLastError
 }: Readonly<{
   api: Api;
   session: Session;
   isMobile: boolean;
+  screen: "ads" | "groups" | "cruise";
   setLastError(value: string | null): void;
 }>): React.ReactElement {
-  const [mobileTab, setMobileTab] = useState<MobilePublicTab>("ads");
   const [ads, setAds] = useState<ReadonlyArray<PublicPosting>>([]);
   const [events, setEvents] = useState<ReadonlyArray<PublicPosting>>([]);
   const [adTitle, setAdTitle] = useState<string>("");
   const [adBody, setAdBody] = useState<string>("");
   const [eventTitle, setEventTitle] = useState<string>("");
   const [eventBody, setEventBody] = useState<string>("");
+  const [eventDate, setEventDate] = useState<string>("");
+  const [eventTime, setEventTime] = useState<string>("");
+  const [eventGroupDetails, setEventGroupDetails] = useState<string>("");
+  const [eventLocationInstructions, setEventLocationInstructions] = useState<string>("");
   const [spots, setSpots] = useState<ReadonlyArray<CruisingSpot>>([]);
   const [spotName, setSpotName] = useState<string>("");
   const [spotAddress, setSpotAddress] = useState<string>("");
@@ -3128,14 +3150,55 @@ function PublicPostings({
   const [eventPhotoMediaId, setEventPhotoMediaId] = useState<string>("");
   const [spotPhotoMediaId, setSpotPhotoMediaId] = useState<string>("");
   const [mediaUrlById, setMediaUrlById] = useState<Record<string, string>>({});
+  const [publicProfilesByUserId, setPublicProfilesByUserId] = useState<Record<string, PublicProfile>>({});
   const [uploadingKind, setUploadingKind] = useState<"ad" | "event" | "spot" | null>(null);
   const [eventInvites, setEventInvites] = useState<ReadonlyArray<PublicPosting>>([]);
   const [inviteTargetByEventId, setInviteTargetByEventId] = useState<Record<string, string>>({});
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
+  const [spotThreadMessages, setSpotThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
+  const [spotThreadLoading, setSpotThreadLoading] = useState<boolean>(false);
 
   const canPostAds = true;
   const canPostEvents = session.userType !== "guest";
   const canCreateSpots = true;
   const gridColumns = isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))";
+  const myActorKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const selectedGroup = useMemo(() => events.find((event) => event.postingId === selectedGroupId) ?? null, [events, selectedGroupId]);
+  const selectedSpot = useMemo(() => spots.find((spot) => spot.spotId === selectedSpotId) ?? null, [selectedSpotId, spots]);
+  const selectedSpotThreadKey = selectedSpotId ? `spot:${selectedSpotId}` : "";
+
+  function combineEventDateTimeToEpochMs(dateText: string, timeText: string): number | null {
+    const d = dateText.trim();
+    const t = timeText.trim();
+    if (!d || !t) return null;
+    const composed = new Date(`${d}T${t}`);
+    if (!Number.isFinite(composed.getTime())) return null;
+    return composed.getTime();
+  }
+
+  function displayNameForUserId(userId: string): string {
+    const profile = publicProfilesByUserId[userId];
+    if (profile && profile.displayName.trim().length > 0) return profile.displayName.trim();
+    return userId;
+  }
+
+  function avatarForUserId(userId: string): string {
+    const profile = publicProfilesByUserId[userId];
+    if (profile?.mainPhotoMediaId && mediaUrlById[profile.mainPhotoMediaId]) return mediaUrlById[profile.mainPhotoMediaId];
+    return avatarForKey(`user:${userId}`);
+  }
+
+  function attendeeIdsForEvent(event: PublicPosting): ReadonlyArray<string> {
+    const attendeeSet = new Set((event.acceptedUserIds ?? []).filter((id) => id && id !== event.authorUserId));
+    return [event.authorUserId, ...Array.from(attendeeSet.values()).sort()];
+  }
+
+  function userCanSeeLocationInstructions(event: PublicPosting): boolean {
+    if (!session.userId) return false;
+    if (event.authorUserId === session.userId) return true;
+    return (event.acceptedUserIds ?? []).includes(session.userId);
+  }
 
   async function resolveMediaUrls(mediaIds: ReadonlyArray<string>): Promise<void> {
     const unique = Array.from(new Set(mediaIds.map((id) => id.trim()).filter((id) => id.length > 0)));
@@ -3164,21 +3227,29 @@ function PublicPostings({
 
   async function refresh(): Promise<void> {
     try {
-      const [adsRes, eventsRes, spotsRes, invitesRes] = await Promise.all([
-        api.listPublicPostings("ad"),
-        api.listPublicPostings("event"),
+      const [adsRes, eventsRes, spotsRes, invitesRes, profilesRes] = await Promise.all([
+        api.listPublicPostings("ad", session.sessionToken),
+        api.listPublicPostings("event", session.sessionToken),
         api.listCruisingSpots(),
-        session.userType === "guest" ? Promise.resolve({ postings: [] as ReadonlyArray<PublicPosting> }) : api.listEventInvites(session.sessionToken)
+        session.userType === "guest" ? Promise.resolve({ postings: [] as ReadonlyArray<PublicPosting> }) : api.listEventInvites(session.sessionToken),
+        api.getPublicProfiles()
       ]);
       // Public postings should render oldest -> newest so new posts land at the bottom.
       setAds([...adsRes.postings].sort((a, b) => a.createdAtMs - b.createdAtMs));
       setEvents([...eventsRes.postings].sort((a, b) => a.createdAtMs - b.createdAtMs));
       setSpots(spotsRes.spots);
       setEventInvites(invitesRes.postings);
+      setPublicProfilesByUserId(
+        profilesRes.profiles.reduce<Record<string, PublicProfile>>((acc, profile) => {
+          acc[profile.userId] = profile;
+          return acc;
+        }, {})
+      );
       await resolveMediaUrls([
         ...adsRes.postings.map((p) => p.photoMediaId ?? ""),
         ...eventsRes.postings.map((p) => p.photoMediaId ?? ""),
-        ...spotsRes.spots.map((p) => p.photoMediaId ?? "")
+        ...spotsRes.spots.map((p) => p.photoMediaId ?? ""),
+        ...profilesRes.profiles.map((p) => p.mainPhotoMediaId ?? "")
       ]);
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
@@ -3189,26 +3260,37 @@ function PublicPostings({
     void refresh();
   }, []);
 
-  useEffect(() => {
-    const onTabSelect = (evt: Event): void => {
-      const custom = evt as CustomEvent<{ tab?: TopTab }>;
-      if (custom.detail?.tab !== "public") return;
-      setMobileTab("ads");
-    };
-    window.addEventListener("rd:tab-select", onTabSelect as EventListener);
-    return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
-  }, []);
-
   async function submit(type: "ad" | "event"): Promise<void> {
     if (type === "event" && !canPostEvents) {
-      setLastError("Anonymous users cannot create event postings.");
+      setLastError("Anonymous users cannot create groups.");
       return;
     }
     const title = type === "ad" ? adTitle : eventTitle;
     const body = type === "ad" ? adBody : eventBody;
     const photoMediaId = type === "ad" ? adPhotoMediaId : eventPhotoMediaId;
+    const eventStartAtMs = type === "event" ? combineEventDateTimeToEpochMs(eventDate, eventTime) : null;
+    if (type === "event" && eventStartAtMs === null) {
+      setLastError("Group date and time are required.");
+      return;
+    }
+    if (type === "event" && eventLocationInstructions.trim().length === 0) {
+      setLastError("Location instructions are required.");
+      return;
+    }
+    if (type === "event" && eventGroupDetails.trim().length === 0) {
+      setLastError("Group details are required.");
+      return;
+    }
     try {
-      await api.createPublicPosting(session.sessionToken, { type, title, body, photoMediaId: photoMediaId || undefined });
+      await api.createPublicPosting(session.sessionToken, {
+        type,
+        title,
+        body,
+        photoMediaId: photoMediaId || undefined,
+        eventStartAtMs: eventStartAtMs ?? undefined,
+        locationInstructions: type === "event" ? eventLocationInstructions.trim() : undefined,
+        groupDetails: type === "event" ? eventGroupDetails.trim() : undefined
+      });
       if (type === "ad") {
         setAdTitle("");
         setAdBody("");
@@ -3217,6 +3299,10 @@ function PublicPostings({
       } else {
         setEventTitle("");
         setEventBody("");
+        setEventDate("");
+        setEventTime("");
+        setEventGroupDetails("");
+        setEventLocationInstructions("");
         setEventPhotoFile(null);
         setEventPhotoMediaId("");
       }
@@ -3228,7 +3314,7 @@ function PublicPostings({
 
   async function inviteToEvent(postingId: string): Promise<void> {
     if (!canPostEvents) {
-      setLastError("Anonymous users cannot invite to events.");
+      setLastError("Anonymous users cannot invite to groups.");
       return;
     }
     const targetUserId = (inviteTargetByEventId[postingId] ?? "").trim();
@@ -3247,11 +3333,37 @@ function PublicPostings({
 
   async function respondToInvite(postingId: string, accept: boolean): Promise<void> {
     if (session.userType === "guest") {
-      setLastError("Anonymous users cannot respond to event invites.");
+      setLastError("Anonymous users cannot respond to group invites.");
       return;
     }
     try {
       await api.respondToEventInvite(session.sessionToken, { postingId, accept });
+      await refresh();
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
+  }
+
+  async function requestToJoin(postingId: string): Promise<void> {
+    if (session.userType === "guest") {
+      setLastError("Anonymous users cannot request to join groups.");
+      return;
+    }
+    try {
+      await api.requestToJoinEvent(session.sessionToken, { postingId });
+      await refresh();
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
+  }
+
+  async function respondToJoinRequest(postingId: string, targetUserId: string, accept: boolean): Promise<void> {
+    if (session.userType === "guest") {
+      setLastError("Anonymous users cannot manage join requests.");
+      return;
+    }
+    try {
+      await api.respondToEventJoinRequest(session.sessionToken, { postingId, targetUserId, accept });
       await refresh();
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
@@ -3324,8 +3436,77 @@ function PublicPostings({
     }
   }
 
-  const panel = (kind: "ads" | "events"): React.ReactElement => {
-    const title = kind === "ads" ? "ADS" : "EVENTS";
+  async function loadSpotThread(spotId: string): Promise<void> {
+    const threadKey = `spot:${spotId}`;
+    try {
+      const res = await api.listChat(session.sessionToken, "cruise", threadKey);
+      const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
+      setSpotThreadMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
+      void api.markChatRead(session.sessionToken, "cruise", threadKey).catch(() => {});
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
+  }
+
+  const spotChatClient: ChatApiClient = useMemo(
+    () => ({
+      async sendMessage(chatKind, toKey, text, media) {
+        const res = await api.sendChat(session.sessionToken, chatKind, toKey, text, media);
+        const msg = (res as { message?: ChatMessage }).message;
+        if (!msg) {
+          throw { code: "UNAUTHORIZED_ACTION", message: "Message rejected." } as ServiceError;
+        }
+        setSpotThreadMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
+        return msg;
+      },
+      async initiateMediaUpload(mimeType, sizeBytes) {
+        const res = await api.initiateChatMediaUpload(session.sessionToken, { mimeType, sizeBytes });
+        return { objectKey: res.objectKey, uploadUrl: res.uploadUrl };
+      },
+      async uploadToSignedUrl(uploadUrl, file, mimeType) {
+        if (await uploadToLocalSignedUrl(uploadUrl, file, mimeType)) return;
+        const res = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "content-type": mimeType },
+          body: file
+        });
+        if (!res.ok) {
+          throw { code: "MEDIA_UPLOAD_INCOMPLETE", message: "Upload failed." } as ServiceError;
+        }
+      },
+      async getMediaUrl(objectKey) {
+        const res = await api.getChatMediaUrl(session.sessionToken, objectKey);
+        return res.downloadUrl;
+      }
+    }),
+    [api, session.sessionToken]
+  );
+
+  useEffect(() => {
+    if (!selectedSpotId || screen !== "cruise") return;
+    let cancelled = false;
+    let timer: number | null = null;
+    setSpotThreadLoading(true);
+
+    const poll = async (): Promise<void> => {
+      if (cancelled) return;
+      await loadSpotThread(selectedSpotId);
+      if (cancelled) return;
+      setSpotThreadLoading(false);
+      timer = window.setTimeout(() => {
+        void poll();
+      }, 1500);
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [screen, selectedSpotId]);
+
+  const panel = (kind: "ads" | "groups"): React.ReactElement => {
+    const title = kind === "ads" ? "ADS" : "GROUPS";
     const list = kind === "ads" ? ads : events;
     const draftTitle = kind === "ads" ? adTitle : eventTitle;
     const draftBody = kind === "ads" ? adBody : eventBody;
@@ -3335,7 +3516,7 @@ function PublicPostings({
     const setPhotoFile = kind === "ads" ? setAdPhotoFile : setEventPhotoFile;
     const photoMediaId = kind === "ads" ? adPhotoMediaId : eventPhotoMediaId;
     const setPhotoMediaId = kind === "ads" ? setAdPhotoMediaId : setEventPhotoMediaId;
-    const submitKind = kind === "ads" ? "ad" : "event";
+    const submitKind: "ad" | "event" = kind === "ads" ? "ad" : "event";
     const canPostThis = kind === "ads" ? canPostAds : canPostEvents;
     const isUploading = uploadingKind === submitKind;
 
@@ -3345,6 +3526,44 @@ function PublicPostings({
           <div style={{ fontSize: 20, fontWeight: 700 }}>{title}</div>
           <input value={draftTitle} onChange={(e) => setTitle(e.target.value)} placeholder={`${title} title`} style={fieldStyle()} aria-label={`${title} title`} disabled={!canPostThis} />
           <textarea value={draftBody} onChange={(e) => setBody(e.target.value)} placeholder={`Write ${title.toLowerCase()} details`} style={{ ...fieldStyle(), minHeight: 86, resize: "vertical" }} aria-label={`${title} details`} disabled={!canPostThis} />
+          {kind === "groups" ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+                <input
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                  type="date"
+                  style={fieldStyle()}
+                  aria-label="Group date"
+                  disabled={!canPostThis}
+                />
+                <input
+                  value={eventTime}
+                  onChange={(e) => setEventTime(e.target.value)}
+                  type="time"
+                  style={fieldStyle()}
+                  aria-label="Group time"
+                  disabled={!canPostThis}
+                />
+              </div>
+              <textarea
+                value={eventGroupDetails}
+                onChange={(e) => setEventGroupDetails(e.target.value)}
+                placeholder="Detailed group profile description"
+                style={{ ...fieldStyle(), minHeight: 74, resize: "vertical" }}
+                aria-label="Group details"
+                disabled={!canPostThis}
+              />
+              <textarea
+                value={eventLocationInstructions}
+                onChange={(e) => setEventLocationInstructions(e.target.value)}
+                placeholder="Location instructions (shown only to attendees)"
+                style={{ ...fieldStyle(), minHeight: 68, resize: "vertical" }}
+                aria-label="Location instructions"
+                disabled={!canPostThis}
+              />
+            </div>
+          ) : null}
           <div style={{ display: "grid", gap: 8 }}>
             <input className="rd-input" type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} disabled={!canPostThis} />
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -3374,71 +3593,93 @@ function PublicPostings({
           <button type="button" onClick={() => void submit(submitKind)} style={canPostThis ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPostThis}>
             POST {title}
           </button>
-          {!canPostThis ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view events but cannot post events.</div> : null}
+          {!canPostThis ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view groups but cannot post groups.</div> : null}
 
           <div style={{ display: "grid", gap: 0, marginTop: 6 }}>
             {list.length === 0 ? (
               <div style={{ color: "#b9bec9", fontSize: 14 }}>No {title.toLowerCase()} yet.</div>
             ) : (
               <div style={{ display: "grid", gap: 0, gridTemplateColumns: gridColumns }}>
-                {list.map((p) => (
-                  <div
-                    key={p.postingId}
-                    style={{
-                      background: "rgba(0,0,0,0.5)",
-                      border: "1px solid rgba(255,58,77,0.35)",
-                      borderRadius: 0,
-                      display: "grid",
-                      gap: 0
-                    }}
-                  >
-                    <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                      <img
-                        src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
-                        alt={`${title} posting`}
-                        style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
-                      />
-                    </div>
-                    <div style={{ padding: 8, display: "grid", gap: 6 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
-                      <div style={{ color: "#9fb6bf", fontSize: 12 }}>Host: {p.authorUserId}</div>
-                      <div style={{ color: "#ced3dc", fontSize: 13, whiteSpace: "pre-wrap" }}>{p.body}</div>
-                      {kind === "events" ? (
-                        <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
+                {list.map((p) => {
+                  const isHost = !!session.userId && session.userId === p.authorUserId;
+                  const isInvited = !!session.userId && (p.invitedUserIds ?? []).includes(session.userId);
+                  const isAttending = !!session.userId && (p.authorUserId === session.userId || (p.acceptedUserIds ?? []).includes(session.userId));
+                  const hasRequested = !!session.userId && (p.joinRequestUserIds ?? []).includes(session.userId);
+                  const canRequestJoin = kind === "groups" && session.userType !== "guest" && !!session.userId && !isHost && !isAttending && !hasRequested;
+                  return (
+                    <div
+                      key={p.postingId}
+                      style={{
+                        background: "rgba(0,0,0,0.5)",
+                        border: "1px solid rgba(255,58,77,0.35)",
+                        borderRadius: 0,
+                        display: "grid",
+                        gap: 0
+                      }}
+                    >
+                      <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                        <img
+                          src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
+                          alt={`${title} posting`}
+                          style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
+                        />
+                      </div>
+                      <div style={{ padding: 8, display: "grid", gap: 6 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
+                        {kind === "groups" ? (
                           <div style={{ color: "#9fb6bf", fontSize: 12 }}>
-                            Invited: {p.invitedUserIds?.length ?? 0} | Accepted: {p.acceptedUserIds?.length ?? 0}
+                            {formatEventDate(p.eventStartAtMs)} at {formatEventTime(p.eventStartAtMs)}
                           </div>
-                          {session.userId && session.userId === p.authorUserId ? (
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
-                              <input
-                                value={inviteTargetByEventId[p.postingId] ?? ""}
-                                onChange={(e) => setInviteTargetByEventId((prev) => ({ ...prev, [p.postingId]: e.target.value }))}
-                                placeholder="Invite user id"
-                                style={fieldStyle()}
-                              />
-                              <button type="button" style={buttonSecondary(false)} onClick={() => void inviteToEvent(p.postingId)}>
-                                INVITE
-                              </button>
+                        ) : null}
+                        <div style={{ color: "#9fb6bf", fontSize: 12 }}>Host: {displayNameForUserId(p.authorUserId)}</div>
+                        <div style={{ color: "#ced3dc", fontSize: 13, whiteSpace: "pre-wrap" }}>{p.body}</div>
+                        {kind === "groups" ? (
+                          <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
+                            <div style={{ color: "#9fb6bf", fontSize: 12 }}>
+                              Invited: {p.invitedUserIds?.length ?? 0} | Attending: {(p.acceptedUserIds?.length ?? 0) + 1}
                             </div>
-                          ) : null}
-                          {session.userType !== "guest" &&
-                          session.userId &&
-                          Array.isArray(p.invitedUserIds) &&
-                          p.invitedUserIds.includes(session.userId) ? (
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(p.postingId, true)}>
-                                ACCEPT INVITE
+                            {isHost ? (
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                                <input
+                                  value={inviteTargetByEventId[p.postingId] ?? ""}
+                                  onChange={(e) => setInviteTargetByEventId((prev) => ({ ...prev, [p.postingId]: e.target.value }))}
+                                  placeholder="Invite user id"
+                                  style={fieldStyle()}
+                                />
+                                <button type="button" style={buttonSecondary(false)} onClick={() => void inviteToEvent(p.postingId)}>
+                                  INVITE
+                                </button>
+                              </div>
+                            ) : null}
+                            {session.userType !== "guest" && isInvited ? (
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(p.postingId, true)}>
+                                  ACCEPT INVITE
+                                </button>
+                                <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(p.postingId, false)}>
+                                  DECLINE
+                                </button>
+                              </div>
+                            ) : null}
+                            {canRequestJoin ? (
+                              <button type="button" style={buttonSecondary(false)} onClick={() => void requestToJoin(p.postingId)}>
+                                REQUEST TO JOIN
                               </button>
-                              <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(p.postingId, false)}>
-                                DECLINE
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
+                            ) : null}
+                            {hasRequested ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Join request pending host approval.</div> : null}
+                            <button
+                              type="button"
+                              style={selectedGroupId === p.postingId ? buttonPrimary(false) : buttonSecondary(false)}
+                              onClick={() => setSelectedGroupId((prev) => (prev === p.postingId ? null : p.postingId))}
+                            >
+                              {selectedGroupId === p.postingId ? "HIDE GROUP PROFILE" : "VIEW GROUP PROFILE"}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -3450,7 +3691,7 @@ function PublicPostings({
   const spotsPanel = (
     <div style={{ border: "1px solid rgba(255,58,77,0.38)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.2)" }}>
       <div style={{ display: "grid", gap: 10 }}>
-        <div style={{ fontSize: 20, fontWeight: 700 }}>CRUISING SPOTS</div>
+        <div style={{ fontSize: 20, fontWeight: 700 }}>CRUISE</div>
         <input
           value={spotName}
           onChange={(e) => setSpotName(e.target.value)}
@@ -3501,90 +3742,174 @@ function PublicPostings({
         <button type="button" style={canCreateSpots ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canCreateSpots} onClick={() => void createSpot()}>
           CREATE SPOT
         </button>
-        {!canCreateSpots ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can check in but cannot create spots.</div> : null}
-        <div style={{ display: "grid", gap: 0 }}>
+        {!canCreateSpots ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can check in but cannot create cruise spots.</div> : null}
+        <div style={{ display: "grid", gap: 10 }}>
           {spots.length === 0 ? (
-            <div style={{ color: "#b9bec9", fontSize: 14 }}>No cruising spots yet.</div>
+            <div style={{ color: "#b9bec9", fontSize: 14 }}>No cruise spots yet.</div>
           ) : (
-            <div style={{ display: "grid", gap: 0, gridTemplateColumns: gridColumns }}>
+            <div style={{ display: "grid", gap: 10 }}>
               {spots.map((spot) => (
-                <div
+                <button
                   key={spot.spotId}
+                  type="button"
+                  onClick={() => setSelectedSpotId(spot.spotId)}
                   style={{
+                    border: selectedSpotId === spot.spotId ? "1px solid #26d5ff" : "1px solid rgba(255,58,77,0.35)",
                     background: "rgba(0,0,0,0.5)",
-                    border: "1px solid rgba(255,58,77,0.35)",
                     borderRadius: 0,
                     display: "grid",
-                    gap: 0
+                    gap: 0,
+                    textAlign: "left",
+                    color: "#fff",
+                    cursor: "pointer",
+                    width: "100%",
+                    padding: 0
                   }}
                 >
-                  <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                  <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 6" }}>
                     <img
                       src={spot.photoMediaId ? (mediaUrlById[spot.photoMediaId] ?? avatarForKey(spot.spotId)) : avatarForKey(spot.spotId)}
                       alt="Cruising spot"
                       style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
                     />
                   </div>
-                  <div style={{ padding: 8, display: "grid", gap: 6 }}>
+                  <div style={{ padding: "10px 12px", display: "grid", gap: 8 }}>
                     <div style={{ fontWeight: 700 }}>{spot.name}</div>
-                    <div style={{ color: "#9fb6bf", fontSize: 12 }}>Created by: {spot.creatorUserId}</div>
-                    <div style={{ color: "#9fb6bf", fontSize: 12 }}>{spot.address}</div>
-                    <div style={{ color: "#ced3dc", fontSize: 13, whiteSpace: "pre-wrap" }}>{spot.description}</div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <button type="button" style={buttonSecondary(false)} onClick={() => void checkInSpot(spot.spotId)}>
+                      <span style={{ color: "#9fb6bf", fontSize: 12 }}>Check-ins: {spot.checkInCount ?? 0}</span>
+                      <button
+                        type="button"
+                        style={buttonSecondary(false)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void checkInSpot(spot.spotId);
+                        }}
+                      >
                         CHECK IN
                       </button>
-                      <span style={{ color: "#9fb6bf", fontSize: 12 }}>Checked in: {spot.checkInCount ?? 0}</span>
-                      <span style={{ color: "#9fb6bf", fontSize: 12 }}>Got action: {spot.actionCount ?? 0}</span>
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
         </div>
+        {selectedSpot ? (
+          <div style={{ border: "1px solid rgba(255,58,77,0.38)", background: "rgba(0,0,0,0.4)", padding: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>{selectedSpot.name} Thread</div>
+              <button type="button" style={buttonSecondary(false)} onClick={() => setSelectedSpotId(null)}>
+                CLOSE THREAD
+              </button>
+            </div>
+            {spotThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13, marginBottom: 8 }}>Loading thread...</div> : null}
+            <ChatWindow
+              chatKind="cruise"
+              peerKey={selectedSpotThreadKey}
+              currentUserKey={myActorKey}
+              messages={spotThreadMessages}
+              client={spotChatClient}
+              title={`${selectedSpot.name} Chat`}
+              showHeader={false}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );
 
   return (
     <div style={{ display: "grid", gap: 8, marginInline: isMobile ? -10 : 0 }}>
-
-      {isMobile ? (
-        <>
-          {mobileTab === "ads" ? panel("ads") : null}
-          {mobileTab === "events" ? panel("events") : null}
-          {mobileTab === "spots" ? spotsPanel : null}
-          <div style={{ position: "sticky", bottom: "calc(86px + env(safe-area-inset-bottom, 0px))", zIndex: 31, background: "rgba(0,0,0,0.35)", padding: 8 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-              <button type="button" style={mobileTab === "ads" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setMobileTab("ads")}>ADS</button>
-              <button type="button" style={mobileTab === "events" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setMobileTab("events")}>EVENTS</button>
-              <button type="button" style={mobileTab === "spots" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setMobileTab("spots")}>SPOTS</button>
+      {screen === "ads" ? panel("ads") : null}
+      {screen === "groups" ? panel("groups") : null}
+      {screen === "groups" && selectedGroup ? (
+        <div style={{ border: "1px solid rgba(63,223,255,0.45)", background: "rgba(0,0,0,0.45)", padding: 12, display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{selectedGroup.title}</div>
+            <div style={{ color: "#9fb6bf", fontSize: 13 }}>
+              {formatEventDate(selectedGroup.eventStartAtMs)} at {formatEventTime(selectedGroup.eventStartAtMs)}
             </div>
+            <div style={{ color: "#9fb6bf", fontSize: 13 }}>Host: {displayNameForUserId(selectedGroup.authorUserId)}</div>
           </div>
-        </>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {panel("ads")}
-          {panel("events")}
-          <div>{spotsPanel}</div>
-          {session.userType !== "guest" && eventInvites.length > 0 ? (
-            <div style={{ border: "1px solid rgba(255,58,77,0.25)", display: "grid", gap: 8, padding: 10 }}>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>EVENT INVITES</div>
-              {eventInvites.map((event) => (
-                <div key={event.postingId} style={{ display: "grid", gap: 6, border: "1px solid rgba(255,58,77,0.4)", borderRadius: 10, padding: 8 }}>
-                  <div style={{ fontWeight: 700 }}>{event.title}</div>
-                  <div style={{ color: "#b9bec9", fontSize: 13 }}>Host: {event.authorUserId}</div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(event.postingId, true)}>ACCEPT</button>
-                    <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(event.postingId, false)}>DECLINE</button>
-                  </div>
+          <img
+            src={selectedGroup.photoMediaId ? (mediaUrlById[selectedGroup.photoMediaId] ?? avatarForKey(selectedGroup.postingId)) : avatarForKey(selectedGroup.postingId)}
+            alt="Group photo"
+            style={{ width: "100%", maxHeight: 280, objectFit: "cover", border: "1px solid rgba(63,223,255,0.55)" }}
+          />
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ fontSize: 13, color: "#9fb6bf" }}>Summary</div>
+            <div style={{ color: "#d2d8e2", fontSize: 14, whiteSpace: "pre-wrap" }}>{selectedGroup.body}</div>
+          </div>
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ fontSize: 13, color: "#9fb6bf" }}>Group details</div>
+            <div style={{ color: "#d2d8e2", fontSize: 14, whiteSpace: "pre-wrap" }}>{selectedGroup.groupDetails ?? "No extra details provided."}</div>
+          </div>
+          {userCanSeeLocationInstructions(selectedGroup) ? (
+            <div style={{ display: "grid", gap: 4, border: "1px solid rgba(63,223,255,0.45)", padding: 8 }}>
+              <div style={{ fontSize: 13, color: "#9fb6bf" }}>Attendee-only location instructions</div>
+              <div style={{ color: "#d2d8e2", fontSize: 14, whiteSpace: "pre-wrap" }}>{selectedGroup.locationInstructions ?? "None provided."}</div>
+            </div>
+          ) : (
+            <div style={{ color: "#9fb6bf", fontSize: 12 }}>Location instructions are only visible to attendees.</div>
+          )}
+          {session.userId === selectedGroup.authorUserId && (selectedGroup.joinRequestUserIds?.length ?? 0) > 0 ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 13, color: "#9fb6bf" }}>Pending join requests</div>
+              {(selectedGroup.joinRequestUserIds ?? []).map((userId) => (
+                <div key={userId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
+                  <div style={{ color: "#d2d8e2", fontSize: 14 }}>{displayNameForUserId(userId)}</div>
+                  <button type="button" style={buttonPrimary(false)} onClick={() => void respondToJoinRequest(selectedGroup.postingId, userId, true)}>
+                    APPROVE
+                  </button>
+                  <button type="button" style={buttonSecondary(false)} onClick={() => void respondToJoinRequest(selectedGroup.postingId, userId, false)}>
+                    DECLINE
+                  </button>
                 </div>
               ))}
             </div>
           ) : null}
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 13, color: "#9fb6bf" }}>Host and attendees</div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {attendeeIdsForEvent(selectedGroup).map((userId, idx) => (
+                <div key={userId} style={{ display: "grid", gap: 6, justifyItems: "center", width: 74 }}>
+                  <img
+                    src={avatarForUserId(userId)}
+                    alt={`${displayNameForUserId(userId)} profile`}
+                    style={{
+                      width: 54,
+                      height: 54,
+                      borderRadius: "50%",
+                      objectFit: "cover",
+                      border: idx === 0 ? "2px solid #88d6ff" : "1px solid rgba(255,58,77,0.5)"
+                    }}
+                  />
+                  <div style={{ color: "#c7d0de", fontSize: 11, textAlign: "center", lineHeight: 1.2 }}>
+                    {displayNameForUserId(userId)}
+                    {idx === 0 ? " (Host)" : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-      )}
+      ) : null}
+      {screen === "cruise" ? spotsPanel : null}
+      {screen === "groups" && session.userType !== "guest" && eventInvites.length > 0 ? (
+        <div style={{ border: "1px solid rgba(255,58,77,0.25)", display: "grid", gap: 8, padding: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>GROUP INVITES</div>
+          {eventInvites.map((event) => (
+            <div key={event.postingId} style={{ display: "grid", gap: 6, border: "1px solid rgba(255,58,77,0.4)", borderRadius: 10, padding: 8 }}>
+              <div style={{ fontWeight: 700 }}>{event.title}</div>
+              <div style={{ color: "#b9bec9", fontSize: 13 }}>Host: {event.authorUserId}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(event.postingId, true)}>ACCEPT</button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(event.postingId, false)}>DECLINE</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -4607,7 +4932,9 @@ export function Router({
           isMobile={isMobile}
         />
       ) : null}
-      {activeTab === "public" ? <PublicPostings api={api} session={session} isMobile={isMobile} setLastError={setLastError} /> : null}
+      {activeTab === "ads" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setLastError} /> : null}
+      {activeTab === "groups" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setLastError} /> : null}
+      {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setLastError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setLastError} /> : null}
       {activeTab === "promoted" ? <PromotedProfilesPanel api={api} session={session} setLastError={setLastError} /> : null}

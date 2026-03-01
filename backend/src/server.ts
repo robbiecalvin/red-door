@@ -640,7 +640,10 @@ async function main(): Promise<void> {
 
   // Community postings (ads/events)
   app.get("/public-postings", (req, res) => {
-    const result = publicPostingsService.list((req.query as any)?.type);
+    const token = getSessionToken(req);
+    const sessionResult = token ? authService.getSession(token) : null;
+    const viewer = sessionResult && sessionResult.ok ? sessionResult.value : undefined;
+    const result = publicPostingsService.list((req.query as any)?.type, viewer);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ postings: result.value });
   });
@@ -653,7 +656,10 @@ async function main(): Promise<void> {
       type: (req.body as any)?.type,
       title: (req.body as any)?.title,
       body: (req.body as any)?.body,
-      photoMediaId: (req.body as any)?.photoMediaId
+      photoMediaId: (req.body as any)?.photoMediaId,
+      eventStartAtMs: (req.body as any)?.eventStartAtMs,
+      locationInstructions: (req.body as any)?.locationInstructions,
+      groupDetails: (req.body as any)?.groupDetails
     });
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ posting: result.value });
@@ -679,6 +685,29 @@ async function main(): Promise<void> {
     const result = publicPostingsService.respondToEventInvite(
       sessionResult.value,
       (req.body as any)?.postingId,
+      (req.body as any)?.accept
+    );
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ posting: result.value });
+  });
+
+  app.post("/public-postings/event/request-join", (req, res) => {
+    const token = getSessionToken(req);
+    const sessionResult = authService.getSession(token ?? "");
+    if (!sessionResult.ok) return sendError(res, sessionResult.error);
+    const result = publicPostingsService.requestToJoinEvent(sessionResult.value, (req.body as any)?.postingId);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ posting: result.value });
+  });
+
+  app.post("/public-postings/event/respond-request", (req, res) => {
+    const token = getSessionToken(req);
+    const sessionResult = authService.getSession(token ?? "");
+    if (!sessionResult.ok) return sendError(res, sessionResult.error);
+    const result = publicPostingsService.respondToEventJoinRequest(
+      sessionResult.value,
+      (req.body as any)?.postingId,
+      (req.body as any)?.targetUserId,
       (req.body as any)?.accept
     );
     if (!result.ok) return sendError(res, result.error);

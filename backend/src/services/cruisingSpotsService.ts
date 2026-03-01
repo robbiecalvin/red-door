@@ -1,3 +1,5 @@
+import { containsDisallowedKidVariation } from "./contentPolicy";
+
 export type ErrorCode = "ANONYMOUS_FORBIDDEN" | "AGE_GATE_REQUIRED" | "INVALID_INPUT" | "SPOT_NOT_FOUND";
 
 export type ServiceError = Readonly<{
@@ -120,6 +122,9 @@ export function createCruisingSpotsService(
       if (name.length > 120) return err("INVALID_INPUT", "Spot name is too long.", { max: 120 });
       if (address.length > 240) return err("INVALID_INPUT", "Spot address is too long.", { max: 240 });
       if (description.length > 1000) return err("INVALID_INPUT", "Spot description is too long.", { max: 1000 });
+      if (containsDisallowedKidVariation(name)) return err("INVALID_INPUT", "Spot name contains disallowed language.");
+      if (containsDisallowedKidVariation(address)) return err("INVALID_INPUT", "Spot address contains disallowed language.");
+      if (containsDisallowedKidVariation(description)) return err("INVALID_INPUT", "Spot description contains disallowed language.");
       if (typeof photoMediaId === "string" && photoMediaId.length > 200) return err("INVALID_INPUT", "photoMediaId is too long.", { max: 200 });
       const spot: CruisingSpot = {
         spotId: idFactory(),

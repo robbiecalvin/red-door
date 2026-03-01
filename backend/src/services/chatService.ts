@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { containsDisallowedKidVariation } from "./contentPolicy";
 
 export type Mode = "cruise" | "date" | "hybrid";
 export type UserType = "guest" | "registered" | "subscriber";
@@ -124,9 +125,16 @@ function normalizeKey(value: string): string {
   return value.trim();
 }
 
+function isCruiseSpotThreadKey(key: string): boolean {
+  if (!key.startsWith("spot:")) return false;
+  return key.slice("spot:".length).trim().length > 0;
+}
+
 function threadKey(chatKind: ChatKind, aKey: string, bKey: string): string {
   const a = normalizeKey(aKey);
   const b = normalizeKey(bKey);
+  if (chatKind === "cruise" && isCruiseSpotThreadKey(a)) return `${chatKind}::${a}`;
+  if (chatKind === "cruise" && isCruiseSpotThreadKey(b)) return `${chatKind}::${b}`;
   const [x, y] = a < b ? [a, b] : [b, a];
   return `${chatKind}::${x}::${y}`;
 }
@@ -427,6 +435,9 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       }
 
       const text = typeof input.text === "string" ? sanitizeText(input.text) : "";
+      if (containsDisallowedKidVariation(text)) {
+        return err("UNAUTHORIZED_ACTION", "Message rejected.");
+      }
       const mediaResult = validateMediaAttachment(input.media);
       if (!mediaResult.ok) return mediaResult as Result<ChatMessage>;
       const media = mediaResult.value;
@@ -435,7 +446,9 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       }
 
       if (blockChecker && blockChecker.isBlocked(fromKey, toKey)) {
-        return err("USER_BLOCKED", "You cannot message this user.");
+        if (!(input.chatKind === "cruise" && isCruiseSpotThreadKey(toKey))) {
+          return err("USER_BLOCKED", "You cannot message this user.");
+        }
       }
 
       const now = nowMs();
@@ -507,6 +520,10 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
 
       if (chatKind === "cruise" && list.length === 0 && expiredWerePurged) {
         return err("CHAT_EXPIRED", "Chat messages have expired.");
+      }
+
+      if (chatKind === "cruise" && isCruiseSpotThreadKey(toKey)) {
+        return ok(list);
       }
 
       const otherReadAtMs = readCursorByThreadUser.get(`${threadId}::${toKey}`) ?? 0;

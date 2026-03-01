@@ -85,4 +85,15 @@ describe("cruisingSpotsService", () => {
     if (!res.ok) throw new Error("unreachable");
     expect(res.value.photoMediaId).toBe("media_456");
   });
+
+  it("Given disallowed kid-variation content in spot description When create is called Then request is rejected", () => {
+    const svc = createCruisingSpotsService({ nowMs: () => 1000, idFactory: () => "spot_bad_1" });
+    const res = svc.create(
+      { userType: "registered", userId: "u_3", ageVerified: true },
+      { name: "Tunnel", address: "11 South", lat: 1, lng: 2, description: "avoid k1d terms" }
+    );
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.error).toEqual({ code: "INVALID_INPUT", message: "Spot description contains disallowed language." });
+  });
 });

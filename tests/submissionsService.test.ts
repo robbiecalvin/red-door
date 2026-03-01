@@ -34,4 +34,12 @@ describe("submissionsService", () => {
     if (rated.ok) throw new Error("unreachable");
     expect(rated.error.code).toBe("RATING_OUT_OF_RANGE");
   });
+
+  it("Given disallowed kid-variation text in title/body When create is called Then INVALID_INPUT is returned", () => {
+    const svc = createSubmissionsService({ nowMs: () => 100, idFactory: () => "s1" });
+    const created = svc.create({ userType: "registered", userId: "u_1", ageVerified: true }, "K!D story", "Body");
+    expect(created.ok).toBe(false);
+    if (created.ok) throw new Error("unreachable");
+    expect(created.error).toEqual({ code: "INVALID_INPUT", message: "Title contains disallowed language." });
+  });
 });

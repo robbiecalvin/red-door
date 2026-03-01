@@ -279,6 +279,27 @@ describe("chatService", () => {
     expect(okAgain.ok).toBe(true);
   });
 
+  it("Given a message containing a disallowed kid-variation term When sendMessage is called Then it is rejected", () => {
+    const svc = createChatService({
+      nowMs: () => 1_700_000_000_000,
+      rateLimitPerMinute: 20,
+      matchChecker: {
+        isMatched(): boolean {
+          return true;
+        }
+      }
+    });
+
+    const blocked = svc.sendMessage(
+      { sessionToken: "s_a", userType: "registered", mode: "date", userId: "u_a", ageVerified: true },
+      { chatKind: "date", toKey: "user:u_b", text: "no k.i.d talk" }
+    );
+
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) throw new Error("unreachable");
+    expect(blocked.error).toEqual({ code: "UNAUTHORIZED_ACTION", message: "Message rejected." });
+  });
+
   it("Given an unauthenticated/invalid session When sendMessage is called Then it rejects with INVALID_SESSION", () => {
     const svc = createChatService({ rateLimitPerMinute: 100 });
 
@@ -582,6 +603,46 @@ describe("chatService", () => {
     expect(thread.aKey).toBe("session:a");
     expect(thread.bKey).toBe("session:z");
     expect(thread.chatId).toBe("cruise::session:a::session:z");
+  });
+
+  it("Given a cruise spot key When multiple users post to that spot Then all users see one shared spot thread", () => {
+    const svc = createChatService({ rateLimitPerMinute: 100 });
+
+    const sentA = svc.sendMessage(
+      { sessionToken: "s_a", userType: "guest", mode: "cruise", ageVerified: true },
+      { chatKind: "cruise", toKey: "spot:park-1", text: "Anyone here?" }
+    );
+    expect(sentA.ok).toBe(true);
+    if (!sentA.ok) throw new Error("unreachable");
+
+    const sentB = svc.sendMessage(
+      { sessionToken: "s_b", userType: "guest", mode: "cruise", ageVerified: true },
+      { chatKind: "cruise", toKey: "spot:park-1", text: "On my way." }
+    );
+    expect(sentB.ok).toBe(true);
+    if (!sentB.ok) throw new Error("unreachable");
+
+    expect(sentA.value.chatId).toBe("cruise::spot:park-1");
+    expect(sentB.value.chatId).toBe("cruise::spot:park-1");
+
+    const listedByA = svc.listMessages(
+      { sessionToken: "s_a", userType: "guest", mode: "cruise", ageVerified: true },
+      "cruise",
+      "spot:park-1"
+    );
+    expect(listedByA.ok).toBe(true);
+    if (!listedByA.ok) throw new Error("unreachable");
+    expect(listedByA.value).toHaveLength(2);
+    expect(listedByA.value.map((m) => m.fromKey)).toEqual(["session:s_a", "session:s_b"]);
+
+    const listedByC = svc.listMessages(
+      { sessionToken: "s_c", userType: "guest", mode: "cruise", ageVerified: true },
+      "cruise",
+      "spot:park-1"
+    );
+    expect(listedByC.ok).toBe(true);
+    if (!listedByC.ok) throw new Error("unreachable");
+    expect(listedByC.value).toHaveLength(2);
   });
 
   it("Given a sent message and recipient reads the thread When sender lists messages Then receipt status includes Delivered and Read", () => {

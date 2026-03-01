@@ -1,3 +1,5 @@
+import { containsDisallowedKidVariation } from "./contentPolicy";
+
 export type ErrorCode = "ANONYMOUS_FORBIDDEN" | "AGE_GATE_REQUIRED" | "INVALID_INPUT" | "SUBMISSION_NOT_FOUND" | "RATING_OUT_OF_RANGE";
 
 export type ServiceError = Readonly<{
@@ -74,10 +76,12 @@ export function createSubmissionsService(deps?: Readonly<{ nowMs?: () => number;
       const t = asText(title);
       if (!t) return err("INVALID_INPUT", "Title is required.");
       if (t.length > 140) return err("INVALID_INPUT", "Title is too long.", { max: 140 });
+      if (containsDisallowedKidVariation(t)) return err("INVALID_INPUT", "Title contains disallowed language.");
 
       const b = asText(body);
       if (!b) return err("INVALID_INPUT", "Body is required.");
       if (b.length > 20000) return err("INVALID_INPUT", "Body is too long.", { max: 20000 });
+      if (containsDisallowedKidVariation(b)) return err("INVALID_INPUT", "Body contains disallowed language.");
 
       const created: Submission = {
         submissionId: idFactory(),

@@ -1,3 +1,5 @@
+import { containsDisallowedKidVariation } from "./contentPolicy";
+
 export type PostingType = "ad" | "event";
 
 export type ErrorCode =
@@ -31,10 +33,14 @@ export type Posting = Readonly<{
   title: string;
   body: string;
   photoMediaId?: string;
+  eventStartAtMs?: number;
+  locationInstructions?: string;
+  groupDetails?: string;
   authorUserId: string;
   createdAtMs: number;
   invitedUserIds?: ReadonlyArray<string>;
   acceptedUserIds?: ReadonlyArray<string>;
+  joinRequestUserIds?: ReadonlyArray<string>;
 }>;
 
 export type PostingInput = Readonly<{
@@ -42,6 +48,9 @@ export type PostingInput = Readonly<{
   title: unknown;
   body: unknown;
   photoMediaId?: unknown;
+  eventStartAtMs?: unknown;
+  locationInstructions?: unknown;
+  groupDetails?: unknown;
 }>;
 
 export type EventInvite = Readonly<{
@@ -106,11 +115,38 @@ function authorKeyForAds(session: SessionLike): Result<{ userId: string }> {
   return ok({ userId });
 }
 
+function asOptionalEpochMs(value: unknown): number | undefined | null {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const n = Math.trunc(value);
+  if (n <= 0) return null;
+  return n;
+}
+
+function asViewerUserId(viewer?: SessionLike): string | null {
+  if (!viewer || viewer.userType === "guest") return null;
+  return asText(viewer.userId);
+}
+
+function redactPostingForViewer(posting: Posting, viewer?: SessionLike): Posting {
+  if (posting.type !== "event" || typeof posting.locationInstructions !== "string") return posting;
+  const viewerUserId = asViewerUserId(viewer);
+  const canSeeLocation =
+    viewerUserId !== null &&
+    (viewerUserId === posting.authorUserId || (posting.acceptedUserIds ?? []).includes(viewerUserId));
+  if (canSeeLocation) return posting;
+  const redacted = { ...posting };
+  delete (redacted as { locationInstructions?: string }).locationInstructions;
+  return redacted;
+}
+
 export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => number; idFactory?: () => string }>): Readonly<{
-  list(type?: unknown): Result<ReadonlyArray<Posting>>;
+  list(type?: unknown, viewer?: SessionLike): Result<ReadonlyArray<Posting>>;
   create(session: SessionLike, input: PostingInput): Result<Posting>;
   inviteToEvent(session: SessionLike, postingId: unknown, targetUserId: unknown): Result<EventInvite>;
   respondToEventInvite(session: SessionLike, postingId: unknown, accept: unknown): Result<Posting>;
+  requestToJoinEvent(session: SessionLike, postingId: unknown): Result<Posting>;
+  respondToEventJoinRequest(session: SessionLike, postingId: unknown, targetUserId: unknown, accept: unknown): Result<Posting>;
   listEventInvites(session: SessionLike): Result<ReadonlyArray<Posting>>;
 }> {
   const nowMs = deps?.nowMs ?? (() => Date.now());
@@ -118,13 +154,13 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
   const posts: Array<Posting> = [];
 
   return {
-    list(type?: unknown): Result<ReadonlyArray<Posting>> {
+    list(type?: unknown, viewer?: SessionLike): Result<ReadonlyArray<Posting>> {
       if (type === undefined) {
-        return ok([...posts].sort((a, b) => b.createdAtMs - a.createdAtMs));
+        return ok([...posts].sort((a, b) => b.createdAtMs - a.createdAtMs).map((p) => redactPostingForViewer(p, viewer)));
       }
       const parsed = asType(type);
       if (!parsed) return err("POSTING_TYPE_NOT_ALLOWED", "Invalid posting type.");
-      return ok(posts.filter((p) => p.type === parsed).sort((a, b) => b.createdAtMs - a.createdAtMs));
+      return ok(posts.filter((p) => p.type === parsed).sort((a, b) => b.createdAtMs - a.createdAtMs).map((p) => redactPostingForViewer(p, viewer)));
     },
 
     create(session: SessionLike, input: PostingInput): Result<Posting> {
@@ -136,14 +172,31 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
       const title = asText(input.title);
       if (!title) return err("INVALID_INPUT", "Title is required.");
       if (title.length > 120) return err("INVALID_INPUT", "Title is too long.", { max: 120 });
+      if (containsDisallowedKidVariation(title)) {
+        return err("INVALID_INPUT", "Title contains disallowed language.");
+      }
 
       const body = asText(input.body);
       if (!body) return err("INVALID_INPUT", "Body is required.");
       if (body.length > 4000) return err("INVALID_INPUT", "Body is too long.", { max: 4000 });
+      if (containsDisallowedKidVariation(body)) {
+        return err("INVALID_INPUT", "Body contains disallowed language.");
+      }
       const photoMediaId = asOptionalText(input.photoMediaId);
       if (photoMediaId === null) return err("INVALID_INPUT", "photoMediaId must be a string when provided.");
       if (typeof photoMediaId === "string" && photoMediaId.length > 200) {
         return err("INVALID_INPUT", "photoMediaId is too long.", { max: 200 });
+      }
+      const eventStartAtMs = asOptionalEpochMs(input.eventStartAtMs);
+      if (eventStartAtMs === null) return err("INVALID_INPUT", "eventStartAtMs must be a positive epoch milliseconds number.");
+      const locationInstructions = asOptionalText(input.locationInstructions);
+      if (locationInstructions === null) return err("INVALID_INPUT", "locationInstructions must be a string when provided.");
+      const groupDetails = asOptionalText(input.groupDetails);
+      if (groupDetails === null) return err("INVALID_INPUT", "groupDetails must be a string when provided.");
+      if (type === "event") {
+        if (eventStartAtMs === undefined) return err("INVALID_INPUT", "Event date and time are required.");
+        if (!locationInstructions) return err("INVALID_INPUT", "Location instructions are required for groups.");
+        if (!groupDetails) return err("INVALID_INPUT", "Group details are required.");
       }
 
       const posting: Posting = {
@@ -152,10 +205,14 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
         title,
         body,
         ...(photoMediaId ? { photoMediaId } : {}),
+        ...(type === "event" && typeof eventStartAtMs === "number" ? { eventStartAtMs } : {}),
+        ...(type === "event" && locationInstructions ? { locationInstructions } : {}),
+        ...(type === "event" && groupDetails ? { groupDetails } : {}),
         authorUserId: auth.value.userId,
         createdAtMs: nowMs(),
         invitedUserIds: type === "event" ? [] : undefined,
-        acceptedUserIds: type === "event" ? [] : undefined
+        acceptedUserIds: type === "event" ? [] : undefined,
+        joinRequestUserIds: type === "event" ? [] : undefined
       };
       posts.push(posting);
       return ok(posting);
@@ -215,6 +272,73 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
       }
       posts[idx] = {
         ...existing,
+        invitedUserIds: Array.from(invited.values()).sort(),
+        acceptedUserIds: Array.from(accepted.values()).sort(),
+        joinRequestUserIds: [...(existing.joinRequestUserIds ?? [])]
+      };
+      return ok(posts[idx]);
+    },
+
+    requestToJoinEvent(session: SessionLike, postingId: unknown): Result<Posting> {
+      const auth = requirePostingIdentity(session);
+      if (!auth.ok) return auth as Result<Posting>;
+      const eventId = asText(postingId);
+      if (!eventId) return err("INVALID_INPUT", "Event is required.");
+      const idx = posts.findIndex((p) => p.postingId === eventId && p.type === "event");
+      if (idx < 0) return err("POSTING_NOT_FOUND", "Event not found.");
+      const existing = posts[idx];
+      if (existing.authorUserId === auth.value.userId) {
+        return err("INVALID_INPUT", "Host is already attending.");
+      }
+      const accepted = new Set(existing.acceptedUserIds ?? []);
+      if (accepted.has(auth.value.userId)) {
+        return err("INVALID_INPUT", "You are already marked attending.");
+      }
+      const requests = new Set(existing.joinRequestUserIds ?? []);
+      if (requests.has(auth.value.userId)) {
+        return err("INVALID_INPUT", "Join request already sent.");
+      }
+      requests.add(auth.value.userId);
+      posts[idx] = {
+        ...existing,
+        joinRequestUserIds: Array.from(requests.values()).sort(),
+        invitedUserIds: [...(existing.invitedUserIds ?? [])],
+        acceptedUserIds: [...(existing.acceptedUserIds ?? [])]
+      };
+      return ok(posts[idx]);
+    },
+
+    respondToEventJoinRequest(session: SessionLike, postingId: unknown, targetUserId: unknown, accept: unknown): Result<Posting> {
+      const auth = requirePostingIdentity(session);
+      if (!auth.ok) return auth as Result<Posting>;
+      const eventId = asText(postingId);
+      const candidateUserId = asText(targetUserId);
+      if (!eventId || !candidateUserId || typeof accept !== "boolean") {
+        return err("INVALID_INPUT", "Invalid join request response.");
+      }
+      const idx = posts.findIndex((p) => p.postingId === eventId && p.type === "event");
+      if (idx < 0) return err("POSTING_NOT_FOUND", "Event not found.");
+      const existing = posts[idx];
+      if (existing.authorUserId !== auth.value.userId) {
+        return err("UNAUTHORIZED_ACTION", "Only the event host can respond to join requests.");
+      }
+      const requests = new Set(existing.joinRequestUserIds ?? []);
+      if (!requests.has(candidateUserId)) {
+        return err("INVALID_INPUT", "No pending join request for this user.");
+      }
+      requests.delete(candidateUserId);
+      const invited = new Set(existing.invitedUserIds ?? []);
+      const accepted = new Set(existing.acceptedUserIds ?? []);
+      if (accept) {
+        invited.add(candidateUserId);
+        accepted.add(candidateUserId);
+      } else {
+        invited.delete(candidateUserId);
+        accepted.delete(candidateUserId);
+      }
+      posts[idx] = {
+        ...existing,
+        joinRequestUserIds: Array.from(requests.values()).sort(),
         invitedUserIds: Array.from(invited.values()).sort(),
         acceptedUserIds: Array.from(accepted.values()).sort()
       };

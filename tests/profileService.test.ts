@@ -173,4 +173,18 @@ describe("profileService", () => {
     if (bad.ok) throw new Error("unreachable");
     expect(bad.error.code).toBe("INVALID_INPUT");
   });
+
+  it("Given disallowed kid-variation content in profile text When upsertMe is called Then it rejects with INVALID_INPUT", async () => {
+    const repo = createInMemoryProfileRepository();
+    const svc = createProfileService({ repo });
+
+    const res = await svc.upsertMe(
+      { userType: "registered", userId: "user_2", ageVerified: true },
+      { displayName: "Normal", age: 29, bio: "contains ki1d language", stats: {} }
+    );
+
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.error).toEqual({ code: "INVALID_INPUT", message: "Bio contains disallowed language." });
+  });
 });

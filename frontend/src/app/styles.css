@@ -94,6 +94,10 @@ textarea {
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
+.rd-shell.has-bottom-nav {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
 .rd-topbar {
   position: sticky;
   top: 0;
@@ -185,6 +189,10 @@ textarea {
   min-height: 0;
   overflow-y: auto;
   overflow-x: clip;
+}
+
+.rd-main.rd-main-with-bottom-nav {
+  padding-bottom: 14px;
 }
 
 .rd-main.rd-main-full-map {
@@ -612,6 +620,7 @@ textarea {
   border-top: 1px solid rgba(255, 55, 74, 0.65);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.38);
   flex-shrink: 0;
+  width: 100%;
 }
 
 .rd-mobile-nav-btn {

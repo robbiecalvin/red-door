@@ -1,3 +1,5 @@
+import { containsDisallowedKidVariation } from "./contentPolicy";
+
 export type ErrorCode =
   | "INVALID_SESSION"
   | "ANONYMOUS_FORBIDDEN"
@@ -148,6 +150,9 @@ export function createPromotedProfilesService(
       }
       if (title.length > 120) return err("INVALID_INPUT", "Title is too long.", { max: 120 });
       if (body.length > 2000) return err("INVALID_INPUT", "Body is too long.", { max: 2000 });
+      if (containsDisallowedKidVariation(title)) return err("INVALID_INPUT", "Title contains disallowed language.");
+      if (containsDisallowedKidVariation(body)) return err("INVALID_INPUT", "Body contains disallowed language.");
+      if (containsDisallowedKidVariation(displayName)) return err("INVALID_INPUT", "Display name contains disallowed language.");
       const loaded = loadPaymentForUser(auth.value.userId, paymentToken);
       if (!loaded.ok) return loaded as Result<PromotedProfile>;
       if (loaded.value.status !== "paid") {

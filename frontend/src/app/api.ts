@@ -134,10 +134,14 @@ export type PublicPosting = Readonly<{
   title: string;
   body: string;
   photoMediaId?: string;
+  eventStartAtMs?: number;
+  locationInstructions?: string;
+  groupDetails?: string;
   authorUserId: string;
   createdAtMs: number;
   invitedUserIds?: ReadonlyArray<string>;
   acceptedUserIds?: ReadonlyArray<string>;
+  joinRequestUserIds?: ReadonlyArray<string>;
 }>;
 
 export type CruisingSpot = Readonly<{
@@ -262,6 +266,8 @@ const LOCAL_AUTH_STATE_KEY = "reddoor_local_auth_state_v1";
 const LOCAL_UPLOAD_PREFIX = "rdlocal://";
 // Full-page web navigation requires durable local state across reloads.
 const LOCAL_PERSIST_ENABLED = true;
+const DISALLOWED_KID_VARIATION_PATTERN =
+  /(^|[^a-z0-9])k+[\W_]*[i1!|l]+[\W_]*d+(?:[\W_]*(?:s|z|do|dos|dy|die|dies))?(?=$|[^a-z0-9])/i;
 
 type LocalAuthState = Readonly<{
   usersById: LocalState["usersById"];
@@ -293,11 +299,19 @@ function randomId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 12)}-${Date.now().toString(36)}`;
 }
 
+function containsDisallowedKidVariation(value: string): boolean {
+  if (value.trim().length === 0) return false;
+  return DISALLOWED_KID_VARIATION_PATTERN.test(value);
+}
+
 function parseLocalDisplayName(value: unknown): string {
   const displayName = typeof value === "string" ? value.trim() : "";
   if (!displayName) throw { code: "INVALID_INPUT", message: "Display name is required." } as ServiceError;
   if (displayName.length < 2 || displayName.length > 32) {
     throw { code: "INVALID_INPUT", message: "Display name must be 2-32 characters." } as ServiceError;
+  }
+  if (containsDisallowedKidVariation(displayName)) {
+    throw { code: "INVALID_INPUT", message: "Display name contains disallowed language." } as ServiceError;
   }
   return displayName;
 }
@@ -328,6 +342,9 @@ function createProfileFromInput(
   const ts = nowMs();
   const bio = typeof input.bio === "string" ? input.bio.trim() : "";
   if (bio.length > 280) throw { code: "INVALID_INPUT", message: "Bio must be 280 characters or fewer." } as ServiceError;
+  if (containsDisallowedKidVariation(bio)) {
+    throw { code: "INVALID_INPUT", message: "Bio contains disallowed language." } as ServiceError;
+  }
   const nextStats =
     typeof input.stats === "object" && input.stats !== null
       ? (input.stats as ProfileUpdatePayload["stats"])
@@ -560,6 +577,11 @@ function normalizeChatPeerKey(raw: string): string {
   return key;
 }
 
+function isCruiseSpotThreadKey(key: string): boolean {
+  if (!key.startsWith("spot:")) return false;
+  return key.slice("spot:".length).trim().length > 0;
+}
+
 async function blobToDataUrl(blob: Blob): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -672,16 +694,29 @@ function createLocalApiClient(): Readonly<{
   completeMediaUpload(sessionToken: string, mediaId: string): Promise<{ media: unknown }>;
   getFavorites(sessionToken: string): Promise<{ favorites: ReadonlyArray<string> }>;
   toggleFavorite(sessionToken: string, targetUserId: string): Promise<FavoriteToggleResponse>;
-  listPublicPostings(type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
+  listPublicPostings(type?: "ad" | "event", sessionToken?: string): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
   createPublicPosting(
     sessionToken: string,
-    payload: Readonly<{ type: "ad" | "event"; title: string; body: string; photoMediaId?: string }>
+    payload: Readonly<{
+      type: "ad" | "event";
+      title: string;
+      body: string;
+      photoMediaId?: string;
+      eventStartAtMs?: number;
+      locationInstructions?: string;
+      groupDetails?: string;
+    }>
   ): Promise<{ posting: PublicPosting }>;
   inviteToEvent(
     sessionToken: string,
     payload: Readonly<{ postingId: string; targetUserId: string }>
   ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number } }>;
   respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }>;
+  requestToJoinEvent(sessionToken: string, payload: Readonly<{ postingId: string }>): Promise<{ posting: PublicPosting }>;
+  respondToEventJoinRequest(
+    sessionToken: string,
+    payload: Readonly<{ postingId: string; targetUserId: string; accept: boolean }>
+  ): Promise<{ posting: PublicPosting }>;
   listEventInvites(sessionToken: string): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
   listCruisingSpots(): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
   createCruisingSpot(
@@ -950,6 +985,9 @@ function createLocalApiClient(): Readonly<{
       const session = requireSession(state, sessionToken);
       const fromKey = actorKeyForSession(session);
       const normalizedToKey = normalizeChatPeerKey(toKey);
+      if (containsDisallowedKidVariation(text)) {
+        throw { code: "UNAUTHORIZED_ACTION", message: "Message rejected." } as ServiceError;
+      }
       const msg: LocalChatMessage = {
         messageId: randomId("msg"),
         chatKind,
@@ -971,9 +1009,10 @@ function createLocalApiClient(): Readonly<{
       const session = requireSession(state, sessionToken);
       const me = actorKeyForSession(session);
       const peer = normalizeChatPeerKey(otherKey);
+      const isSpotThread = chatKind === "cruise" && isCruiseSpotThreadKey(peer);
       const messages = state.messages
         .filter((m) => m.chatKind === chatKind)
-        .filter((m) => (m.fromKey === me && m.toKey === peer) || (m.fromKey === peer && m.toKey === me))
+        .filter((m) => (isSpotThread ? m.toKey === peer : (m.fromKey === me && m.toKey === peer) || (m.fromKey === peer && m.toKey === me)))
         .sort((a, b) => a.createdAtMs - b.createdAtMs);
       return { messages: clone(messages) };
     },
@@ -982,10 +1021,14 @@ function createLocalApiClient(): Readonly<{
       const session = requireSession(state, sessionToken);
       const me = actorKeyForSession(session);
       const peer = normalizeChatPeerKey(otherKey);
+      const isSpotThread = chatKind === "cruise" && isCruiseSpotThreadKey(peer);
       const ts = nowMs();
       const next = state.messages.map((m) => {
         if (m.chatKind !== chatKind) return m;
-        if (m.fromKey === peer && m.toKey === me && !m.readAtMs) {
+        if (isSpotThread && m.toKey === peer && m.fromKey !== me && !m.readAtMs) {
+          return { ...m, readAtMs: ts };
+        }
+        if (!isSpotThread && m.fromKey === peer && m.toKey === me && !m.readAtMs) {
           return { ...m, readAtMs: ts };
         }
         return m;
@@ -1250,28 +1293,81 @@ function createLocalApiClient(): Readonly<{
       });
       return { targetUserId, isFavorite, favorites };
     },
-    async listPublicPostings(type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }> {
+    async listPublicPostings(type?: "ad" | "event", sessionToken?: string): Promise<{ postings: ReadonlyArray<PublicPosting> }> {
       const state = readState();
+      let viewerUserId: string | null = null;
+      if (typeof sessionToken === "string" && sessionToken.trim().length > 0) {
+        try {
+          const viewerSession = requireUserSession(state, sessionToken);
+          viewerUserId = viewerSession.userId as string;
+        } catch {
+          viewerUserId = null;
+        }
+      }
       const postings = type ? state.publicPostings.filter((p) => p.type === type) : state.publicPostings;
-      return { postings: clone(postings) };
+      const normalized = postings.map((p) => {
+        if (p.type !== "event" || !p.locationInstructions) return p;
+        const canSeeLocation =
+          !!viewerUserId &&
+          (p.authorUserId === viewerUserId || (p.acceptedUserIds ?? []).includes(viewerUserId));
+        if (canSeeLocation) return p;
+        const next = { ...p };
+        delete (next as { locationInstructions?: string }).locationInstructions;
+        return next;
+      });
+      return { postings: clone(normalized) };
     },
     async createPublicPosting(
       sessionToken: string,
-      payload: Readonly<{ type: "ad" | "event"; title: string; body: string; photoMediaId?: string }>
+      payload: Readonly<{
+        type: "ad" | "event";
+        title: string;
+        body: string;
+        photoMediaId?: string;
+        eventStartAtMs?: number;
+        locationInstructions?: string;
+        groupDetails?: string;
+      }>
     ): Promise<{ posting: PublicPosting }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
       const photoMediaId = typeof payload.photoMediaId === "string" && payload.photoMediaId.trim().length > 0 ? payload.photoMediaId.trim() : undefined;
+      const title = payload.title.trim();
+      const body = payload.body.trim();
+      const eventStartAtMs =
+        typeof payload.eventStartAtMs === "number" && Number.isFinite(payload.eventStartAtMs) && payload.eventStartAtMs > 0
+          ? Math.trunc(payload.eventStartAtMs)
+          : undefined;
+      const locationInstructions =
+        typeof payload.locationInstructions === "string" && payload.locationInstructions.trim().length > 0
+          ? payload.locationInstructions.trim()
+          : undefined;
+      const groupDetails = typeof payload.groupDetails === "string" && payload.groupDetails.trim().length > 0 ? payload.groupDetails.trim() : undefined;
+      if (payload.type === "event" && !eventStartAtMs) throw { code: "INVALID_INPUT", message: "Event date and time are required." } as ServiceError;
+      if (payload.type === "event" && !locationInstructions) throw { code: "INVALID_INPUT", message: "Location instructions are required for groups." } as ServiceError;
+      if (payload.type === "event" && !groupDetails) throw { code: "INVALID_INPUT", message: "Group details are required." } as ServiceError;
+      if (containsDisallowedKidVariation(title)) throw { code: "INVALID_INPUT", message: "Title contains disallowed language." } as ServiceError;
+      if (containsDisallowedKidVariation(body)) throw { code: "INVALID_INPUT", message: "Body contains disallowed language." } as ServiceError;
+      if (locationInstructions && containsDisallowedKidVariation(locationInstructions)) {
+        throw { code: "INVALID_INPUT", message: "Location instructions contain disallowed language." } as ServiceError;
+      }
+      if (groupDetails && containsDisallowedKidVariation(groupDetails)) {
+        throw { code: "INVALID_INPUT", message: "Group details contain disallowed language." } as ServiceError;
+      }
       const posting: PublicPosting = {
         postingId: randomId("posting"),
         type: payload.type,
-        title: payload.title.trim(),
-        body: payload.body.trim(),
+        title,
+        body,
         ...(photoMediaId ? { photoMediaId } : {}),
+        ...(payload.type === "event" && eventStartAtMs ? { eventStartAtMs } : {}),
+        ...(payload.type === "event" && locationInstructions ? { locationInstructions } : {}),
+        ...(payload.type === "event" && groupDetails ? { groupDetails } : {}),
         authorUserId: session.userId as string,
         createdAtMs: nowMs(),
         invitedUserIds: [],
-        acceptedUserIds: []
+        acceptedUserIds: [],
+        joinRequestUserIds: []
       };
       writeState({
         ...state,
@@ -1285,16 +1381,20 @@ function createLocalApiClient(): Readonly<{
     ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number } }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
+      const hostUserId = session.userId as string;
       const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event");
       if (idx < 0) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
       const posting = state.publicPostings[idx];
+      if (posting.authorUserId !== hostUserId) {
+        throw { code: "UNAUTHORIZED_ACTION", message: "Only the event host can invite users." } as ServiceError;
+      }
       const invited = new Set(posting.invitedUserIds ?? []);
       invited.add(payload.targetUserId);
-      const updated: PublicPosting = { ...posting, invitedUserIds: [...invited] };
+      const updated: PublicPosting = { ...posting, invitedUserIds: [...invited].sort() };
       const next = [...state.publicPostings];
       next[idx] = updated;
       writeState({ ...state, publicPostings: next });
-      return { invite: { postingId: payload.postingId, invitedUserId: payload.targetUserId, invitedByUserId: session.userId as string, createdAtMs: nowMs() } };
+      return { invite: { postingId: payload.postingId, invitedUserId: payload.targetUserId, invitedByUserId: hostUserId, createdAtMs: nowMs() } };
     },
     async respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }> {
       const state = readState();
@@ -1303,10 +1403,68 @@ function createLocalApiClient(): Readonly<{
       const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event");
       if (idx < 0) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
       const posting = state.publicPostings[idx];
+      const invited = new Set(posting.invitedUserIds ?? []);
+      if (!invited.has(userId)) throw { code: "UNAUTHORIZED_ACTION", message: "You are not invited to this event." } as ServiceError;
       const accepted = new Set(posting.acceptedUserIds ?? []);
       if (payload.accept) accepted.add(userId);
       else accepted.delete(userId);
-      const updated: PublicPosting = { ...posting, acceptedUserIds: [...accepted] };
+      const updated: PublicPosting = { ...posting, acceptedUserIds: [...accepted].sort() };
+      const next = [...state.publicPostings];
+      next[idx] = updated;
+      writeState({ ...state, publicPostings: next });
+      return { posting: clone(updated) };
+    },
+    async requestToJoinEvent(sessionToken: string, payload: Readonly<{ postingId: string }>): Promise<{ posting: PublicPosting }> {
+      const state = readState();
+      const session = requireUserSession(state, sessionToken);
+      const userId = session.userId as string;
+      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event");
+      if (idx < 0) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
+      const posting = state.publicPostings[idx];
+      if (posting.authorUserId === userId) throw { code: "INVALID_INPUT", message: "Host is already attending." } as ServiceError;
+      if ((posting.acceptedUserIds ?? []).includes(userId)) throw { code: "INVALID_INPUT", message: "You are already marked attending." } as ServiceError;
+      const requests = new Set(posting.joinRequestUserIds ?? []);
+      if (requests.has(userId)) throw { code: "INVALID_INPUT", message: "Join request already sent." } as ServiceError;
+      requests.add(userId);
+      const updated: PublicPosting = { ...posting, joinRequestUserIds: [...requests].sort() };
+      const next = [...state.publicPostings];
+      next[idx] = updated;
+      writeState({ ...state, publicPostings: next });
+      return { posting: clone(updated) };
+    },
+    async respondToEventJoinRequest(
+      sessionToken: string,
+      payload: Readonly<{ postingId: string; targetUserId: string; accept: boolean }>
+    ): Promise<{ posting: PublicPosting }> {
+      const state = readState();
+      const session = requireUserSession(state, sessionToken);
+      const hostUserId = session.userId as string;
+      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event");
+      if (idx < 0) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
+      const posting = state.publicPostings[idx];
+      if (posting.authorUserId !== hostUserId) {
+        throw { code: "UNAUTHORIZED_ACTION", message: "Only the event host can respond to join requests." } as ServiceError;
+      }
+      const requests = new Set(posting.joinRequestUserIds ?? []);
+      if (!requests.has(payload.targetUserId)) {
+        throw { code: "INVALID_INPUT", message: "No pending join request for this user." } as ServiceError;
+      }
+      requests.delete(payload.targetUserId);
+      const invited = new Set(posting.invitedUserIds ?? []);
+      const accepted = new Set(posting.acceptedUserIds ?? []);
+      if (payload.accept) {
+        invited.add(payload.targetUserId);
+        accepted.add(payload.targetUserId);
+      } else {
+        invited.delete(payload.targetUserId);
+        accepted.delete(payload.targetUserId);
+      }
+      const updated: PublicPosting = {
+        ...posting,
+        joinRequestUserIds: [...requests].sort(),
+        invitedUserIds: [...invited].sort(),
+        acceptedUserIds: [...accepted].sort()
+      };
       const next = [...state.publicPostings];
       next[idx] = updated;
       writeState({ ...state, publicPostings: next });
@@ -1332,13 +1490,21 @@ function createLocalApiClient(): Readonly<{
       const actorKey = actorKeyForSession(session);
       const existingPresence = state.presenceByKey[actorKey];
       const photoMediaId = typeof payload.photoMediaId === "string" && payload.photoMediaId.trim().length > 0 ? payload.photoMediaId.trim() : undefined;
+      const name = payload.name.trim();
+      const address = payload.address.trim();
+      const description = payload.description.trim();
+      if (containsDisallowedKidVariation(name)) throw { code: "INVALID_INPUT", message: "Spot name contains disallowed language." } as ServiceError;
+      if (containsDisallowedKidVariation(address)) throw { code: "INVALID_INPUT", message: "Spot address contains disallowed language." } as ServiceError;
+      if (containsDisallowedKidVariation(description)) {
+        throw { code: "INVALID_INPUT", message: "Spot description contains disallowed language." } as ServiceError;
+      }
       const spot: CruisingSpot = {
         spotId: randomId("spot"),
-        name: payload.name.trim(),
-        address: payload.address.trim(),
+        name,
+        address,
         lat: existingPresence?.lat ?? 0,
         lng: existingPresence?.lng ?? 0,
-        description: payload.description.trim(),
+        description,
         ...(photoMediaId ? { photoMediaId } : {}),
         creatorUserId: session.userId ?? actorKey,
         createdAtMs: nowMs(),
@@ -1390,11 +1556,15 @@ function createLocalApiClient(): Readonly<{
     async createSubmission(sessionToken: string, payload: Readonly<{ title: string; body: string }>): Promise<{ submission: Submission }> {
       const state = readState();
       const session = requireSession(state, sessionToken);
+      const title = payload.title.trim();
+      const body = payload.body.trim();
+      if (containsDisallowedKidVariation(title)) throw { code: "INVALID_INPUT", message: "Title contains disallowed language." } as ServiceError;
+      if (containsDisallowedKidVariation(body)) throw { code: "INVALID_INPUT", message: "Body contains disallowed language." } as ServiceError;
       const submission: Submission = {
         submissionId: randomId("submission"),
         authorUserId: session.userId ?? actorKeyForSession(session),
-        title: payload.title.trim(),
-        body: payload.body.trim(),
+        title,
+        body,
         viewCount: 0,
         ratingCount: 0,
         ratingSum: 0,
@@ -1489,12 +1659,20 @@ function createLocalApiClient(): Readonly<{
       if (!payment || payment.ownerUserId !== session.userId || payment.status !== "confirmed") {
         throw { code: "PAYMENT_REQUIRED", message: "Confirm payment before creating a promoted profile." } as ServiceError;
       }
+      const title = payload.title.trim();
+      const body = payload.body.trim();
+      const displayName = payload.displayName.trim();
+      if (containsDisallowedKidVariation(title)) throw { code: "INVALID_INPUT", message: "Title contains disallowed language." } as ServiceError;
+      if (containsDisallowedKidVariation(body)) throw { code: "INVALID_INPUT", message: "Body contains disallowed language." } as ServiceError;
+      if (containsDisallowedKidVariation(displayName)) {
+        throw { code: "INVALID_INPUT", message: "Display name contains disallowed language." } as ServiceError;
+      }
       const listing: PromotedProfileListing = {
         listingId: randomId("listing"),
         userId: session.userId as string,
-        title: payload.title.trim(),
-        body: payload.body.trim(),
-        displayName: payload.displayName.trim(),
+        title,
+        body,
+        displayName,
         createdAtMs: nowMs()
       };
       writeState({
@@ -1569,16 +1747,29 @@ export function apiClient(basePath = "/api"): Readonly<{
   completeMediaUpload(sessionToken: string, mediaId: string): Promise<{ media: unknown }>;
   getFavorites(sessionToken: string): Promise<{ favorites: ReadonlyArray<string> }>;
   toggleFavorite(sessionToken: string, targetUserId: string): Promise<FavoriteToggleResponse>;
-  listPublicPostings(type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
+  listPublicPostings(type?: "ad" | "event", sessionToken?: string): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
   createPublicPosting(
     sessionToken: string,
-    payload: Readonly<{ type: "ad" | "event"; title: string; body: string; photoMediaId?: string }>
+    payload: Readonly<{
+      type: "ad" | "event";
+      title: string;
+      body: string;
+      photoMediaId?: string;
+      eventStartAtMs?: number;
+      locationInstructions?: string;
+      groupDetails?: string;
+    }>
   ): Promise<{ posting: PublicPosting }>;
   inviteToEvent(
     sessionToken: string,
     payload: Readonly<{ postingId: string; targetUserId: string }>
   ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number } }>;
   respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }>;
+  requestToJoinEvent(sessionToken: string, payload: Readonly<{ postingId: string }>): Promise<{ posting: PublicPosting }>;
+  respondToEventJoinRequest(
+    sessionToken: string,
+    payload: Readonly<{ postingId: string; targetUserId: string; accept: boolean }>
+  ): Promise<{ posting: PublicPosting }>;
   listEventInvites(sessionToken: string): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
   listCruisingSpots(): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
   createCruisingSpot(
@@ -1896,15 +2087,23 @@ export function apiClient(basePath = "/api"): Readonly<{
       });
       return (await readJsonOrThrow(res)) as FavoriteToggleResponse;
     },
-    async listPublicPostings(type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }> {
+    async listPublicPostings(type?: "ad" | "event", sessionToken?: string): Promise<{ postings: ReadonlyArray<PublicPosting> }> {
       const url = new URL(`${basePath}/public-postings`, window.location.origin);
       if (type) url.searchParams.set("type", type);
-      const res = await fetch(url.toString(), { method: "GET" });
+      const res = await fetch(url.toString(), { method: "GET", headers: sessionToken ? headers(sessionToken) : undefined });
       return (await readJsonOrThrow(res)) as { postings: ReadonlyArray<PublicPosting> };
     },
     async createPublicPosting(
       sessionToken: string,
-      payload: Readonly<{ type: "ad" | "event"; title: string; body: string; photoMediaId?: string }>
+      payload: Readonly<{
+        type: "ad" | "event";
+        title: string;
+        body: string;
+        photoMediaId?: string;
+        eventStartAtMs?: number;
+        locationInstructions?: string;
+        groupDetails?: string;
+      }>
     ): Promise<{ posting: PublicPosting }> {
       const res = await fetch(`${basePath}/public-postings`, {
         method: "POST",
@@ -1928,6 +2127,25 @@ export function apiClient(basePath = "/api"): Readonly<{
     },
     async respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }> {
       const res = await fetch(`${basePath}/public-postings/event/respond`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify(payload)
+      });
+      return (await readJsonOrThrow(res)) as { posting: PublicPosting };
+    },
+    async requestToJoinEvent(sessionToken: string, payload: Readonly<{ postingId: string }>): Promise<{ posting: PublicPosting }> {
+      const res = await fetch(`${basePath}/public-postings/event/request-join`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify(payload)
+      });
+      return (await readJsonOrThrow(res)) as { posting: PublicPosting };
+    },
+    async respondToEventJoinRequest(
+      sessionToken: string,
+      payload: Readonly<{ postingId: string; targetUserId: string; accept: boolean }>
+    ): Promise<{ posting: PublicPosting }> {
+      const res = await fetch(`${basePath}/public-postings/event/respond-request`, {
         method: "POST",
         headers: headers(sessionToken),
         body: JSON.stringify(payload)

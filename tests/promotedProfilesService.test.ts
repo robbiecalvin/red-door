@@ -76,4 +76,29 @@ describe("promotedProfilesService", () => {
     if (res.ok) throw new Error("unreachable");
     expect(res.error.code).toBe("ANONYMOUS_FORBIDDEN");
   });
+
+  it("Given disallowed kid-variation content in listing fields When createListing is called Then INVALID_INPUT is returned", () => {
+    const svc = createPromotedProfilesService({ idFactory: () => "x" });
+    const session = {
+      sessionToken: "s_1",
+      userType: "registered" as const,
+      userId: "u_1",
+      ageVerified: true
+    };
+    const start = svc.startPayment(session);
+    expect(start.ok).toBe(true);
+    if (!start.ok) throw new Error("unreachable");
+    const confirm = svc.confirmPayment(session, start.value.paymentToken);
+    expect(confirm.ok).toBe(true);
+
+    const create = svc.createListing(session, {
+      paymentToken: start.value.paymentToken,
+      title: "Featured",
+      body: "normal body",
+      displayName: "k.i.d user"
+    });
+    expect(create.ok).toBe(false);
+    if (create.ok) throw new Error("unreachable");
+    expect(create.error).toEqual({ code: "INVALID_INPUT", message: "Display name contains disallowed language." });
+  });
 });

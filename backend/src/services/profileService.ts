@@ -1,3 +1,5 @@
+import { containsDisallowedKidVariation } from "./contentPolicy";
+
 export type ErrorCode = "ANONYMOUS_FORBIDDEN" | "AGE_GATE_REQUIRED" | "INVALID_INPUT" | "PROFILE_NOT_FOUND" | "PROFILE_HIDDEN";
 
 export type ServiceError = Readonly<{
@@ -128,6 +130,9 @@ function validateDisplayName(v: unknown): Result<string> {
   if (s.length < 2 || s.length > 32) {
     return err("INVALID_INPUT", "Display name must be 2-32 characters.", { min: 2, max: 32 });
   }
+  if (containsDisallowedKidVariation(s)) {
+    return err("INVALID_INPUT", "Display name contains disallowed language.");
+  }
   return ok(s);
 }
 
@@ -143,6 +148,9 @@ function validateBio(v: unknown): Result<string> {
   const s = typeof v === "string" ? v : "";
   const t = s.trim();
   if (t.length > 280) return err("INVALID_INPUT", "Bio must be 280 characters or fewer.", { max: 280 });
+  if (containsDisallowedKidVariation(t)) {
+    return err("INVALID_INPUT", "Bio contains disallowed language.");
+  }
   return ok(t);
 }
 
@@ -167,6 +175,9 @@ function validateStats(v: unknown): Result<ProfileStats> {
   })();
   if (race === null) return err("INVALID_INPUT", "Race must be a non-empty string.");
   if (race !== undefined && race.length > 24) return err("INVALID_INPUT", "Race must be 24 characters or fewer.", { max: 24 });
+  if (race !== undefined && containsDisallowedKidVariation(race)) {
+    return err("INVALID_INPUT", "Race contains disallowed language.");
+  }
 
   const cockSize = (() => {
     if (stats.cockSizeInches === undefined) return undefined;
