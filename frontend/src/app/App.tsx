@@ -272,7 +272,6 @@ export function App(): React.ReactElement {
   const [topAvatarUrl, setTopAvatarUrl] = useState<string | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
-  const isDesktopFullMap = !isMobile && session?.ageVerified === true && activeTab === "discover" && discoverScreen === "map";
 
   const persistSessionToken = useCallback((token: string): void => {
     safeLocalStorageSet(SESSION_TOKEN_KEY, token);
@@ -544,6 +543,7 @@ export function App(): React.ReactElement {
     m.addEventListener("change", onChange);
     return () => m.removeEventListener("change", onChange);
   }, []);
+  const isDesktopFullMap = !isMobile && session?.ageVerified === true && activeTab === "discover" && discoverScreen === "map";
 
   useEffect(() => {
     const nav = navigator as Navigator & {
