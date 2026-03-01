@@ -426,10 +426,15 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (skipEmailVerification && normalizedPhone.length > 0 && !isLikelyValidPhoneE164(normalizedPhone)) {
         return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
       }
-      if (!isStrongPassword(password)) {
+      const passwordValid = skipEmailVerification
+        ? typeof password === "string" && password.length >= 6
+        : isStrongPassword(password);
+      if (!passwordValid) {
         return err(
           "UNAUTHORIZED_ACTION",
-          "Invalid password. Use at least 10 chars with uppercase, lowercase, number, and symbol."
+          skipEmailVerification
+            ? "Invalid password. Use at least 6 characters."
+            : "Invalid password. Use at least 10 chars with uppercase, lowercase, number, and symbol."
         );
       }
 

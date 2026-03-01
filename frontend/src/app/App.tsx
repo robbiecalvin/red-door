@@ -695,6 +695,22 @@ export function App(): React.ReactElement {
                   <div style={{ color: "var(--muted)", marginBottom: 12 }}>
                     Cruise Mode supports anonymous sessions. Date and Hybrid require a registered identity.
                   </div>
+                  {lastError ? (
+                    <div
+                      role="alert"
+                      aria-live="polite"
+                      style={{
+                        color: "#ff848f",
+                        background: "rgba(120, 8, 18, 0.35)",
+                        border: "1px solid rgba(255, 90, 100, 0.5)",
+                        borderRadius: 8,
+                        padding: "10px 12px",
+                        marginBottom: 12
+                      }}
+                    >
+                      {lastError}
+                    </div>
+                  ) : null}
 
                   {authInfo ? <div style={{ color: "#26d5ff", marginBottom: 12 }}>{authInfo}</div> : null}
                   {pendingVerificationEmail ? (
@@ -730,7 +746,7 @@ export function App(): React.ReactElement {
 
                       {authView === "register" ? (
                         <label className="rd-field">
-                          <span className="rd-label">Phone (E.164)</span>
+                          <span className="rd-label">Phone (E.164, optional)</span>
                           <input
                             className="rd-input"
                             value={phoneE164}
@@ -743,7 +759,7 @@ export function App(): React.ReactElement {
 
                       {authView === "register" ? (
                         <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
-                          Password must be at least 10 characters and include uppercase, lowercase, a number, and a symbol.
+                          Password must be at least 6 characters for this web build.
                         </div>
                       ) : null}
 
