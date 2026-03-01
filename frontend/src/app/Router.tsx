@@ -2763,6 +2763,7 @@ function ThreadsPanel({
         for (const thread of threadsRes.threads ?? []) {
           const normalizedKey = normalizePeerKey(thread?.otherKey ?? "");
           if (!normalizedKey || normalizedKey === meKey || normalizedKey.startsWith("spot:")) continue;
+          if (session.userId && normalizedKey.startsWith("session:")) continue;
           const last = thread?.lastMessage as ChatMessage | undefined;
           if (!last || typeof last.createdAtMs !== "number" || !Number.isFinite(last.createdAtMs)) continue;
           const preview =
@@ -4305,6 +4306,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
   const [saving, setSaving] = useState<boolean>(false);
   const [status, setStatus] = useState<string | null>(null);
   const [mediaPreviewUrlById, setMediaPreviewUrlById] = useState<Record<string, string>>({});
+  const [showMyProfile, setShowMyProfile] = useState<boolean>(false);
 
   async function refreshProfile(): Promise<void> {
     setLoading(true);
@@ -4423,6 +4425,12 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
       setStatus("Choose a file first.");
       return;
     }
+    if (!profile) {
+      const msg = "Save your profile details first, then upload media.";
+      setStatus(msg);
+      setLastError(msg);
+      return;
+    }
     if (session.userType === "guest") {
       setStatus("Guest sessions cannot upload media. Register to persist media.");
       return;
@@ -4501,18 +4509,48 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
     }
   }
 
+  const galleryIds = profile?.galleryMediaIds ?? [];
+  const mainPhotoUrl =
+    profile?.mainPhotoMediaId && mediaPreviewUrlById[profile.mainPhotoMediaId]
+      ? mediaPreviewUrlById[profile.mainPhotoMediaId]
+      : profile?.mainPhotoMediaId
+        ? avatarForKey(profile.mainPhotoMediaId)
+        : undefined;
+
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={cardStyle()}>
-        <div style={{ display: "grid", gap: 14 }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>SETTINGS / PROFILE</div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>PROFILE SETTINGS</div>
           {session.userType === "guest" ? (
             <div style={{ color: "#b9bec9", fontSize: 13 }}>
-              Guest profile data is temporary for this session and is removed when you log out.
+              Guest profile data is temporary and clears on logout.
             </div>
           ) : null}
           {status ? <div style={{ color: "#b9bec9", fontSize: 14 }}>{status}</div> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => void saveProfile()} style={buttonPrimary(saving)} disabled={saving}>
+              SAVE PROFILE
+            </button>
+            <button type="button" onClick={() => void refreshProfile()} style={buttonSecondary(loading)} disabled={loading}>
+              REFRESH
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowMyProfile((v) => !v)}
+              style={buttonSecondary(false)}
+              disabled={!profile}
+            >
+              {showMyProfile ? "HIDE MY PROFILE" : "VIEW MY PROFILE"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={cardStyle()}>
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>ABOUT YOU</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span className="rd-label">Display Name</span>
               <input value={draft.displayName} onChange={(e) => setDraft((d) => ({ ...d, displayName: e.target.value }))} style={fieldStyle()} />
@@ -4522,12 +4560,10 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               <input value={draft.age} onChange={(e) => setDraft((d) => ({ ...d, age: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
             </label>
           </div>
-
           <label style={{ display: "grid", gap: 6 }}>
             <span className="rd-label">Bio</span>
             <textarea value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} style={{ ...fieldStyle(), minHeight: 88, resize: "vertical" }} />
           </label>
-
           <label style={{ display: "grid", gap: 6 }}>
             <span className="rd-label">Looking For More (Optional)</span>
             <textarea
@@ -4536,18 +4572,57 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               style={{ ...fieldStyle(), minHeight: 72, resize: "vertical" }}
             />
           </label>
+        </div>
+      </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+      <div style={cardStyle()}>
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>PROFILE DETAILS</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Height (in)</span>
+              <input value={draft.heightInches} onChange={(e) => setDraft((d) => ({ ...d, heightInches: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Weight (lbs)</span>
+              <input value={draft.weightLbs} onChange={(e) => setDraft((d) => ({ ...d, weightLbs: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Race</span>
+              <input value={draft.race} onChange={(e) => setDraft((d) => ({ ...d, race: e.target.value }))} style={fieldStyle()} />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Cock Size (in)</span>
+              <input value={draft.cockSizeInches} onChange={(e) => setDraft((d) => ({ ...d, cockSizeInches: e.target.value }))} style={fieldStyle()} inputMode="decimal" />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Cut / Uncut</span>
+              <select value={draft.cutStatus} onChange={(e) => setDraft((d) => ({ ...d, cutStatus: e.target.value as "" | ProfileCutStatus }))} style={fieldStyle()}>
+                <option value="">Select</option>
+                <option value="cut">Cut</option>
+                <option value="uncut">Uncut</option>
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Position</span>
+              <select value={draft.position} onChange={(e) => setDraft((d) => ({ ...d, position: e.target.value as "" | ProfilePosition }))} style={fieldStyle()}>
+                <option value="">Select</option>
+                <option value="top">Top</option>
+                <option value="bottom">Bottom</option>
+                <option value="side">Side</option>
+              </select>
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input type="checkbox" checked={draft.discreetMode} onChange={(e) => setDraft((d) => ({ ...d, discreetMode: e.target.checked }))} />
-              <span className="rd-label" style={{ margin: 0, fontSize: 13 }}>Discreet Mode (hide profile from others)</span>
+              <span className="rd-label" style={{ margin: 0 }}>Discreet Mode</span>
             </label>
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input type="checkbox" checked={draft.travelEnabled} onChange={(e) => setDraft((d) => ({ ...d, travelEnabled: e.target.checked }))} />
               <span className="rd-label" style={{ margin: 0 }}>Travel Mode</span>
             </label>
           </div>
-
           {draft.travelEnabled ? (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
               <label style={{ display: "grid", gap: 6 }}>
@@ -4560,115 +4635,98 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               </label>
             </div>
           ) : null}
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Height (in)</span>
-              <input value={draft.heightInches} onChange={(e) => setDraft((d) => ({ ...d, heightInches: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Race</span>
-              <input value={draft.race} onChange={(e) => setDraft((d) => ({ ...d, race: e.target.value }))} style={fieldStyle()} />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Cock Size (in)</span>
-              <input value={draft.cockSizeInches} onChange={(e) => setDraft((d) => ({ ...d, cockSizeInches: e.target.value }))} style={fieldStyle()} inputMode="decimal" />
-            </label>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Cut / Uncut</span>
-              <select value={draft.cutStatus} onChange={(e) => setDraft((d) => ({ ...d, cutStatus: e.target.value as "" | ProfileCutStatus }))} style={fieldStyle()}>
-                <option value="">Select</option>
-                <option value="cut">Cut</option>
-                <option value="uncut">Uncut</option>
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Weight (lbs)</span>
-              <input value={draft.weightLbs} onChange={(e) => setDraft((d) => ({ ...d, weightLbs: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Position</span>
-              <select value={draft.position} onChange={(e) => setDraft((d) => ({ ...d, position: e.target.value as "" | ProfilePosition }))} style={fieldStyle()}>
-                <option value="">Select</option>
-                <option value="top">Top</option>
-                <option value="bottom">Bottom</option>
-                <option value="side">Side</option>
-              </select>
-            </label>
-          </div>
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button type="button" onClick={() => void saveProfile()} style={buttonPrimary(saving)} disabled={saving}>SAVE PROFILE</button>
-            <button type="button" onClick={() => void refreshProfile()} style={buttonSecondary(loading)} disabled={loading}>REFRESH</button>
-          </div>
         </div>
       </div>
 
       <div style={cardStyle()}>
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 18, fontWeight: 700 }}>MEDIA</div>
-          <div style={{ color: "#b9bec9", fontSize: 14 }}>Main profile photo, gallery photo, and video uploads.</div>
-
-          <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Main Photo</span>
-              <input className="rd-input" type="file" accept="image/*" onChange={(e) => setMainFile(e.target.files?.[0] ?? null)} />
-            </label>
-            <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("photo_main", mainFile)}>UPLOAD MAIN PHOTO</button>
+          <div style={{ color: "#b9bec9", fontSize: 14 }}>Upload and manage your photos and video.</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+            <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span className="rd-label">Main Photo</span>
+                <input className="rd-input" type="file" accept="image/*" onChange={(e) => setMainFile(e.target.files?.[0] ?? null)} />
+              </label>
+              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("photo_main", mainFile)}>
+                UPLOAD MAIN PHOTO
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span className="rd-label">Gallery Photo</span>
+                <input className="rd-input" type="file" accept="image/*" onChange={(e) => setGalleryFile(e.target.files?.[0] ?? null)} />
+              </label>
+              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("photo_gallery", galleryFile)}>
+                UPLOAD GALLERY PHOTO
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span className="rd-label">Video</span>
+                <input className="rd-input" type="file" accept="video/*" onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)} />
+              </label>
+              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("video", videoFile)}>
+                UPLOAD VIDEO
+              </button>
+            </div>
           </div>
-
-          <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Gallery Photo</span>
-              <input className="rd-input" type="file" accept="image/*" onChange={(e) => setGalleryFile(e.target.files?.[0] ?? null)} />
-            </label>
-            <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("photo_gallery", galleryFile)}>UPLOAD GALLERY PHOTO</button>
-          </div>
-
-          <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Video</span>
-              <input className="rd-input" type="file" accept="video/*" onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)} />
-            </label>
-            <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("video", videoFile)}>UPLOAD VIDEO</button>
-          </div>
-
           <div style={{ color: "#b9bec9", fontSize: 13 }}>
             Main photo media id: {profile?.mainPhotoMediaId ?? "-"}
             <br />
-            Gallery count: {profile?.galleryMediaIds?.length ?? 0}
+            Gallery count: {galleryIds.length}
             <br />
             Video media id: {profile?.videoMediaId ?? "-"}
           </div>
-          <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>YOUR GALLERY</div>
-            {!profile?.galleryMediaIds?.length ? (
-              <div style={{ color: "#b9bec9", fontSize: 13 }}>No gallery photos uploaded yet.</div>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10 }}>
-                {profile.galleryMediaIds.map((mediaId) => (
-                  <div key={mediaId} style={{ border: "1px solid rgba(255,58,77,0.45)", borderRadius: 10, padding: 8, display: "grid", gap: 8 }}>
-                    <img
-                      src={mediaPreviewUrlById[mediaId] ?? avatarForKey(mediaId)}
-                      alt="Gallery photo"
-                      style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 8, border: "1px solid rgba(255,58,77,0.4)" }}
-                    />
-                    <button type="button" style={buttonSecondary(saving)} disabled={saving} onClick={() => void setMainFromGallery(mediaId)}>
-                      SET MAIN
-                    </button>
-                    <button type="button" style={buttonSecondary(saving)} disabled={saving} onClick={() => void removeGalleryMedia(mediaId)}>
-                      REMOVE
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {!galleryIds.length ? (
+            <div style={{ color: "#b9bec9", fontSize: 13 }}>No gallery photos uploaded yet.</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10 }}>
+              {galleryIds.map((mediaId) => (
+                <div key={mediaId} style={{ border: "1px solid rgba(255,58,77,0.45)", borderRadius: 10, padding: 8, display: "grid", gap: 8 }}>
+                  <img
+                    src={mediaPreviewUrlById[mediaId] ?? avatarForKey(mediaId)}
+                    alt="Gallery photo"
+                    style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 8, border: "1px solid rgba(255,58,77,0.4)" }}
+                  />
+                  <button type="button" style={buttonSecondary(saving)} disabled={saving} onClick={() => void setMainFromGallery(mediaId)}>
+                    SET MAIN
+                  </button>
+                  <button type="button" style={buttonSecondary(saving)} disabled={saving} onClick={() => void removeGalleryMedia(mediaId)}>
+                    REMOVE
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
+
+      {showMyProfile && profile ? (
+        <div style={cardStyle()}>
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>MY PROFILE PREVIEW</div>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(120px, 180px) 1fr", gap: 12, alignItems: "start" }}>
+              <img
+                src={mainPhotoUrl ?? avatarForKey(profile.userId)}
+                alt="My profile"
+                style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)" }}
+              />
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 20, fontWeight: 700 }}>{profile.displayName}</div>
+                <div style={{ color: "#ced3dc", fontSize: 14 }}>Age: {profile.age}</div>
+                <div style={{ color: "#ced3dc", fontSize: 14 }}>Race: {profile.stats.race ?? "-"}</div>
+                <div style={{ color: "#ced3dc", fontSize: 14 }}>Height: {profile.stats.heightInches ?? "-"}</div>
+                <div style={{ color: "#ced3dc", fontSize: 14 }}>Weight: {profile.stats.weightLbs ?? "-"}</div>
+                <div style={{ color: "#ced3dc", fontSize: 14 }}>Cock Size: {profile.stats.cockSizeInches ?? "-"}</div>
+                <div style={{ color: "#ced3dc", fontSize: 14 }}>Cut / Uncut: {profile.stats.cutStatus ?? "-"}</div>
+                <div style={{ color: "#ced3dc", fontSize: 14 }}>Position: {profile.stats.position ?? "-"}</div>
+                <div style={{ color: "#ced3dc", fontSize: 14, whiteSpace: "pre-wrap" }}>{profile.bio || "-"}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

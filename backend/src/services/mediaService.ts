@@ -107,7 +107,7 @@ function validateMimeType(kind: MediaKind, v: unknown): Result<string> {
   const allowed =
     kind === "video"
       ? new Set(["video/mp4", "video/webm", "video/quicktime"])
-      : new Set(["image/jpeg", "image/png", "image/webp"]);
+      : new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 
   if (!allowed.has(mime)) return err("MEDIA_TYPE_NOT_ALLOWED", "Media type is not allowed.", { mimeType: mime });
   return ok(mime);
@@ -122,6 +122,8 @@ function extensionForMime(mimeType: string): string {
   if (mimeType === "image/jpeg") return "jpg";
   if (mimeType === "image/png") return "png";
   if (mimeType === "image/webp") return "webp";
+  if (mimeType === "image/heic") return "heic";
+  if (mimeType === "image/heif") return "heif";
   if (mimeType === "video/mp4") return "mp4";
   if (mimeType === "video/webm") return "webm";
   if (mimeType === "video/quicktime") return "mov";
@@ -197,6 +199,11 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
       if (!media) return err("INVALID_INPUT", "Unknown media.");
       if (media.userId !== auth.value.userId) return err("UNAUTHORIZED_ACTION", "Not allowed.");
 
+      // Profile attachment is part of completion; fail early to avoid marking media as uploaded
+      // when profile state cannot be updated.
+      const profile = await deps.profileRepo.getByUserId(auth.value.userId);
+      if (!profile) return err("PROFILE_NOT_FOUND", "Profile not found.");
+
       const head = await deps.storage.headObject({ bucket, key: media.objectKey });
       if (!head.ok) return err("MEDIA_UPLOAD_INCOMPLETE", "Upload is not complete.");
 
@@ -209,10 +216,6 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
       const sha256 = createHash("sha256").update(media.objectKey).digest("hex");
       const uploadedAtMs = nowMs();
       await deps.repo.markUploaded(id, uploadedAtMs, sha256);
-
-      // Attach to profile if it exists. Profiles are required for Date discovery and must be server-owned.
-      const profile = await deps.profileRepo.getByUserId(auth.value.userId);
-      if (!profile) return err("PROFILE_NOT_FOUND", "Profile not found.");
 
       const updatedAtMs = nowMs();
       const updated = (() => {

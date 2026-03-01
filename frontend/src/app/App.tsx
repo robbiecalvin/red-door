@@ -40,6 +40,7 @@ type Settings = Readonly<{
 
 declare const __DUALMODE_DEFAULT_CENTER_LAT__: string | undefined;
 declare const __DUALMODE_DEFAULT_CENTER_LNG__: string | undefined;
+declare const __DUALMODE_API_BASE_PATH__: string | undefined;
 
 function safeLocalStorageGet(key: string): string | null {
   try {
@@ -172,7 +173,11 @@ function requestLocationPermission(): void {
 }
 
 function resolveApiBasePath(): string {
-  return DEFAULT_SHARED_API_BASE;
+  const configured = typeof __DUALMODE_API_BASE_PATH__ === "string" ? __DUALMODE_API_BASE_PATH__.trim() : "";
+  if (!configured || configured === "__disabled__") {
+    return DEFAULT_SHARED_API_BASE;
+  }
+  return configured;
 }
 
 const AVATARS = [placeholderA, placeholderB, placeholderC] as const;

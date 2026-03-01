@@ -131,6 +131,11 @@ function isCruiseSpotThreadKey(key: string): boolean {
   return key.slice("spot:".length).trim().length > 0;
 }
 
+function isSessionPeerKey(key: string): boolean {
+  if (!key.startsWith("session:")) return false;
+  return key.slice("session:".length).trim().length > 0;
+}
+
 function threadKey(chatKind: ChatKind, aKey: string, bKey: string): string {
   const a = normalizeKey(aKey);
   const b = normalizeKey(bKey);
@@ -582,6 +587,9 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
           }
         }
         if (!isNonEmptyString(otherKey)) continue;
+        if ((session.userType === "registered" || session.userType === "subscriber") && isSessionPeerKey(otherKey)) {
+          continue;
+        }
 
         const lastMessage = activeList[activeList.length - 1];
         const current = latestByOtherKey.get(otherKey);

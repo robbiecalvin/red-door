@@ -136,6 +136,21 @@ describe("chatService", () => {
     expect(threads.value[0]?.otherKey).toBe("session:s_b");
   });
 
+  it("Given a registered user has session and user conversations When listThreads is requested Then session peers are hidden", () => {
+    const svc = createChatService({ rateLimitPerMinute: 100 });
+    const me = { sessionToken: "s_me", userType: "registered", mode: "cruise", userId: "u_me", ageVerified: true } as const;
+
+    const toSession = svc.sendMessage(me, { chatKind: "cruise", toKey: "session:s_anon", text: "anon thread" });
+    expect(toSession.ok).toBe(true);
+    const toUser = svc.sendMessage(me, { chatKind: "cruise", toKey: "user:u_real", text: "real thread" });
+    expect(toUser.ok).toBe(true);
+
+    const threads = svc.listThreads(me, "cruise");
+    expect(threads.ok).toBe(true);
+    if (!threads.ok) throw new Error("unreachable");
+    expect(threads.value.map((row) => row.otherKey)).toEqual(["user:u_real"]);
+  });
+
   it("Given a chat created while both participants are in Cruise Mode When 72 hours have elapsed since message creation Then the messages are expired and no longer retrievable And expired messages cannot be restored", () => {
     let now = 1_700_000_000_000;
     const svc = createChatService({
