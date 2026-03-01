@@ -9,6 +9,7 @@
     "backend": "tsx backend/src/server.ts",
     "backend:watch": "tsx watch backend/src/server.ts",
     "dev": "node vite.dev.mjs",
+    "dev:legacy": "DUALMODE_DEV_HMR=false DUALMODE_DEV_WATCH=false node vite.dev.mjs",
     "dev:stack": "sh -c 'PORT=${PORT:-3012}; pkill -f \"tsx watch backend/src/server.ts\" 2>/dev/null || true; pkill -f \"backend/src/server.ts\" 2>/dev/null || true; PIDS=$(lsof -tiTCP:${PORT} -sTCP:LISTEN 2>/dev/null || true); if [ -n \"$PIDS\" ]; then kill -9 $PIDS; fi; JWT_SECRET=${JWT_SECRET:-dev} PORT=${PORT} npm run backend:watch > /tmp/reddoor-backend.log 2>&1 & BACK_PID=$!; i=0; until curl -fsS \"http://127.0.0.1:${PORT}/health\" >/dev/null 2>&1; do i=$((i+1)); if [ $i -ge 80 ]; then echo \"Backend failed to become healthy on port ${PORT}.\"; tail -n 120 /tmp/reddoor-backend.log; kill $BACK_PID 2>/dev/null || true; exit 1; fi; if ! kill -0 $BACK_PID 2>/dev/null; then echo \"Backend process exited.\"; tail -n 120 /tmp/reddoor-backend.log; exit 1; fi; sleep 0.25; done; DUALMODE_BACKEND_PORT=${DUALMODE_BACKEND_PORT:-${PORT}} npm run dev'",
     "build": "node vite.build.mjs",
     "pages:sync": "node scripts/sync-pages-static.mjs",

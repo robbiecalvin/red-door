@@ -16,9 +16,29 @@ function readFrontendPort() {
   return Number.isFinite(port) && port > 0 ? port : 5173;
 }
 
+function readBooleanEnv(name, defaultValue) {
+  const raw = process.env[name];
+  if (typeof raw !== "string" || raw.trim() === "") return defaultValue;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") return true;
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") return false;
+  return defaultValue;
+}
+
+function readPositiveIntEnv(name, defaultValue) {
+  const raw = process.env[name];
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return defaultValue;
+  return Math.trunc(parsed);
+}
+
 async function main() {
   const backendOrigin = readBackendOrigin();
   const frontendPort = readFrontendPort();
+  const hmrEnabled = readBooleanEnv("DUALMODE_DEV_HMR", true);
+  const watchEnabled = readBooleanEnv("DUALMODE_DEV_WATCH", true);
+  const watchUsePolling = readBooleanEnv("DUALMODE_DEV_WATCH_POLL", false);
+  const watchPollIntervalMs = readPositiveIntEnv("DUALMODE_DEV_WATCH_POLL_INTERVAL_MS", 250);
   const server = await createServer({
     configFile: false,
     clearScreen: false,
@@ -43,11 +63,18 @@ async function main() {
       host: "127.0.0.1",
       port: frontendPort,
       strictPort: true,
-      // HMR + file watching can hang in some environments; keep dev usable without it.
-      hmr: false,
-      watch: {
-        ignored: ["**/*"],
-      },
+      // Fast feedback by default; can be disabled with DUALMODE_DEV_HMR/DUALMODE_DEV_WATCH.
+      hmr: hmrEnabled,
+      watch: watchEnabled
+        ? watchUsePolling
+          ? {
+              usePolling: true,
+              interval: watchPollIntervalMs
+            }
+          : {}
+        : {
+            ignored: ["**/*"]
+          },
       proxy: {
         "/api": {
           target: backendOrigin,
@@ -66,6 +93,8 @@ async function main() {
   await server.listen();
   server.printUrls();
   console.log(`Proxying /api -> ${backendOrigin}`);
+  console.log(`Dev HMR: ${hmrEnabled ? "enabled" : "disabled"}`);
+  console.log(`Dev file watch: ${watchEnabled ? (watchUsePolling ? `enabled (poll ${watchPollIntervalMs}ms)` : "enabled") : "disabled"}`);
 }
 
 main().catch((err) => {

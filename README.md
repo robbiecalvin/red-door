@@ -50,7 +50,19 @@ Important for real mobile builds:
 npm run dev
 ```
 
-This runs the browser-local mode by default.
+This runs the browser-local mode by default with file watching + HMR enabled for fast visual updates.
+
+If you hit an environment-specific watcher issue, use:
+
+```bash
+npm run dev:legacy
+```
+
+Optional dev toggles:
+- `DUALMODE_DEV_HMR=false` to disable HMR
+- `DUALMODE_DEV_WATCH=false` to disable file watching
+- `DUALMODE_DEV_WATCH_POLL=true` to force polling watcher mode
+- `DUALMODE_DEV_WATCH_POLL_INTERVAL_MS=250` to tune polling interval
 
 ## Local development (backend + frontend)
 
@@ -74,6 +86,8 @@ npm run build:pages
 ```
 
 This command rebuilds `dist/`, then replaces root `assets/` and route HTML files (`index.html`, `discover.html`, etc.) from the latest build so stale bundles do not accumulate in the repo.
+
+If the deployed site appears stale after publish, do a hard refresh (`Cmd+Shift+R` / `Ctrl+Shift+R`) once the GitHub Pages deploy completes.
 
 ## Repository hygiene
 
