@@ -66,6 +66,22 @@ Push to `main` (or run the workflow manually) and enable GitHub Pages in reposit
 - Source: GitHub Actions
 - Workflow: `Deploy GitHub Pages`
 
+When preparing updated static files locally, use:
+
+```bash
+npm run build:pages
+```
+
+This command rebuilds `dist/`, then replaces root `assets/` and route HTML files (`index.html`, `discover.html`, etc.) from the latest build so stale bundles do not accumulate in the repo.
+
+## Repository hygiene
+
+Keep source code and generated output separate:
+
+- Keep tracked: `frontend/`, `backend/`, `tests/`, workflow files, and only the current GitHub Pages static files.
+- Ignore/hide local-only files via `.gitignore`: `.env*` (except `.env.example`), logs, `node_modules/`, `dist/`, `coverage/`, editor/OS files.
+- Treat compiled assets in `assets/` as generated in GitHub UI via `.gitattributes`.
+
 ## Mobile build/sync
 
 ```bash

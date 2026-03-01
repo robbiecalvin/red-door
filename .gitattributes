@@ -1,0 +1,6 @@
+# Treat compiled frontend bundles as generated in GitHub UI
+assets/*.js linguist-generated=true
+assets/*.css linguist-generated=true
+assets/*.woff linguist-generated=true
+assets/*.woff2 linguist-generated=true
+assets/*.png linguist-generated=true
