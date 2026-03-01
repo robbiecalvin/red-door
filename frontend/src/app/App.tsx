@@ -12,7 +12,6 @@ type DiscoverFilter = "all" | "online" | "favorites";
 type DiscoverScreen = "map" | "chat";
 
 const SESSION_TOKEN_KEY = "reddoor_session_token";
-const API_BASE_OVERRIDE_KEY = "reddoor_api_base_path";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
 const DEFAULT_SHARED_API_BASE = "https://red-door-api.onrender.com";
 const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "public", "profile", "settings", "submissions", "promoted"]);
@@ -30,7 +29,6 @@ type Settings = Readonly<{
 
 declare const __DUALMODE_DEFAULT_CENTER_LAT__: string | undefined;
 declare const __DUALMODE_DEFAULT_CENTER_LNG__: string | undefined;
-declare const __DUALMODE_API_BASE_PATH__: string | undefined;
 
 function safeLocalStorageGet(key: string): string | null {
   try {
@@ -89,27 +87,6 @@ function tokenFromLocationSearch(): string | null {
   } catch {
     return null;
   }
-}
-
-function apiBaseOverrideFromLocationSearch(): string | null {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const raw = params.get("api");
-    const normalized = normalizeApiBasePath(raw ?? "");
-    return normalized;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeApiBasePath(raw: string): string | null {
-  const value = raw.trim();
-  if (!value) return null;
-  const lower = value.toLowerCase();
-  if (lower === "__local__" || lower === "local" || lower === "rdlocal") return "__local__";
-  if (value.startsWith("/") && !value.startsWith("//")) return value.replace(/\/+$/, "");
-  if (lower.startsWith("http://") || lower.startsWith("https://")) return value.replace(/\/+$/, "");
-  return null;
 }
 
 function tokenFromWindowName(): string | null {
@@ -184,21 +161,7 @@ function requestLocationPermission(): void {
 }
 
 function resolveApiBasePath(): string {
-  const queryOverride = apiBaseOverrideFromLocationSearch();
-  if (queryOverride) {
-    safeLocalStorageSet(API_BASE_OVERRIDE_KEY, queryOverride);
-    return queryOverride;
-  }
-  const persistedOverride = normalizeApiBasePath(safeLocalStorageGet(API_BASE_OVERRIDE_KEY) ?? "");
-  if (persistedOverride) {
-    return persistedOverride;
-  }
-  const host = window.location.hostname.toLowerCase();
-  if (host.endsWith(".github.io")) {
-    return DEFAULT_SHARED_API_BASE;
-  }
-  const envBasePath = normalizeApiBasePath(typeof __DUALMODE_API_BASE_PATH__ === "string" ? __DUALMODE_API_BASE_PATH__ : "");
-  return envBasePath ?? "__local__";
+  return DEFAULT_SHARED_API_BASE;
 }
 
 const AVATARS = [placeholderA, placeholderB, placeholderC] as const;
@@ -299,9 +262,7 @@ export function App(): React.ReactElement {
   useEffect(() => {
     const fromQuery = tokenFromLocationSearch();
     if (fromQuery) persistSessionToken(fromQuery);
-    const apiOverride = apiBaseOverrideFromLocationSearch();
-    if (apiOverride) safeLocalStorageSet(API_BASE_OVERRIDE_KEY, apiOverride);
-    if (window.location.search.includes("st=") || window.location.search.includes("api=")) {
+    if (window.location.search.includes("st=")) {
       const cleanUrl = `${window.location.pathname}${window.location.hash}`;
       window.history.replaceState(null, "", cleanUrl);
     }

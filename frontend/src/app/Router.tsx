@@ -3784,18 +3784,6 @@ function parseOptionalNumber(v: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-const API_BASE_OVERRIDE_KEY = "reddoor_api_base_path";
-
-function normalizeApiBasePath(raw: string): string | null {
-  const value = raw.trim();
-  if (!value) return null;
-  const lower = value.toLowerCase();
-  if (lower === "__local__" || lower === "local" || lower === "rdlocal") return "__local__";
-  if (value.startsWith("/") && !value.startsWith("//")) return value.replace(/\/+$/, "");
-  if (lower.startsWith("http://") || lower.startsWith("https://")) return value.replace(/\/+$/, "");
-  return null;
-}
-
 function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; session: Session; setLastError(value: string | null): void }>): React.ReactElement {
   const [draft, setDraft] = useState<ProfileDraft>(emptyProfileDraft());
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -4189,7 +4177,6 @@ function SettingsPanel({
     travelLng: ""
   });
   const [status, setStatus] = useState<string>("Loading settings...");
-  const [apiBasePathInput, setApiBasePathInput] = useState<string>("__local__");
   const [mediaConfigured, setMediaConfigured] = useState<boolean>(false);
   const [blockedUsers, setBlockedUsers] = useState<ReadonlyArray<string>>([]);
 
@@ -4203,13 +4190,6 @@ function SettingsPanel({
         travelLng: typeof profileRes.profile.travelMode?.lng === "number" ? String(profileRes.profile.travelMode.lng) : ""
       });
       setStatus("Settings loaded.");
-      try {
-        const stored = localStorage.getItem(API_BASE_OVERRIDE_KEY) ?? "";
-        const normalized = normalizeApiBasePath(stored);
-        setApiBasePathInput(normalized ?? "__local__");
-      } catch {
-        setApiBasePathInput("__local__");
-      }
       if (session.userType !== "guest") {
         try {
           const blockedRes = await api.listBlocked(session.sessionToken);
@@ -4316,37 +4296,6 @@ function SettingsPanel({
     }
   }
 
-  function saveApiBaseOverride(): void {
-    const normalized = normalizeApiBasePath(apiBasePathInput);
-    if (!normalized) {
-      const msg = "Invalid API base path. Use __local__, /api, or a full https:// URL.";
-      setStatus(msg);
-      setLastError(msg);
-      return;
-    }
-    try {
-      localStorage.setItem(API_BASE_OVERRIDE_KEY, normalized);
-    } catch {
-      const msg = "Unable to store API setting in this browser.";
-      setStatus(msg);
-      setLastError(msg);
-      return;
-    }
-    setStatus(`Saved API mode (${normalized}). Reloading...`);
-    window.setTimeout(() => window.location.reload(), 150);
-  }
-
-  function resetApiBaseOverride(): void {
-    try {
-      localStorage.removeItem(API_BASE_OVERRIDE_KEY);
-    } catch {
-      // ignore storage restrictions
-    }
-    setApiBasePathInput("__local__");
-    setStatus("API mode reset to local for this site. Reloading...");
-    window.setTimeout(() => window.location.reload(), 150);
-  }
-
   async function unblockUser(targetKey: string): Promise<void> {
     try {
       await api.unblock(session.sessionToken, targetKey);
@@ -4385,28 +4334,6 @@ function SettingsPanel({
             <button type="button" style={buttonSecondary(false)} onClick={() => void detectActualLocation()}>DETECT ACTUAL LOCATION</button>
             <button type="button" style={buttonSecondary(false)} onClick={() => void seedFakeUsers()}>SEED FAKE USERS</button>
             <button type="button" style={buttonSecondary(false)} onClick={() => onLogout?.()}>LOGOUT</button>
-          </div>
-        </div>
-      </div>
-      <div style={cardStyle()}>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>DATA MODE</div>
-          <div style={{ color: "#b9bec9", fontSize: 13 }}>
-            Local mode keeps ads/spots only in this browser. To share data for everyone, set a shared backend API URL.
-          </div>
-          <input
-            value={apiBasePathInput}
-            onChange={(e) => setApiBasePathInput(e.target.value)}
-            style={fieldStyle()}
-            placeholder="__local__ or https://api.example.com"
-          />
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" style={buttonPrimary(false)} onClick={saveApiBaseOverride}>
-              SAVE DATA MODE
-            </button>
-            <button type="button" style={buttonSecondary(false)} onClick={resetApiBaseOverride}>
-              RESET TO LOCAL
-            </button>
           </div>
         </div>
       </div>
