@@ -6,6 +6,7 @@ async function main() {
     configFile: false,
     clearScreen: false,
     logLevel: "info",
+    root: "frontend",
     define: {
       __DUALMODE_DEFAULT_CENTER_LAT__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LAT ?? "0"),
       __DUALMODE_DEFAULT_CENTER_LNG__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LNG ?? "0"),
@@ -20,7 +21,7 @@ async function main() {
       include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "maplibre-gl"],
     },
     build: {
-      outDir: "dist",
+      outDir: "../dist",
       emptyOutDir: true,
     },
   });
