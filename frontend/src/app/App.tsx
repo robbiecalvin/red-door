@@ -10,6 +10,17 @@ type AuthView = "guest" | "register" | "login";
 type TopTab = "discover" | "threads" | "public" | "profile" | "settings" | "submissions" | "promoted";
 type DiscoverFilter = "all" | "online" | "favorites";
 type DiscoverScreen = "map" | "chat";
+type ProfilePosition = "" | "top" | "bottom" | "side";
+
+type ProfileSetupDraft = Readonly<{
+  displayName: string;
+  age: string;
+  bio: string;
+  race: string;
+  heightInches: string;
+  weightLbs: string;
+  position: ProfilePosition;
+}>;
 
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
@@ -211,6 +222,26 @@ function urlForTab(tab: TopTab, sessionToken?: string | null): string {
   return token.length > 0 ? `${baseDir}${fileName}?st=${encodeURIComponent(token)}` : `${baseDir}${fileName}`;
 }
 
+function parseOptionalInt(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.trunc(n);
+}
+
+function emptyProfileSetupDraft(): ProfileSetupDraft {
+  return {
+    displayName: "",
+    age: "",
+    bio: "",
+    race: "",
+    heightInches: "",
+    weightLbs: "",
+    position: ""
+  };
+}
+
 export function App(): React.ReactElement {
   const api = useMemo(() => apiClient(resolveApiBasePath()), []);
 
@@ -229,10 +260,15 @@ export function App(): React.ReactElement {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [phoneE164, setPhoneE164] = useState<string>("");
+  const [registerDisplayName, setRegisterDisplayName] = useState<string>("");
+  const [registerAge, setRegisterAge] = useState<string>("");
   const [verificationCode, setVerificationCode] = useState<string>("");
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string>("");
   const [authInfo, setAuthInfo] = useState<string>("");
   const [ageYears, setAgeYears] = useState<string>("");
+  const [profileSetupDraft, setProfileSetupDraft] = useState<ProfileSetupDraft>(() => emptyProfileSetupDraft());
+  const [profileSetupRequired, setProfileSetupRequired] = useState<boolean>(false);
+  const [profileSetupChecking, setProfileSetupChecking] = useState<boolean>(false);
   const [topAvatarUrl, setTopAvatarUrl] = useState<string | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
@@ -361,6 +397,9 @@ export function App(): React.ReactElement {
     setLastError(null);
     setAuthInfo("");
     setAuthView("guest");
+    setProfileSetupRequired(false);
+    setProfileSetupChecking(false);
+    setProfileSetupDraft(emptyProfileSetupDraft());
   }
 
   async function createGuest(): Promise<void> {
@@ -381,11 +420,26 @@ export function App(): React.ReactElement {
   }
 
   async function submitRegister(): Promise<void> {
+    const normalizedDisplayName = registerDisplayName.trim();
+    const registerAgeNumber = Number(registerAge);
+    if (normalizedDisplayName.length < 2 || normalizedDisplayName.length > 32) {
+      setLastError("Display name must be 2-32 characters.");
+      return;
+    }
+    if (!Number.isFinite(registerAgeNumber) || !Number.isInteger(registerAgeNumber) || registerAgeNumber < 18 || registerAgeNumber > 120) {
+      setLastError("Age must be an integer between 18 and 120.");
+      return;
+    }
     setBusy(true);
     setLastError(null);
     setAuthInfo("");
     try {
-      await api.register(email, password, phoneE164);
+      await api.register(email, password, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {} });
+      setProfileSetupDraft((prev) => ({
+        ...prev,
+        displayName: normalizedDisplayName,
+        age: String(registerAgeNumber)
+      }));
       try {
         const loginRes = await api.login(email, password);
         persistSessionToken(loginRes.session.sessionToken);
@@ -496,6 +550,44 @@ export function App(): React.ReactElement {
     }
   }
 
+  async function submitProfileSetup(): Promise<void> {
+    if (!session) return;
+    if (session.userType === "guest") {
+      setProfileSetupRequired(false);
+      return;
+    }
+    const displayName = profileSetupDraft.displayName.trim();
+    const ageNum = Number(profileSetupDraft.age);
+    if (displayName.length < 2 || displayName.length > 32) {
+      setLastError("Display name must be 2-32 characters.");
+      return;
+    }
+    if (!Number.isFinite(ageNum) || !Number.isInteger(ageNum) || ageNum < 18 || ageNum > 120) {
+      setLastError("Age must be an integer between 18 and 120.");
+      return;
+    }
+    setBusy(true);
+    setLastError(null);
+    try {
+      await api.upsertMyProfile(session.sessionToken, {
+        displayName,
+        age: ageNum,
+        bio: profileSetupDraft.bio.trim(),
+        stats: {
+          race: profileSetupDraft.race.trim() || undefined,
+          heightInches: parseOptionalInt(profileSetupDraft.heightInches),
+          weightLbs: parseOptionalInt(profileSetupDraft.weightLbs),
+          position: profileSetupDraft.position || undefined
+        }
+      });
+      setProfileSetupRequired(false);
+    } catch (e) {
+      setLastError(normalizeUiError(e, "Profile setup failed."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const [isMobile, setIsMobile] = useState<boolean>(() => window.matchMedia("(max-width: 900px)").matches);
 
   useEffect(() => {
@@ -521,6 +613,47 @@ export function App(): React.ReactElement {
       void nav.clearAppBadge().catch(() => {});
     }
   }, [unreadChatCount]);
+
+  useEffect(() => {
+    if (!session || session.userType === "guest" || session.ageVerified !== true) {
+      setProfileSetupChecking(false);
+      setProfileSetupRequired(false);
+      return;
+    }
+    let cancelled = false;
+    setProfileSetupChecking(true);
+    api
+      .getMyProfile(session.sessionToken)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.profile.displayName.trim().length >= 2 && Number.isInteger(res.profile.age) && res.profile.age >= 18 && res.profile.age <= 120) {
+          setProfileSetupRequired(false);
+          return;
+        }
+        setProfileSetupRequired(true);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        const err = e as ServiceError;
+        if (err?.code === "PROFILE_NOT_FOUND") {
+          setProfileSetupRequired(true);
+          setProfileSetupDraft((prev) => ({
+            ...prev,
+            displayName: prev.displayName || registerDisplayName.trim(),
+            age: prev.age || registerAge.trim() || ageYears.trim()
+          }));
+          return;
+        }
+        setLastError(normalizeUiError(e, "Unable to load profile status."));
+        setProfileSetupRequired(false);
+      })
+      .finally(() => {
+        if (!cancelled) setProfileSetupChecking(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, ageYears, registerAge, registerDisplayName, session]);
 
   const setTabAndRoute = useCallback((tab: TopTab, nextDiscoverScreen?: DiscoverScreen): void => {
     if (FULL_PAGE_TAB_NAV) {
@@ -746,6 +879,26 @@ export function App(): React.ReactElement {
 
                       {authView === "register" ? (
                         <label className="rd-field">
+                          <span className="rd-label">Display Name</span>
+                          <input className="rd-input" value={registerDisplayName} onChange={(e) => setRegisterDisplayName(e.target.value)} aria-label="Display name" />
+                        </label>
+                      ) : null}
+
+                      {authView === "register" ? (
+                        <label className="rd-field">
+                          <span className="rd-label">Age</span>
+                          <input
+                            className="rd-input"
+                            value={registerAge}
+                            onChange={(e) => setRegisterAge(e.target.value)}
+                            inputMode="numeric"
+                            aria-label="Age"
+                          />
+                        </label>
+                      ) : null}
+
+                      {authView === "register" ? (
+                        <label className="rd-field">
                           <span className="rd-label">Phone (E.164, optional)</span>
                           <input
                             className="rd-input"
@@ -839,6 +992,103 @@ export function App(): React.ReactElement {
           ) : null}
 
           {session && session.ageVerified === true ? (
+            session.userType !== "guest" && (profileSetupChecking || profileSetupRequired) ? (
+              <section className="rd-card" aria-label="Complete your profile">
+                <div className="rd-card-head">
+                  <div className="rd-card-title">Complete Your Profile</div>
+                  <div className="rd-card-sub">Display name and age are required</div>
+                </div>
+                <div className="rd-card-body">
+                  {profileSetupChecking ? (
+                    <div style={{ color: "var(--muted)", marginBottom: 12 }}>Checking profile status...</div>
+                  ) : (
+                    <>
+                      <div style={{ color: "var(--muted)", marginBottom: 12 }}>
+                        New accounts must set a display name and age before entering the app.
+                      </div>
+                      <label className="rd-field">
+                        <span className="rd-label">Display Name</span>
+                        <input
+                          className="rd-input"
+                          value={profileSetupDraft.displayName}
+                          onChange={(e) => setProfileSetupDraft((prev) => ({ ...prev, displayName: e.target.value }))}
+                          aria-label="Profile display name"
+                        />
+                      </label>
+                      <label className="rd-field">
+                        <span className="rd-label">Age</span>
+                        <input
+                          className="rd-input"
+                          value={profileSetupDraft.age}
+                          onChange={(e) => setProfileSetupDraft((prev) => ({ ...prev, age: e.target.value }))}
+                          inputMode="numeric"
+                          aria-label="Profile age"
+                        />
+                      </label>
+                      <label className="rd-field">
+                        <span className="rd-label">Bio (Optional)</span>
+                        <textarea
+                          className="rd-input"
+                          value={profileSetupDraft.bio}
+                          onChange={(e) => setProfileSetupDraft((prev) => ({ ...prev, bio: e.target.value }))}
+                          aria-label="Profile bio"
+                        />
+                      </label>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                        <label className="rd-field" style={{ marginBottom: 0 }}>
+                          <span className="rd-label">Race (Optional)</span>
+                          <input
+                            className="rd-input"
+                            value={profileSetupDraft.race}
+                            onChange={(e) => setProfileSetupDraft((prev) => ({ ...prev, race: e.target.value }))}
+                            aria-label="Profile race"
+                          />
+                        </label>
+                        <label className="rd-field" style={{ marginBottom: 0 }}>
+                          <span className="rd-label">Height in Inches (Optional)</span>
+                          <input
+                            className="rd-input"
+                            value={profileSetupDraft.heightInches}
+                            onChange={(e) => setProfileSetupDraft((prev) => ({ ...prev, heightInches: e.target.value }))}
+                            inputMode="numeric"
+                            aria-label="Profile height in inches"
+                          />
+                        </label>
+                        <label className="rd-field" style={{ marginBottom: 0 }}>
+                          <span className="rd-label">Weight in Lbs (Optional)</span>
+                          <input
+                            className="rd-input"
+                            value={profileSetupDraft.weightLbs}
+                            onChange={(e) => setProfileSetupDraft((prev) => ({ ...prev, weightLbs: e.target.value }))}
+                            inputMode="numeric"
+                            aria-label="Profile weight in pounds"
+                          />
+                        </label>
+                        <label className="rd-field" style={{ marginBottom: 0 }}>
+                          <span className="rd-label">Position (Optional)</span>
+                          <select
+                            className="rd-input"
+                            value={profileSetupDraft.position}
+                            onChange={(e) => setProfileSetupDraft((prev) => ({ ...prev, position: e.target.value as ProfilePosition }))}
+                            aria-label="Profile position"
+                          >
+                            <option value="">Select</option>
+                            <option value="top">Top</option>
+                            <option value="bottom">Bottom</option>
+                            <option value="side">Side</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div className="rd-row">
+                        <button type="button" className="rd-btn primary" onClick={() => void submitProfileSetup()} disabled={busy} aria-label="Save profile and continue">
+                          Save and Continue
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </section>
+            ) : (
             <Suspense fallback={<section className="rd-card"><div className="rd-card-body">Loading screen...</div></section>}>
               <Router
                 api={api}
@@ -857,11 +1107,12 @@ export function App(): React.ReactElement {
                 onLogout={onLogout}
               />
             </Suspense>
+            )
           ) : null}
         </div>
       </main>
 
-      {isMobile && session && session.ageVerified === true ? (
+      {isMobile && session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking ? (
         <nav className="rd-mobile-nav" aria-label="Mobile navigation">
           <button
             type="button"

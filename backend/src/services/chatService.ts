@@ -79,6 +79,8 @@ export type ChatServiceDeps = Readonly<{
   rateLimitPerMinute?: number;
   maxHistoryDays?: number;
   persistenceFilePath?: string;
+  initialState?: ChatPersistenceState;
+  onStateChanged?: (state: ChatPersistenceState) => void;
   blockChecker?: Readonly<{
     isBlocked(fromKey: string, toKey: string): boolean;
   }>;
@@ -93,6 +95,12 @@ export type ChatService = Readonly<{
   listMessages(session: Session, chatKind: ChatKind, otherKey: string): Result<ReadonlyArray<ChatMessage>>;
   markRead(session: Session, chatKind: ChatKind, otherKey: string): Result<{ readAtMs: number }>;
   getThread(chatKind: ChatKind, aKey: string, bKey: string): ChatThread;
+  snapshotState(): ChatPersistenceState;
+}>;
+
+export type ChatPersistenceState = Readonly<{
+  threads: ReadonlyArray<Readonly<{ threadId: string; messages: ReadonlyArray<ChatMessage> }>>;
+  readCursors: ReadonlyArray<Readonly<{ threadUserKey: string; readAtMs: number }>>;
 }>;
 
 const DEFAULT_CRUISE_RETENTION_HOURS = 72;
@@ -186,6 +194,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
   const rateLimitPerMinute = deps.rateLimitPerMinute ?? DEFAULT_RATE_LIMIT_PER_MINUTE;
   const maxHistoryDays = deps.maxHistoryDays ?? DEFAULT_MAX_HISTORY_DAYS;
   const persistenceFilePath = deps.persistenceFilePath;
+  const onStateChanged = deps.onStateChanged;
   const blockChecker = deps.blockChecker;
   const matchChecker = deps.matchChecker;
 
@@ -204,15 +213,39 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
   const rateByFromKey = new Map<string, number[]>(); // fromKey -> timestamps (ms) in last minute
   const historyWindowMs = maxHistoryDays * 24 * 60 * 60 * 1000;
 
+  function snapshotStateInternal(): ChatPersistenceState {
+    return {
+      threads: Array.from(messagesByThread.entries()).map(([threadId, messages]) => ({
+        threadId,
+        messages: [...messages]
+      })),
+      readCursors: Array.from(readCursorByThreadUser.entries()).map(([threadUserKey, readAtMs]) => ({
+        threadUserKey,
+        readAtMs
+      }))
+    };
+  }
+
+  function notifyStateChanged(): void {
+    if (!onStateChanged) return;
+    try {
+      onStateChanged(snapshotStateInternal());
+    } catch {
+      // Persistence hooks are best-effort and must not break chat delivery.
+    }
+  }
+
   function persistMessages(): void {
     if (!persistenceFilePath) return;
     const dir = path.dirname(persistenceFilePath);
     fs.mkdirSync(dir, { recursive: true });
     const payload = {
       version: 1,
-      threads: Array.from(messagesByThread.entries()).map(([threadId, messages]) => ({ threadId, messages }))
+      threads: Array.from(messagesByThread.entries()).map(([threadId, messages]) => ({ threadId, messages })),
+      readCursors: Array.from(readCursorByThreadUser.entries()).map(([threadUserKey, readAtMs]) => ({ threadUserKey, readAtMs }))
     };
     fs.writeFileSync(persistenceFilePath, JSON.stringify(payload), "utf8");
+    notifyStateChanged();
   }
 
   function loadMessages(): void {
@@ -220,7 +253,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
     if (!fs.existsSync(persistenceFilePath)) return;
     const raw = fs.readFileSync(persistenceFilePath, "utf8");
     if (!raw.trim()) return;
-    const parsed = JSON.parse(raw) as { version?: unknown; threads?: unknown };
+    const parsed = JSON.parse(raw) as { version?: unknown; threads?: unknown; readCursors?: unknown };
     if (parsed.version !== 1 || !Array.isArray(parsed.threads)) return;
     for (const threadRow of parsed.threads) {
       if (typeof threadRow !== "object" || threadRow === null) continue;
@@ -255,6 +288,46 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       if (list.length === 0) continue;
       messagesByThread.set(row.threadId, list.sort((a, b) => a.createdAtMs - b.createdAtMs));
     }
+    if (Array.isArray(parsed.readCursors)) {
+      for (const cursorRow of parsed.readCursors) {
+        if (typeof cursorRow !== "object" || cursorRow === null) continue;
+        const row = cursorRow as { threadUserKey?: unknown; readAtMs?: unknown };
+        if (typeof row.threadUserKey !== "string") continue;
+        if (typeof row.readAtMs !== "number" || !Number.isFinite(row.readAtMs)) continue;
+        readCursorByThreadUser.set(row.threadUserKey, row.readAtMs);
+      }
+    }
+  }
+
+  function loadInitialState(state: ChatPersistenceState): void {
+    for (const thread of state.threads) {
+      if (!thread || typeof thread !== "object") continue;
+      if (typeof thread.threadId !== "string" || !Array.isArray(thread.messages)) continue;
+      const normalized = thread.messages
+        .filter((m) => {
+          return (
+            typeof m === "object" &&
+            m !== null &&
+            typeof m.messageId === "string" &&
+            typeof m.chatId === "string" &&
+            (m.chatKind === "cruise" || m.chatKind === "date") &&
+            typeof m.fromKey === "string" &&
+            typeof m.toKey === "string" &&
+            typeof m.text === "string" &&
+            typeof m.createdAtMs === "number"
+          );
+        })
+        .sort((a, b) => a.createdAtMs - b.createdAtMs);
+      if (normalized.length > 0) {
+        messagesByThread.set(thread.threadId, normalized);
+      }
+    }
+    for (const cursor of state.readCursors) {
+      if (!cursor || typeof cursor !== "object") continue;
+      if (typeof cursor.threadUserKey !== "string") continue;
+      if (typeof cursor.readAtMs !== "number" || !Number.isFinite(cursor.readAtMs)) continue;
+      readCursorByThreadUser.set(cursor.threadUserKey, cursor.readAtMs);
+    }
   }
 
   function enforceRateLimit(fromKey: string, now: number): Result<void> {
@@ -287,7 +360,11 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
     return remaining.length !== before;
   }
 
-  loadMessages();
+  if (deps.initialState) {
+    loadInitialState(deps.initialState);
+  } else {
+    loadMessages();
+  }
 
   function validateSession(session: Session): Result<void> {
     if (
@@ -388,6 +465,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       list.push(message);
       messagesByThread.set(threadId, list);
       persistMessages();
+      if (!persistenceFilePath) notifyStateChanged();
 
       return ok(message);
     },
@@ -467,6 +545,8 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       const now = nowMs();
       const threadId = threadKey(chatKind, fromKey, toKey);
       readCursorByThreadUser.set(`${threadId}::${fromKey}`, now);
+      persistMessages();
+      if (!persistenceFilePath) notifyStateChanged();
       return ok({ readAtMs: now });
     },
 
@@ -483,6 +563,10 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       const b = normalizeKey(bKey);
       const [x, y] = a < b ? [a, b] : [b, a];
       return { chatId: id, chatKind, aKey: x, bKey: y };
+    },
+
+    snapshotState(): ChatPersistenceState {
+      return snapshotStateInternal();
     }
   };
 }

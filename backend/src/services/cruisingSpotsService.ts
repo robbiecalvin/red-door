@@ -24,6 +24,7 @@ export type CruisingSpot = Readonly<{
   lat: number;
   lng: number;
   description: string;
+  photoMediaId?: string;
   creatorUserId: string;
   createdAtMs: number;
   checkInCount: number;
@@ -50,6 +51,13 @@ function asText(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function asOptionalText(value: unknown): string | undefined | null {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function actorKey(session: SessionLike): string {
   if (typeof session.userId === "string" && session.userId.trim() !== "") return `user:${session.userId}`;
   const token = typeof session.sessionToken === "string" ? session.sessionToken.trim() : "";
@@ -69,7 +77,7 @@ export function createCruisingSpotsService(
   list(): Result<ReadonlyArray<CruisingSpot>>;
   create(
     session: SessionLike,
-    input: Readonly<{ name: unknown; address: unknown; lat: unknown; lng: unknown; description: unknown }>
+    input: Readonly<{ name: unknown; address: unknown; lat: unknown; lng: unknown; description: unknown; photoMediaId?: unknown }>
   ): Result<CruisingSpot>;
   checkIn(session: SessionLike, spotId: unknown): Result<SpotCheckIn>;
   recordAction(session: SessionLike, spotId: unknown): Result<{ spotId: string; actorKey: string; markedAtMs: number }>;
@@ -96,20 +104,23 @@ export function createCruisingSpotsService(
 
     create(
       session: SessionLike,
-      input: Readonly<{ name: unknown; description: unknown; address: unknown; lat: unknown; lng: unknown }>
+      input: Readonly<{ name: unknown; description: unknown; address: unknown; lat: unknown; lng: unknown; photoMediaId?: unknown }>
     ): Result<CruisingSpot> {
       const name = asText(input.name);
       const description = asText(input.description);
       const address = asText(input.address);
+      const photoMediaId = asOptionalText(input.photoMediaId);
       const lat = typeof input.lat === "number" && Number.isFinite(input.lat) ? input.lat : null;
       const lng = typeof input.lng === "number" && Number.isFinite(input.lng) ? input.lng : null;
       if (!name) return err("INVALID_INPUT", "Spot name is required.");
       if (!address) return err("INVALID_INPUT", "Spot address is required.");
       if (!description) return err("INVALID_INPUT", "Spot description is required.");
+      if (photoMediaId === null) return err("INVALID_INPUT", "photoMediaId must be a string when provided.");
       if (lat === null || lng === null) return err("INVALID_INPUT", "Spot coordinates are required.");
       if (name.length > 120) return err("INVALID_INPUT", "Spot name is too long.", { max: 120 });
       if (address.length > 240) return err("INVALID_INPUT", "Spot address is too long.", { max: 240 });
       if (description.length > 1000) return err("INVALID_INPUT", "Spot description is too long.", { max: 1000 });
+      if (typeof photoMediaId === "string" && photoMediaId.length > 200) return err("INVALID_INPUT", "photoMediaId is too long.", { max: 200 });
       const spot: CruisingSpot = {
         spotId: idFactory(),
         name,
@@ -117,6 +128,7 @@ export function createCruisingSpotsService(
         lat,
         lng,
         description,
+        ...(photoMediaId ? { photoMediaId } : {}),
         creatorUserId: actorKey(session),
         createdAtMs: nowMs(),
         checkInCount: 0,

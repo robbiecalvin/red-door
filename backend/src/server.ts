@@ -114,10 +114,6 @@ function getModeFromBody(req: Request): Mode | null {
   return mode === "cruise" || mode === "date" || mode === "hybrid" ? mode : null;
 }
 
-function randomInRange(min: number, max: number): number {
-  return min + Math.random() * (max - min);
-}
-
 function requestOrigin(req: Request): string | null {
   const xfProtoRaw = req.header("x-forwarded-proto");
   const xfHostRaw = req.header("x-forwarded-host");
@@ -161,24 +157,6 @@ function sessionKeyFromSession(session: Readonly<{ userId?: string; sessionToken
     return `user:${session.userId}`;
   }
   return `session:${session.sessionToken}`;
-}
-
-function fakeBotReply(displayName: string, incomingText: string): string {
-  const clean = incomingText.trim().toLowerCase();
-  if (!clean) return `${displayName}: hey`;
-  if (clean.includes("video")) return `${displayName}: down for video later, what are you into?`;
-  if (clean.includes("where") || clean.includes("location")) return `${displayName}: nearby right now, what's your area?`;
-  if (clean.includes("hey") || clean.includes("hi")) return `${displayName}: hey, good to meet you`;
-  if (clean.includes("?")) return `${displayName}: good question, tell me more`;
-  const replies = [
-    `${displayName}: nice, tell me more`,
-    `${displayName}: sounds good`,
-    `${displayName}: i'm online now`,
-    `${displayName}: what are you looking for tonight?`,
-    `${displayName}: i'm into that`
-  ];
-  const idx = Math.abs(incomingText.length % replies.length);
-  return replies[idx];
 }
 
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
@@ -674,7 +652,8 @@ async function main(): Promise<void> {
     const result = publicPostingsService.create(sessionResult.value, {
       type: (req.body as any)?.type,
       title: (req.body as any)?.title,
-      body: (req.body as any)?.body
+      body: (req.body as any)?.body,
+      photoMediaId: (req.body as any)?.photoMediaId
     });
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ posting: result.value });
@@ -740,6 +719,7 @@ async function main(): Promise<void> {
       name: (req.body as any)?.name,
       description: (req.body as any)?.description,
       address,
+      photoMediaId: (req.body as any)?.photoMediaId,
       lat,
       lng
     });
@@ -872,8 +852,6 @@ async function main(): Promise<void> {
   });
 
   const server = http.createServer(app);
-  const fakeBotsByKey = new Map<string, { displayName: string }>();
-
   // Realtime gateway
   const wss = new WebSocketServer({ server });
   const gateway = createWebsocketGateway({
@@ -907,70 +885,6 @@ async function main(): Promise<void> {
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const active = presenceService.listActivePresence();
     return res.status(200).json({ presence: active });
-  });
-
-  // Dev helper: seed fake nearby users for local testing.
-  app.post("/dev/seed-fake-users", async (req, res) => {
-    const countRaw = Number((req.body as any)?.count);
-    const count = Number.isFinite(countRaw) && countRaw > 0 ? Math.min(Math.trunc(countRaw), 50) : 8;
-    const centerLatRaw = Number((req.body as any)?.centerLat);
-    const centerLngRaw = Number((req.body as any)?.centerLng);
-    const centerLat = Number.isFinite(centerLatRaw) ? centerLatRaw : 40.7484;
-    const centerLng = Number.isFinite(centerLngRaw) ? centerLngRaw : -73.9857;
-
-    const names = [
-      "Alex", "Marco", "Drew", "Evan", "Nico", "Roman", "Ty", "Jules", "Owen", "Kai", "Noah", "Luca", "Rory", "Levi", "Mason", "Jax"
-    ];
-    const races = ["Latino", "White", "Black", "Asian", "Mixed", "Middle Eastern"];
-    const positions: Array<"top" | "bottom" | "side"> = ["top", "bottom", "side"];
-    const cutStatuses: Array<"cut" | "uncut"> = ["cut", "uncut"];
-
-    const seeded: Array<{ key: string; displayName: string; age: number }> = [];
-
-    for (let i = 0; i < count; i += 1) {
-      const guest = authService.createGuestSession();
-      if (!guest.ok) continue;
-      const age = 21 + (i % 22);
-      const verified = authService.verifyAge(guest.value.session.sessionToken, age);
-      if (!verified.ok) continue;
-
-      const displayName = `${names[i % names.length]} ${i + 1}`;
-      const bio = `Looking around nearby. Hit me up.`;
-
-      const profile = await profileService.upsertMe(verified.value, {
-        displayName,
-        age,
-        bio,
-        stats: {
-          race: races[i % races.length],
-          heightInches: 66 + (i % 9),
-          cockSizeInches: Number((5 + (i % 5) * 0.5).toFixed(1)),
-          cutStatus: cutStatuses[i % cutStatuses.length],
-          weightLbs: 150 + (i % 50),
-          position: positions[i % positions.length]
-        },
-        discreetMode: false,
-        travelMode: { enabled: false }
-      });
-      if (!profile.ok) continue;
-
-      const lat = centerLat + randomInRange(-0.015, 0.015);
-      const lng = centerLng + randomInRange(-0.015, 0.015);
-      const presence = presenceService.updatePresence(verified.value, { lat, lng, status: "online" });
-      if (!presence.ok) continue;
-
-      seeded.push({
-        key: presence.value.key,
-        displayName,
-        age
-      });
-      fakeBotsByKey.set(presence.value.key, { displayName });
-    }
-
-    return res.status(200).json({
-      seededCount: seeded.length,
-      seeded
-    });
   });
 
   // Matching
@@ -1018,23 +932,6 @@ async function main(): Promise<void> {
     const result = chatService.sendMessage(sessionResult.value, { chatKind, toKey, text, media });
     if (!result.ok) return sendError(res, result.error);
     gateway.broadcast("chat_message", { message: result.value });
-    if (chatKind === "cruise" && typeof toKey === "string" && fakeBotsByKey.has(toKey)) {
-      const botMeta = fakeBotsByKey.get(toKey);
-      const botToken = toKey.startsWith("session:") ? toKey.slice("session:".length) : "";
-      const senderKey = sessionKeyFromSession(sessionResult.value);
-      if (botMeta && botToken) {
-        const botSessionResult = authService.getSession(botToken);
-        if (botSessionResult.ok) {
-          const replyText = fakeBotReply(botMeta.displayName, typeof text === "string" ? text : "");
-          setTimeout(() => {
-            const replyResult = chatService.sendMessage(botSessionResult.value, { chatKind: "cruise", toKey: senderKey, text: replyText });
-            if (replyResult.ok) {
-              gateway.broadcast("chat_message", { message: replyResult.value });
-            }
-          }, 450);
-        }
-      }
-    }
     return res.status(200).json({ message: result.value });
   });
 

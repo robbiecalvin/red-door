@@ -333,7 +333,6 @@ function CruiseSurface({
     videoMediaId?: string;
   } | null>(null);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState<number>(0);
-  const [seedAttempted, setSeedAttempted] = useState<boolean>(false);
   const [cruisingSpots, setCruisingSpots] = useState<ReadonlyArray<CruisingSpot>>([]);
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
   const [travelCenter, setTravelCenter] = useState<{ lat: number; lng: number } | null>(() => readTravelCenter());
@@ -443,17 +442,7 @@ function CruiseSurface({
   useEffect(() => {
     void (async () => {
       try {
-        let list = await api.getPublicProfiles();
-        if (list.profiles.length === 0 && !seedAttempted) {
-          setSeedAttempted(true);
-          try {
-            const center = selfCoords ?? travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng };
-            await api.seedFakeUsers(12, center.lat, center.lng);
-            list = await api.getPublicProfiles();
-          } catch {
-            // keep empty list if seed endpoint fails
-          }
-        }
+        const list = await api.getPublicProfiles();
         setPublicProfiles(list.profiles as any);
       } catch {
         setPublicProfiles([]);
@@ -476,7 +465,7 @@ function CruiseSurface({
         setBlockedKeys(new Set());
       }
     })();
-  }, [api, seedAttempted, selfCoords, session.sessionToken, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter]);
+  }, [api, session.sessionToken, session.userType]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3132,12 +3121,46 @@ function PublicPostings({
   const [spotName, setSpotName] = useState<string>("");
   const [spotAddress, setSpotAddress] = useState<string>("");
   const [spotDescription, setSpotDescription] = useState<string>("");
+  const [adPhotoFile, setAdPhotoFile] = useState<File | null>(null);
+  const [eventPhotoFile, setEventPhotoFile] = useState<File | null>(null);
+  const [spotPhotoFile, setSpotPhotoFile] = useState<File | null>(null);
+  const [adPhotoMediaId, setAdPhotoMediaId] = useState<string>("");
+  const [eventPhotoMediaId, setEventPhotoMediaId] = useState<string>("");
+  const [spotPhotoMediaId, setSpotPhotoMediaId] = useState<string>("");
+  const [mediaUrlById, setMediaUrlById] = useState<Record<string, string>>({});
+  const [uploadingKind, setUploadingKind] = useState<"ad" | "event" | "spot" | null>(null);
   const [eventInvites, setEventInvites] = useState<ReadonlyArray<PublicPosting>>([]);
   const [inviteTargetByEventId, setInviteTargetByEventId] = useState<Record<string, string>>({});
 
   const canPostAds = true;
   const canPostEvents = session.userType !== "guest";
   const canCreateSpots = true;
+  const gridColumns = isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))";
+
+  async function resolveMediaUrls(mediaIds: ReadonlyArray<string>): Promise<void> {
+    const unique = Array.from(new Set(mediaIds.map((id) => id.trim()).filter((id) => id.length > 0)));
+    if (unique.length === 0) return;
+    const missing = unique.filter((id) => !mediaUrlById[id]);
+    if (missing.length === 0) return;
+    const rows = await Promise.all(
+      missing.map(async (mediaId) => {
+        try {
+          const media = await api.getPublicMediaUrl(mediaId);
+          return { mediaId, url: media.downloadUrl };
+        } catch {
+          return null;
+        }
+      })
+    );
+    setMediaUrlById((prev) => {
+      const next = { ...prev };
+      for (const row of rows) {
+        if (!row) continue;
+        next[row.mediaId] = row.url;
+      }
+      return next;
+    });
+  }
 
   async function refresh(): Promise<void> {
     try {
@@ -3152,6 +3175,11 @@ function PublicPostings({
       setEvents([...eventsRes.postings].sort((a, b) => a.createdAtMs - b.createdAtMs));
       setSpots(spotsRes.spots);
       setEventInvites(invitesRes.postings);
+      await resolveMediaUrls([
+        ...adsRes.postings.map((p) => p.photoMediaId ?? ""),
+        ...eventsRes.postings.map((p) => p.photoMediaId ?? ""),
+        ...spotsRes.spots.map((p) => p.photoMediaId ?? "")
+      ]);
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -3178,14 +3206,19 @@ function PublicPostings({
     }
     const title = type === "ad" ? adTitle : eventTitle;
     const body = type === "ad" ? adBody : eventBody;
+    const photoMediaId = type === "ad" ? adPhotoMediaId : eventPhotoMediaId;
     try {
-      await api.createPublicPosting(session.sessionToken, { type, title, body });
+      await api.createPublicPosting(session.sessionToken, { type, title, body, photoMediaId: photoMediaId || undefined });
       if (type === "ad") {
         setAdTitle("");
         setAdBody("");
+        setAdPhotoFile(null);
+        setAdPhotoMediaId("");
       } else {
         setEventTitle("");
         setEventBody("");
+        setEventPhotoFile(null);
+        setEventPhotoMediaId("");
       }
       await refresh();
     } catch (e) {
@@ -3227,10 +3260,17 @@ function PublicPostings({
 
   async function createSpot(): Promise<void> {
     try {
-      await api.createCruisingSpot(session.sessionToken, { name: spotName, address: spotAddress, description: spotDescription });
+      await api.createCruisingSpot(session.sessionToken, {
+        name: spotName,
+        address: spotAddress,
+        description: spotDescription,
+        photoMediaId: spotPhotoMediaId || undefined
+      });
       setSpotName("");
       setSpotAddress("");
       setSpotDescription("");
+      setSpotPhotoFile(null);
+      setSpotPhotoMediaId("");
       await refresh();
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
@@ -3246,6 +3286,44 @@ function PublicPostings({
     }
   }
 
+  async function uploadGridPhoto(kind: "ad" | "event" | "spot"): Promise<void> {
+    const file = kind === "ad" ? adPhotoFile : kind === "event" ? eventPhotoFile : spotPhotoFile;
+    if (!file) {
+      setLastError("Choose a photo before uploading.");
+      return;
+    }
+    if (session.userType === "guest") {
+      setLastError("Guests cannot upload media.");
+      return;
+    }
+    setUploadingKind(kind);
+    try {
+      const initiated = await api.initiateMediaUpload(session.sessionToken, {
+        kind: "photo_gallery",
+        mimeType: file.type || "application/octet-stream",
+        sizeBytes: file.size
+      });
+      const handledLocally = await uploadToLocalSignedUrl(initiated.uploadUrl, file, file.type || "application/octet-stream");
+      if (!handledLocally) {
+        const uploadRes = await fetch(initiated.uploadUrl, {
+          method: "PUT",
+          headers: { "content-type": file.type || "application/octet-stream" },
+          body: file
+        });
+        if (!uploadRes.ok) throw { message: `Upload failed (${uploadRes.status}).` };
+      }
+      await api.completeMediaUpload(session.sessionToken, initiated.mediaId);
+      await resolveMediaUrls([initiated.mediaId]);
+      if (kind === "ad") setAdPhotoMediaId(initiated.mediaId);
+      if (kind === "event") setEventPhotoMediaId(initiated.mediaId);
+      if (kind === "spot") setSpotPhotoMediaId(initiated.mediaId);
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    } finally {
+      setUploadingKind(null);
+    }
+  }
+
   const panel = (kind: "ads" | "events"): React.ReactElement => {
     const title = kind === "ads" ? "ADS" : "EVENTS";
     const list = kind === "ads" ? ads : events;
@@ -3253,8 +3331,13 @@ function PublicPostings({
     const draftBody = kind === "ads" ? adBody : eventBody;
     const setTitle = kind === "ads" ? setAdTitle : setEventTitle;
     const setBody = kind === "ads" ? setAdBody : setEventBody;
+    const photoFile = kind === "ads" ? adPhotoFile : eventPhotoFile;
+    const setPhotoFile = kind === "ads" ? setAdPhotoFile : setEventPhotoFile;
+    const photoMediaId = kind === "ads" ? adPhotoMediaId : eventPhotoMediaId;
+    const setPhotoMediaId = kind === "ads" ? setAdPhotoMediaId : setEventPhotoMediaId;
     const submitKind = kind === "ads" ? "ad" : "event";
     const canPostThis = kind === "ads" ? canPostAds : canPostEvents;
+    const isUploading = uploadingKind === submitKind;
 
     return (
       <div style={{ border: "1px solid rgba(255,58,77,0.38)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.2)" }}>
@@ -3262,55 +3345,101 @@ function PublicPostings({
           <div style={{ fontSize: 20, fontWeight: 700 }}>{title}</div>
           <input value={draftTitle} onChange={(e) => setTitle(e.target.value)} placeholder={`${title} title`} style={fieldStyle()} aria-label={`${title} title`} disabled={!canPostThis} />
           <textarea value={draftBody} onChange={(e) => setBody(e.target.value)} placeholder={`Write ${title.toLowerCase()} details`} style={{ ...fieldStyle(), minHeight: 86, resize: "vertical" }} aria-label={`${title} details`} disabled={!canPostThis} />
+          <div style={{ display: "grid", gap: 8 }}>
+            <input className="rd-input" type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} disabled={!canPostThis} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => void uploadGridPhoto(submitKind)} style={canPostThis ? buttonSecondary(isUploading) : buttonSecondary(true)} disabled={!canPostThis || isUploading}>
+                {isUploading ? "UPLOADING..." : "UPLOAD PHOTO"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPhotoMediaId("");
+                  setPhotoFile(null);
+                }}
+                style={buttonSecondary(false)}
+              >
+                CLEAR PHOTO
+              </button>
+            </div>
+            {photoMediaId ? (
+              <img
+                src={mediaUrlById[photoMediaId] ?? avatarForKey(photoMediaId)}
+                alt={`${title} photo preview`}
+                style={{ width: "100%", maxWidth: 240, aspectRatio: "1 / 1", objectFit: "cover", border: "1px solid rgba(255,58,77,0.4)" }}
+              />
+            ) : null}
+            {!photoMediaId && photoFile ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Photo selected. Upload to attach.</div> : null}
+          </div>
           <button type="button" onClick={() => void submit(submitKind)} style={canPostThis ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPostThis}>
             POST {title}
           </button>
           {!canPostThis ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view events but cannot post events.</div> : null}
 
-          <div style={{ display: "grid", gap: 8, marginTop: 6 }}>
+          <div style={{ display: "grid", gap: 0, marginTop: 6 }}>
             {list.length === 0 ? (
               <div style={{ color: "#b9bec9", fontSize: 14 }}>No {title.toLowerCase()} yet.</div>
             ) : (
-              list.map((p) => (
-                <div key={p.postingId} style={{ borderTop: "1px solid rgba(255,58,77,0.25)", paddingTop: 10, paddingBottom: 10 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.title}</div>
-                  <div style={{ color: "#9fb6bf", fontSize: 12, marginBottom: 6 }}>Host: {p.authorUserId}</div>
-                  <div style={{ color: "#ced3dc", fontSize: 14, whiteSpace: "pre-wrap" }}>{p.body}</div>
-                  {kind === "events" ? (
-                    <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                      <div style={{ color: "#9fb6bf", fontSize: 12 }}>
-                        Invited: {p.invitedUserIds?.length ?? 0} | Accepted: {p.acceptedUserIds?.length ?? 0}
-                      </div>
-                      {session.userId && session.userId === p.authorUserId ? (
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
-                          <input
-                            value={inviteTargetByEventId[p.postingId] ?? ""}
-                            onChange={(e) => setInviteTargetByEventId((prev) => ({ ...prev, [p.postingId]: e.target.value }))}
-                            placeholder="Invite user id"
-                            style={fieldStyle()}
-                          />
-                          <button type="button" style={buttonSecondary(false)} onClick={() => void inviteToEvent(p.postingId)}>
-                            INVITE
-                          </button>
-                        </div>
-                      ) : null}
-                      {session.userType !== "guest" &&
-                      session.userId &&
-                      Array.isArray(p.invitedUserIds) &&
-                      p.invitedUserIds.includes(session.userId) ? (
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(p.postingId, true)}>
-                            ACCEPT INVITE
-                          </button>
-                          <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(p.postingId, false)}>
-                            DECLINE
-                          </button>
+              <div style={{ display: "grid", gap: 0, gridTemplateColumns: gridColumns }}>
+                {list.map((p) => (
+                  <div
+                    key={p.postingId}
+                    style={{
+                      background: "rgba(0,0,0,0.5)",
+                      border: "1px solid rgba(255,58,77,0.35)",
+                      borderRadius: 0,
+                      display: "grid",
+                      gap: 0
+                    }}
+                  >
+                    <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                      <img
+                        src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
+                        alt={`${title} posting`}
+                        style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
+                      />
+                    </div>
+                    <div style={{ padding: 8, display: "grid", gap: 6 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
+                      <div style={{ color: "#9fb6bf", fontSize: 12 }}>Host: {p.authorUserId}</div>
+                      <div style={{ color: "#ced3dc", fontSize: 13, whiteSpace: "pre-wrap" }}>{p.body}</div>
+                      {kind === "events" ? (
+                        <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
+                          <div style={{ color: "#9fb6bf", fontSize: 12 }}>
+                            Invited: {p.invitedUserIds?.length ?? 0} | Accepted: {p.acceptedUserIds?.length ?? 0}
+                          </div>
+                          {session.userId && session.userId === p.authorUserId ? (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                              <input
+                                value={inviteTargetByEventId[p.postingId] ?? ""}
+                                onChange={(e) => setInviteTargetByEventId((prev) => ({ ...prev, [p.postingId]: e.target.value }))}
+                                placeholder="Invite user id"
+                                style={fieldStyle()}
+                              />
+                              <button type="button" style={buttonSecondary(false)} onClick={() => void inviteToEvent(p.postingId)}>
+                                INVITE
+                              </button>
+                            </div>
+                          ) : null}
+                          {session.userType !== "guest" &&
+                          session.userId &&
+                          Array.isArray(p.invitedUserIds) &&
+                          p.invitedUserIds.includes(session.userId) ? (
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(p.postingId, true)}>
+                                ACCEPT INVITE
+                              </button>
+                              <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(p.postingId, false)}>
+                                DECLINE
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
-                  ) : null}
-                </div>
-              ))
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -3343,29 +3472,75 @@ function PublicPostings({
           style={{ ...fieldStyle(), minHeight: 80, resize: "vertical" }}
           disabled={!canCreateSpots}
         />
+        <div style={{ display: "grid", gap: 8 }}>
+          <input className="rd-input" type="file" accept="image/*" onChange={(e) => setSpotPhotoFile(e.target.files?.[0] ?? null)} disabled={!canCreateSpots} />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" style={canCreateSpots ? buttonSecondary(uploadingKind === "spot") : buttonSecondary(true)} disabled={!canCreateSpots || uploadingKind === "spot"} onClick={() => void uploadGridPhoto("spot")}>
+              {uploadingKind === "spot" ? "UPLOADING..." : "UPLOAD PHOTO"}
+            </button>
+            <button
+              type="button"
+              style={buttonSecondary(false)}
+              onClick={() => {
+                setSpotPhotoFile(null);
+                setSpotPhotoMediaId("");
+              }}
+            >
+              CLEAR PHOTO
+            </button>
+          </div>
+          {spotPhotoMediaId ? (
+            <img
+              src={mediaUrlById[spotPhotoMediaId] ?? avatarForKey(spotPhotoMediaId)}
+              alt="Cruising spot preview"
+              style={{ width: "100%", maxWidth: 240, aspectRatio: "1 / 1", objectFit: "cover", border: "1px solid rgba(255,58,77,0.4)" }}
+            />
+          ) : null}
+          {!spotPhotoMediaId && spotPhotoFile ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Photo selected. Upload to attach.</div> : null}
+        </div>
         <button type="button" style={canCreateSpots ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canCreateSpots} onClick={() => void createSpot()}>
           CREATE SPOT
         </button>
         {!canCreateSpots ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can check in but cannot create spots.</div> : null}
-        <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ display: "grid", gap: 0 }}>
           {spots.length === 0 ? (
             <div style={{ color: "#b9bec9", fontSize: 14 }}>No cruising spots yet.</div>
           ) : (
-            spots.map((spot) => (
-              <div key={spot.spotId} style={{ borderTop: "1px solid rgba(255,58,77,0.25)", paddingTop: 10, paddingBottom: 10 }}>
-                <div style={{ fontWeight: 700 }}>{spot.name}</div>
-                <div style={{ color: "#9fb6bf", fontSize: 12, marginTop: 4 }}>Created by: {spot.creatorUserId}</div>
-                <div style={{ color: "#9fb6bf", fontSize: 12, marginTop: 2 }}>{spot.address}</div>
-                <div style={{ color: "#ced3dc", fontSize: 14, whiteSpace: "pre-wrap", marginTop: 6 }}>{spot.description}</div>
-                <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <button type="button" style={buttonSecondary(false)} onClick={() => void checkInSpot(spot.spotId)}>
-                    CHECK IN
-                  </button>
-                  <span style={{ color: "#9fb6bf", fontSize: 12 }}>Checked in: {spot.checkInCount ?? 0}</span>
-                  <span style={{ color: "#9fb6bf", fontSize: 12 }}>Got action: {spot.actionCount ?? 0}</span>
+            <div style={{ display: "grid", gap: 0, gridTemplateColumns: gridColumns }}>
+              {spots.map((spot) => (
+                <div
+                  key={spot.spotId}
+                  style={{
+                    background: "rgba(0,0,0,0.5)",
+                    border: "1px solid rgba(255,58,77,0.35)",
+                    borderRadius: 0,
+                    display: "grid",
+                    gap: 0
+                  }}
+                >
+                  <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                    <img
+                      src={spot.photoMediaId ? (mediaUrlById[spot.photoMediaId] ?? avatarForKey(spot.spotId)) : avatarForKey(spot.spotId)}
+                      alt="Cruising spot"
+                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
+                    />
+                  </div>
+                  <div style={{ padding: 8, display: "grid", gap: 6 }}>
+                    <div style={{ fontWeight: 700 }}>{spot.name}</div>
+                    <div style={{ color: "#9fb6bf", fontSize: 12 }}>Created by: {spot.creatorUserId}</div>
+                    <div style={{ color: "#9fb6bf", fontSize: 12 }}>{spot.address}</div>
+                    <div style={{ color: "#ced3dc", fontSize: 13, whiteSpace: "pre-wrap" }}>{spot.description}</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <button type="button" style={buttonSecondary(false)} onClick={() => void checkInSpot(spot.spotId)}>
+                        CHECK IN
+                      </button>
+                      <span style={{ color: "#9fb6bf", fontSize: 12 }}>Checked in: {spot.checkInCount ?? 0}</span>
+                      <span style={{ color: "#9fb6bf", fontSize: 12 }}>Got action: {spot.actionCount ?? 0}</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+            </div>
           )}
         </div>
       </div>
@@ -3389,12 +3564,12 @@ function PublicPostings({
           </div>
         </>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gap: 12 }}>
           {panel("ads")}
           {panel("events")}
-          <div style={{ gridColumn: "1 / -1" }}>{spotsPanel}</div>
+          <div>{spotsPanel}</div>
           {session.userType !== "guest" && eventInvites.length > 0 ? (
-            <div style={{ border: "1px solid rgba(255,58,77,0.25)", gridColumn: "1 / -1", display: "grid", gap: 8, padding: 10 }}>
+            <div style={{ border: "1px solid rgba(255,58,77,0.25)", display: "grid", gap: 8, padding: 10 }}>
               <div style={{ fontSize: 16, fontWeight: 700 }}>EVENT INVITES</div>
               {eventInvites.map((event) => (
                 <div key={event.postingId} style={{ display: "grid", gap: 6, border: "1px solid rgba(255,58,77,0.4)", borderRadius: 10, padding: 8 }}>
@@ -3413,7 +3588,6 @@ function PublicPostings({
     </div>
   );
 }
-
 function SubmissionsPanel({ api, session, setLastError }: Readonly<{ api: Api; session: Session; setLastError(value: string | null): void }>): React.ReactElement {
   const [list, setList] = useState<ReadonlyArray<Submission>>([]);
   const [title, setTitle] = useState<string>("");
@@ -4283,19 +4457,6 @@ function SettingsPanel({
     }
   }
 
-  async function seedFakeUsers(): Promise<void> {
-    try {
-      const lat = draft.travelLat.trim() ? Number(draft.travelLat) : undefined;
-      const lng = draft.travelLng.trim() ? Number(draft.travelLng) : undefined;
-      const res = await api.seedFakeUsers(12, Number.isFinite(lat) ? lat : undefined, Number.isFinite(lng) ? lng : undefined);
-      setStatus(`Seeded ${res.seededCount} fake users for testing.`);
-    } catch (e) {
-      const msg = normalizeErrorMessage(e);
-      setStatus(msg);
-      setLastError(msg);
-    }
-  }
-
   async function unblockUser(targetKey: string): Promise<void> {
     try {
       await api.unblock(session.sessionToken, targetKey);
@@ -4332,7 +4493,6 @@ function SettingsPanel({
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" style={buttonPrimary(false)} onClick={() => void savePrivacy()}>SAVE PRIVACY</button>
             <button type="button" style={buttonSecondary(false)} onClick={() => void detectActualLocation()}>DETECT ACTUAL LOCATION</button>
-            <button type="button" style={buttonSecondary(false)} onClick={() => void seedFakeUsers()}>SEED FAKE USERS</button>
             <button type="button" style={buttonSecondary(false)} onClick={() => onLogout?.()}>LOGOUT</button>
           </div>
         </div>

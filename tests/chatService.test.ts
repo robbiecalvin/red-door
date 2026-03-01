@@ -614,4 +614,106 @@ describe("chatService", () => {
     expect(listed.value[0]?.deliveredAtMs).toBe(1_700_000_000_000);
     expect(listed.value[0]?.readAtMs).toBe(1_700_000_005_000);
   });
+
+  it("Given a seeded initialState When chat service starts Then it hydrates valid rows and ignores invalid rows", () => {
+    const svc = createChatService({
+      rateLimitPerMinute: 100,
+      nowMs: () => 1_700_000_100_000,
+      initialState: {
+        threads: [
+          {
+            threadId: "cruise::session:a::session:b",
+            messages: [
+              {
+                messageId: "m1",
+                chatId: "cruise::session:a::session:b",
+                chatKind: "cruise",
+                fromKey: "session:a",
+                toKey: "session:b",
+                text: "seed",
+                createdAtMs: 1_700_000_000_000
+              } as any,
+              { invalid: true } as any
+            ]
+          },
+          { threadId: 1 as any, messages: [] as any } as any
+        ],
+        readCursors: [{ threadUserKey: "cruise::session:a::session:b::session:a", readAtMs: 1_700_000_000_100 }, { bad: true } as any]
+      }
+    });
+
+    const listed = svc.listMessages(
+      { sessionToken: "a", userType: "guest", mode: "cruise", ageVerified: true },
+      "cruise",
+      "session:b"
+    );
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw new Error("unreachable");
+    expect(listed.value).toHaveLength(1);
+    expect(svc.snapshotState().threads).toHaveLength(1);
+    expect(svc.snapshotState().readCursors).toHaveLength(1);
+  });
+
+  it("Given persistence hooks throw When send/markRead are called Then chat operations still succeed", () => {
+    const svc = createChatService({
+      rateLimitPerMinute: 100,
+      onStateChanged: () => {
+        throw new Error("persist error");
+      }
+    });
+
+    const sent = svc.sendMessage(
+      { sessionToken: "a", userType: "guest", mode: "cruise", ageVerified: true },
+      { chatKind: "cruise", toKey: "session:b", text: "hook-safe" }
+    );
+    expect(sent.ok).toBe(true);
+
+    const read = svc.markRead(
+      { sessionToken: "b", userType: "guest", mode: "cruise", ageVerified: true },
+      "cruise",
+      "session:a"
+    );
+    expect(read.ok).toBe(true);
+  });
+
+  it("Given markRead invalid contexts When called Then deterministic errors are returned", () => {
+    const svc = createChatService({ rateLimitPerMinute: 100 });
+
+    const ageGate = svc.markRead({ sessionToken: "s", userType: "guest", mode: "cruise", ageVerified: false }, "cruise", "session:x");
+    expect(ageGate.ok).toBe(false);
+
+    const invalidKind = svc.markRead(
+      { sessionToken: "s", userType: "guest", mode: "cruise", ageVerified: true },
+      "bad" as any,
+      "session:x"
+    );
+    expect(invalidKind.ok).toBe(false);
+
+    const modeMismatch = svc.markRead(
+      { sessionToken: "s", userType: "registered", mode: "cruise", userId: "u1", ageVerified: true },
+      "date",
+      "user:u2"
+    );
+    expect(modeMismatch.ok).toBe(false);
+
+    const guestDate = svc.markRead(
+      { sessionToken: "s", userType: "guest", mode: "date", ageVerified: true },
+      "date",
+      "user:u2"
+    );
+    expect(guestDate.ok).toBe(false);
+
+    const invalidRecipient = svc.markRead(
+      { sessionToken: "s", userType: "guest", mode: "cruise", ageVerified: true },
+      "cruise",
+      " "
+    );
+    expect(invalidRecipient.ok).toBe(false);
+  });
+
+  it("Given invalid getThread inputs When called Then it throws explicit errors", () => {
+    const svc = createChatService({ rateLimitPerMinute: 100 });
+    expect(() => svc.getThread("bad" as any, "a", "b")).toThrow("Invalid chat kind.");
+    expect(() => svc.getThread("cruise", "", "b")).toThrow("Invalid thread keys.");
+  });
 });

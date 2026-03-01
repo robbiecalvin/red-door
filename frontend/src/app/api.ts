@@ -107,6 +107,12 @@ export type ProfileUpdatePayload = Readonly<{
   travelMode?: Readonly<{ enabled: boolean; lat?: number; lng?: number }>;
 }>;
 
+export type RegistrationProfileInput = Readonly<{
+  displayName: string;
+  age: number;
+  stats?: ProfileUpdatePayload["stats"];
+}>;
+
 export type MediaKind = "photo_main" | "photo_gallery" | "video";
 
 export type InitiateMediaUploadResponse = Readonly<{
@@ -127,6 +133,7 @@ export type PublicPosting = Readonly<{
   type: "ad" | "event";
   title: string;
   body: string;
+  photoMediaId?: string;
   authorUserId: string;
   createdAtMs: number;
   invitedUserIds?: ReadonlyArray<string>;
@@ -140,6 +147,7 @@ export type CruisingSpot = Readonly<{
   lat: number;
   lng: number;
   description: string;
+  photoMediaId?: string;
   creatorUserId: string;
   createdAtMs: number;
   checkInCount: number;
@@ -285,15 +293,63 @@ function randomId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 12)}-${Date.now().toString(36)}`;
 }
 
-function defaultProfile(userId: string, displayName?: string): UserProfile {
+function parseLocalDisplayName(value: unknown): string {
+  const displayName = typeof value === "string" ? value.trim() : "";
+  if (!displayName) throw { code: "INVALID_INPUT", message: "Display name is required." } as ServiceError;
+  if (displayName.length < 2 || displayName.length > 32) {
+    throw { code: "INVALID_INPUT", message: "Display name must be 2-32 characters." } as ServiceError;
+  }
+  return displayName;
+}
+
+function parseLocalAge(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw { code: "INVALID_INPUT", message: "Age must be an integer." } as ServiceError;
+  }
+  const age = Math.trunc(value);
+  if (age !== value) throw { code: "INVALID_INPUT", message: "Age must be an integer." } as ServiceError;
+  if (age < 18) throw { code: "INVALID_INPUT", message: "Age must be 18 or older." } as ServiceError;
+  if (age > 120) throw { code: "INVALID_INPUT", message: "Age is out of range." } as ServiceError;
+  return age;
+}
+
+function createProfileFromInput(
+  userId: string,
+  input: Readonly<{
+    displayName: unknown;
+    age: unknown;
+    bio?: unknown;
+    stats?: unknown;
+    discreetMode?: unknown;
+    travelMode?: unknown;
+  }>,
+  existing?: UserProfile
+): UserProfile {
   const ts = nowMs();
+  const bio = typeof input.bio === "string" ? input.bio.trim() : "";
+  if (bio.length > 280) throw { code: "INVALID_INPUT", message: "Bio must be 280 characters or fewer." } as ServiceError;
+  const nextStats =
+    typeof input.stats === "object" && input.stats !== null
+      ? (input.stats as ProfileUpdatePayload["stats"])
+      : existing?.stats ?? {};
+  const nextDiscreetMode = input.discreetMode === undefined ? existing?.discreetMode : input.discreetMode === true;
+  const nextTravelMode =
+    input.travelMode === undefined
+      ? existing?.travelMode
+      : (typeof input.travelMode === "object" && input.travelMode !== null
+          ? (input.travelMode as UserProfile["travelMode"])
+          : undefined);
   return {
     userId,
-    displayName: displayName || `User ${userId.slice(0, 4)}`,
-    age: 21,
-    bio: "Say hi.",
-    stats: {},
-    galleryMediaIds: [],
+    displayName: parseLocalDisplayName(input.displayName),
+    age: parseLocalAge(input.age),
+    bio,
+    stats: nextStats,
+    discreetMode: nextDiscreetMode,
+    travelMode: nextTravelMode,
+    mainPhotoMediaId: existing?.mainPhotoMediaId,
+    galleryMediaIds: existing?.galleryMediaIds ?? [],
+    videoMediaId: existing?.videoMediaId,
     updatedAtMs: ts
   };
 }
@@ -555,7 +611,7 @@ export async function uploadToLocalSignedUrl(uploadUrl: string, file: Blob, mime
 
 function createLocalApiClient(): Readonly<{
   createGuest(): Promise<GuestResponse>;
-  register(email: string, password: string, phoneE164: string): Promise<RegisterResponse>;
+  register(email: string, password: string, phoneE164: string, profile: RegistrationProfileInput): Promise<RegisterResponse>;
   verifyEmail(email: string, code: string): Promise<VerifyEmailOrLoginResponse>;
   resendVerification(email: string): Promise<RegisterResponse>;
   login(email: string, password: string): Promise<VerifyEmailOrLoginResponse>;
@@ -617,7 +673,10 @@ function createLocalApiClient(): Readonly<{
   getFavorites(sessionToken: string): Promise<{ favorites: ReadonlyArray<string> }>;
   toggleFavorite(sessionToken: string, targetUserId: string): Promise<FavoriteToggleResponse>;
   listPublicPostings(type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
-  createPublicPosting(sessionToken: string, payload: Readonly<{ type: "ad" | "event"; title: string; body: string }>): Promise<{ posting: PublicPosting }>;
+  createPublicPosting(
+    sessionToken: string,
+    payload: Readonly<{ type: "ad" | "event"; title: string; body: string; photoMediaId?: string }>
+  ): Promise<{ posting: PublicPosting }>;
   inviteToEvent(
     sessionToken: string,
     payload: Readonly<{ postingId: string; targetUserId: string }>
@@ -625,7 +684,10 @@ function createLocalApiClient(): Readonly<{
   respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }>;
   listEventInvites(sessionToken: string): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
   listCruisingSpots(): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
-  createCruisingSpot(sessionToken: string, payload: Readonly<{ name: string; address: string; description: string }>): Promise<{ spot: CruisingSpot }>;
+  createCruisingSpot(
+    sessionToken: string,
+    payload: Readonly<{ name: string; address: string; description: string; photoMediaId?: string }>
+  ): Promise<{ spot: CruisingSpot }>;
   checkInCruisingSpot(sessionToken: string, spotId: string): Promise<{ checkIn: { spotId: string; actorKey: string; checkedInAtMs: number } }>;
   markCruisingSpotAction(sessionToken: string, spotId: string): Promise<{ action: { spotId: string; actorKey: string; markedAtMs: number } }>;
   listCruisingSpotCheckIns(spotId: string): Promise<{ checkIns: ReadonlyArray<{ spotId: string; actorKey: string; checkedInAtMs: number }> }>;
@@ -643,7 +705,6 @@ function createLocalApiClient(): Readonly<{
     sessionToken: string,
     payload: Readonly<{ paymentToken: string; title: string; body: string; displayName: string }>
   ): Promise<{ listing: PromotedProfileListing }>;
-  seedFakeUsers(count: number, centerLat?: number, centerLng?: number): Promise<{ seededCount: number; seeded: ReadonlyArray<{ key: string; displayName: string; age: number }> }>;
 }> {
   const feeCents = 499;
 
@@ -663,11 +724,13 @@ function createLocalApiClient(): Readonly<{
       writeState(withUpdatedSession(state, session));
       return { session: clone(session) };
     },
-    async register(email: string, password: string, phoneE164: string): Promise<RegisterResponse> {
+    async register(email: string, password: string, phoneE164: string, profile: RegistrationProfileInput): Promise<RegisterResponse> {
       const normalizedEmail = email.trim().toLowerCase();
-      if (!normalizedEmail || !password || !phoneE164) {
-        throw { code: "INVALID_INPUT", message: "Email, password, and phone are required." } as ServiceError;
+      if (!normalizedEmail || !password) {
+        throw { code: "INVALID_INPUT", message: "Email and password are required." } as ServiceError;
       }
+      parseLocalDisplayName(profile.displayName);
+      parseLocalAge(profile.age);
       const state = readState();
       if (state.userIdByEmail[normalizedEmail]) {
         throw { code: "EMAIL_IN_USE", message: "Email already registered." } as ServiceError;
@@ -685,11 +748,7 @@ function createLocalApiClient(): Readonly<{
       writeState({
         ...state,
         usersById: { ...state.usersById, [userId]: user },
-        userIdByEmail: { ...state.userIdByEmail, [normalizedEmail]: userId },
-        profilesByUserId: {
-          ...state.profilesByUserId,
-          [userId]: defaultProfile(userId, normalizedEmail.split("@")[0] || undefined)
-        }
+        userIdByEmail: { ...state.userIdByEmail, [normalizedEmail]: userId }
       });
       return { email: normalizedEmail, verificationRequired: true };
     },
@@ -1030,16 +1089,8 @@ function createLocalApiClient(): Readonly<{
       const state = readState();
       const session = requireUserSession(state, sessionToken);
       const userId = session.userId as string;
-      const profile = state.profilesByUserId[userId] ?? defaultProfile(userId);
-      if (!state.profilesByUserId[userId]) {
-        writeState({
-          ...state,
-          profilesByUserId: {
-            ...state.profilesByUserId,
-            [userId]: profile
-          }
-        });
-      }
+      const profile = state.profilesByUserId[userId];
+      if (!profile) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
       return { profile: clone(profile) };
     },
     async getPublicProfiles(): Promise<{ profiles: ReadonlyArray<PublicProfile> }> {
@@ -1060,17 +1111,8 @@ function createLocalApiClient(): Readonly<{
       const state = readState();
       const session = requireUserSession(state, sessionToken);
       const userId = session.userId as string;
-      const previous = state.profilesByUserId[userId] ?? defaultProfile(userId);
-      const next: UserProfile = {
-        ...previous,
-        displayName: payload.displayName.trim() || previous.displayName,
-        age: payload.age,
-        bio: payload.bio,
-        stats: payload.stats ?? {},
-        discreetMode: payload.discreetMode,
-        travelMode: payload.travelMode,
-        updatedAtMs: nowMs()
-      };
+      const previous = state.profilesByUserId[userId];
+      const next = createProfileFromInput(userId, payload, previous);
       writeState({
         ...state,
         profilesByUserId: {
@@ -1090,7 +1132,8 @@ function createLocalApiClient(): Readonly<{
       const state = readState();
       const session = requireUserSession(state, sessionToken);
       const userId = session.userId as string;
-      const existing = state.profilesByUserId[userId] ?? defaultProfile(userId);
+      const existing = state.profilesByUserId[userId];
+      if (!existing) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
       const next: UserProfile = {
         ...existing,
         galleryMediaIds: payload.galleryMediaIds ? [...payload.galleryMediaIds] : existing.galleryMediaIds,
@@ -1148,7 +1191,8 @@ function createLocalApiClient(): Readonly<{
       if (media.ownerUserId !== userId) {
         throw { code: "UNAUTHORIZED_ACTION", message: "You cannot modify another user's media." } as ServiceError;
       }
-      const existingProfile = state.profilesByUserId[userId] ?? defaultProfile(userId);
+      const existingProfile = state.profilesByUserId[userId];
+      if (!existingProfile) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
       let nextProfile: UserProfile = existingProfile;
       if (media.kind === "photo_main") {
         nextProfile = {
@@ -1213,15 +1257,17 @@ function createLocalApiClient(): Readonly<{
     },
     async createPublicPosting(
       sessionToken: string,
-      payload: Readonly<{ type: "ad" | "event"; title: string; body: string }>
+      payload: Readonly<{ type: "ad" | "event"; title: string; body: string; photoMediaId?: string }>
     ): Promise<{ posting: PublicPosting }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
+      const photoMediaId = typeof payload.photoMediaId === "string" && payload.photoMediaId.trim().length > 0 ? payload.photoMediaId.trim() : undefined;
       const posting: PublicPosting = {
         postingId: randomId("posting"),
         type: payload.type,
         title: payload.title.trim(),
         body: payload.body.trim(),
+        ...(photoMediaId ? { photoMediaId } : {}),
         authorUserId: session.userId as string,
         createdAtMs: nowMs(),
         invitedUserIds: [],
@@ -1277,11 +1323,15 @@ function createLocalApiClient(): Readonly<{
       const state = readState();
       return { spots: clone(state.cruisingSpots) };
     },
-    async createCruisingSpot(sessionToken: string, payload: Readonly<{ name: string; address: string; description: string }>): Promise<{ spot: CruisingSpot }> {
+    async createCruisingSpot(
+      sessionToken: string,
+      payload: Readonly<{ name: string; address: string; description: string; photoMediaId?: string }>
+    ): Promise<{ spot: CruisingSpot }> {
       const state = readState();
       const session = requireSession(state, sessionToken);
       const actorKey = actorKeyForSession(session);
       const existingPresence = state.presenceByKey[actorKey];
+      const photoMediaId = typeof payload.photoMediaId === "string" && payload.photoMediaId.trim().length > 0 ? payload.photoMediaId.trim() : undefined;
       const spot: CruisingSpot = {
         spotId: randomId("spot"),
         name: payload.name.trim(),
@@ -1289,6 +1339,7 @@ function createLocalApiClient(): Readonly<{
         lat: existingPresence?.lat ?? 0,
         lng: existingPresence?.lng ?? 0,
         description: payload.description.trim(),
+        ...(photoMediaId ? { photoMediaId } : {}),
         creatorUserId: session.userId ?? actorKey,
         createdAtMs: nowMs(),
         checkInCount: 0,
@@ -1451,287 +1502,13 @@ function createLocalApiClient(): Readonly<{
         promotedProfiles: [...state.promotedProfiles, listing]
       });
       return { listing: clone(listing) };
-    },
-    async seedFakeUsers(
-      count: number,
-      centerLat?: number,
-      centerLng?: number
-    ): Promise<{ seededCount: number; seeded: ReadonlyArray<{ key: string; displayName: string; age: number }> }> {
-      const state = readState();
-      const c = Math.max(0, Math.min(100, Math.floor(count)));
-      const seeded: Array<{ key: string; displayName: string; age: number }> = [];
-      const nextUsersById = { ...state.usersById };
-      const nextUserIdByEmail = { ...state.userIdByEmail };
-      const nextProfilesByUserId = { ...state.profilesByUserId };
-      const nextPresenceByKey = { ...state.presenceByKey };
-      const nextMediaById = { ...state.mediaById };
-      const nextMediaIdByObjectKey = { ...state.mediaIdByObjectKey };
-      const baseLat = Number.isFinite(centerLat as number) ? (centerLat as number) : 40.7484;
-      const baseLng = Number.isFinite(centerLng as number) ? (centerLng as number) : -73.9857;
-
-      const demoProfiles: ReadonlyArray<
-        Readonly<{
-          displayName: string;
-          age: number;
-          bio: string;
-          race?: string;
-          heightInches?: number;
-          weightLbs?: number;
-          cockSizeInches?: number;
-          cutStatus?: ProfileCutStatus;
-          position?: ProfilePosition;
-          photoUrl: string;
-        }>
-      > = [
-        {
-          displayName: "Marco V.",
-          age: 29,
-          bio: "Gym after work, rooftop drinks, and late walks around Midtown.",
-          race: "Latino",
-          heightInches: 71,
-          weightLbs: 182,
-          cockSizeInches: 7,
-          cutStatus: "cut",
-          position: "top",
-          photoUrl: "https://randomuser.me/api/portraits/men/11.jpg"
-        },
-        {
-          displayName: "Ethan R.",
-          age: 33,
-          bio: "Tech by day, museum dates and cocktails by night.",
-          race: "White",
-          heightInches: 73,
-          weightLbs: 195,
-          cockSizeInches: 7.5,
-          cutStatus: "uncut",
-          position: "top",
-          photoUrl: "https://randomuser.me/api/portraits/men/14.jpg"
-        },
-        {
-          displayName: "Andre K.",
-          age: 27,
-          bio: "Brooklyn runner, coffee addict, into chill hangs and chemistry.",
-          race: "Black",
-          heightInches: 70,
-          weightLbs: 168,
-          cockSizeInches: 6.5,
-          cutStatus: "cut",
-          position: "side",
-          photoUrl: "https://randomuser.me/api/portraits/men/22.jpg"
-        },
-        {
-          displayName: "Noah S.",
-          age: 31,
-          bio: "Usually near Chelsea. Into clean, discreet, and respectful vibes.",
-          race: "White",
-          heightInches: 72,
-          weightLbs: 176,
-          cockSizeInches: 7,
-          cutStatus: "cut",
-          position: "bottom",
-          photoUrl: "https://randomuser.me/api/portraits/men/27.jpg"
-        },
-        {
-          displayName: "Jalen M.",
-          age: 26,
-          bio: "Night owl, live music, and spontaneous plans.",
-          race: "Black",
-          heightInches: 74,
-          weightLbs: 205,
-          cockSizeInches: 8,
-          cutStatus: "uncut",
-          position: "top",
-          photoUrl: "https://randomuser.me/api/portraits/men/32.jpg"
-        },
-        {
-          displayName: "Luis C.",
-          age: 35,
-          bio: "Designer, foodie, and into low-key private meetups.",
-          race: "Latino",
-          heightInches: 69,
-          weightLbs: 170,
-          cockSizeInches: 6.5,
-          cutStatus: "cut",
-          position: "side",
-          photoUrl: "https://randomuser.me/api/portraits/men/36.jpg"
-        },
-        {
-          displayName: "Dev P.",
-          age: 30,
-          bio: "Pilates and parks. Prefer direct chat and no games.",
-          race: "South Asian",
-          heightInches: 68,
-          weightLbs: 162,
-          cockSizeInches: 6.5,
-          cutStatus: "uncut",
-          position: "bottom",
-          photoUrl: "https://randomuser.me/api/portraits/men/41.jpg"
-        },
-        {
-          displayName: "Tyler A.",
-          age: 28,
-          bio: "Bartender schedule, mostly free late nights.",
-          race: "White",
-          heightInches: 72,
-          weightLbs: 186,
-          cockSizeInches: 7.5,
-          cutStatus: "cut",
-          position: "top",
-          photoUrl: "https://randomuser.me/api/portraits/men/45.jpg"
-        },
-        {
-          displayName: "Micah D.",
-          age: 34,
-          bio: "Film nerd and traveler. Into conversation first.",
-          race: "Black",
-          heightInches: 71,
-          weightLbs: 178,
-          cockSizeInches: 7,
-          cutStatus: "uncut",
-          position: "side",
-          photoUrl: "https://randomuser.me/api/portraits/men/52.jpg"
-        },
-        {
-          displayName: "Adrian L.",
-          age: 25,
-          bio: "Uptown. Looking for fun, clean, and easygoing connections.",
-          race: "Latino",
-          heightInches: 70,
-          weightLbs: 167,
-          cockSizeInches: 6.5,
-          cutStatus: "cut",
-          position: "bottom",
-          photoUrl: "https://randomuser.me/api/portraits/men/58.jpg"
-        },
-        {
-          displayName: "Caleb W.",
-          age: 32,
-          bio: "Personal trainer. Confident, respectful, straightforward.",
-          race: "White",
-          heightInches: 75,
-          weightLbs: 214,
-          cockSizeInches: 8,
-          cutStatus: "cut",
-          position: "top",
-          photoUrl: "https://randomuser.me/api/portraits/men/63.jpg"
-        },
-        {
-          displayName: "Nico T.",
-          age: 27,
-          bio: "Coffee shops, playlists, and private meetups.",
-          race: "Asian",
-          heightInches: 69,
-          weightLbs: 160,
-          cockSizeInches: 6,
-          cutStatus: "uncut",
-          position: "side",
-          photoUrl: "https://randomuser.me/api/portraits/men/69.jpg"
-        }
-      ];
-
-      // Replace prior generated seed users so repeated seeding doesn't keep stale Explorer profiles.
-      const removedSeedIds = new Set<string>();
-      for (const [userId, user] of Object.entries(nextUsersById)) {
-        if (user.email.endsWith("@local.seed")) {
-          removedSeedIds.add(userId);
-          delete nextUsersById[userId];
-          delete nextProfilesByUserId[userId];
-          delete nextPresenceByKey[`user:${userId}`];
-        }
-      }
-      for (const [email, userId] of Object.entries(nextUserIdByEmail)) {
-        if (email.endsWith("@local.seed") || removedSeedIds.has(userId)) {
-          delete nextUserIdByEmail[email];
-        }
-      }
-      for (const [mediaId, rec] of Object.entries(nextMediaById)) {
-        if (removedSeedIds.has(rec.ownerUserId)) {
-          delete nextMediaById[mediaId];
-        }
-      }
-      for (const [objectKey, mediaId] of Object.entries(nextMediaIdByObjectKey)) {
-        if (!nextMediaById[mediaId]) {
-          delete nextMediaIdByObjectKey[objectKey];
-        }
-      }
-
-      for (let i = 0; i < c; i += 1) {
-        const template = demoProfiles[i % demoProfiles.length];
-        const id = randomId("seed");
-        const name = template.displayName;
-        const age = template.age;
-        const email = `${id}@local.seed`;
-        const mediaId = randomId("media");
-        const objectKey = `profile/${id}/${mediaId}`;
-        const profileMedia: LocalMediaRecord = {
-          mediaId,
-          objectKey,
-          ownerUserId: id,
-          kind: "photo_main",
-          mimeType: "image/jpeg",
-          uploaded: true,
-          dataUrl: template.photoUrl,
-          createdAtMs: nowMs()
-        };
-
-        nextUsersById[id] = {
-          id,
-          email,
-          password: "seed",
-          phoneE164: "+10000000000",
-          verified: true,
-          userType: "registered",
-          tier: "free"
-        };
-        nextUserIdByEmail[email] = id;
-        nextProfilesByUserId[id] = {
-          userId: id,
-          displayName: name,
-          age,
-          bio: template.bio,
-          stats: {
-            race: template.race,
-            heightInches: template.heightInches,
-            weightLbs: template.weightLbs,
-            cockSizeInches: template.cockSizeInches,
-            cutStatus: template.cutStatus,
-            position: template.position
-          },
-          mainPhotoMediaId: mediaId,
-          galleryMediaIds: [],
-          updatedAtMs: nowMs()
-        };
-        nextMediaById[mediaId] = profileMedia;
-        nextMediaIdByObjectKey[objectKey] = mediaId;
-        const lat = baseLat + (Math.random() - 0.5) * 0.02;
-        const lng = baseLng + (Math.random() - 0.5) * 0.02;
-        nextPresenceByKey[`user:${id}`] = {
-          key: `user:${id}`,
-          userType: "registered",
-          lat,
-          lng,
-          status: "online",
-          updatedAtMs: nowMs()
-        };
-        seeded.push({ key: `user:${id}`, displayName: name, age });
-      }
-      writeState({
-        ...state,
-        usersById: nextUsersById,
-        userIdByEmail: nextUserIdByEmail,
-        profilesByUserId: nextProfilesByUserId,
-        presenceByKey: nextPresenceByKey,
-        mediaById: nextMediaById,
-        mediaIdByObjectKey: nextMediaIdByObjectKey
-      });
-      return { seededCount: seeded.length, seeded };
     }
   };
 }
 
 export function apiClient(basePath = "/api"): Readonly<{
   createGuest(): Promise<GuestResponse>;
-  register(email: string, password: string, phoneE164: string): Promise<RegisterResponse>;
+  register(email: string, password: string, phoneE164: string, profile: RegistrationProfileInput): Promise<RegisterResponse>;
   verifyEmail(email: string, code: string): Promise<VerifyEmailOrLoginResponse>;
   resendVerification(email: string): Promise<RegisterResponse>;
   login(email: string, password: string): Promise<VerifyEmailOrLoginResponse>;
@@ -1793,7 +1570,10 @@ export function apiClient(basePath = "/api"): Readonly<{
   getFavorites(sessionToken: string): Promise<{ favorites: ReadonlyArray<string> }>;
   toggleFavorite(sessionToken: string, targetUserId: string): Promise<FavoriteToggleResponse>;
   listPublicPostings(type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
-  createPublicPosting(sessionToken: string, payload: Readonly<{ type: "ad" | "event"; title: string; body: string }>): Promise<{ posting: PublicPosting }>;
+  createPublicPosting(
+    sessionToken: string,
+    payload: Readonly<{ type: "ad" | "event"; title: string; body: string; photoMediaId?: string }>
+  ): Promise<{ posting: PublicPosting }>;
   inviteToEvent(
     sessionToken: string,
     payload: Readonly<{ postingId: string; targetUserId: string }>
@@ -1801,7 +1581,10 @@ export function apiClient(basePath = "/api"): Readonly<{
   respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }>;
   listEventInvites(sessionToken: string): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
   listCruisingSpots(): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
-  createCruisingSpot(sessionToken: string, payload: Readonly<{ name: string; address: string; description: string }>): Promise<{ spot: CruisingSpot }>;
+  createCruisingSpot(
+    sessionToken: string,
+    payload: Readonly<{ name: string; address: string; description: string; photoMediaId?: string }>
+  ): Promise<{ spot: CruisingSpot }>;
   checkInCruisingSpot(sessionToken: string, spotId: string): Promise<{ checkIn: { spotId: string; actorKey: string; checkedInAtMs: number } }>;
   markCruisingSpotAction(sessionToken: string, spotId: string): Promise<{ action: { spotId: string; actorKey: string; markedAtMs: number } }>;
   listCruisingSpotCheckIns(spotId: string): Promise<{ checkIns: ReadonlyArray<{ spotId: string; actorKey: string; checkedInAtMs: number }> }>;
@@ -1819,7 +1602,6 @@ export function apiClient(basePath = "/api"): Readonly<{
     sessionToken: string,
     payload: Readonly<{ paymentToken: string; title: string; body: string; displayName: string }>
   ): Promise<{ listing: PromotedProfileListing }>;
-  seedFakeUsers(count: number, centerLat?: number, centerLng?: number): Promise<{ seededCount: number; seeded: ReadonlyArray<{ key: string; displayName: string; age: number }> }>;
 }> {
   if (isLocalApiMode(basePath)) {
     return createLocalApiClient();
@@ -1836,11 +1618,11 @@ export function apiClient(basePath = "/api"): Readonly<{
       const res = await fetch(`${basePath}/auth/guest`, { method: "POST" });
       return (await readJsonOrThrow(res)) as GuestResponse;
     },
-    async register(email: string, password: string, phoneE164: string): Promise<RegisterResponse> {
+    async register(email: string, password: string, phoneE164: string, profile: RegistrationProfileInput): Promise<RegisterResponse> {
       const res = await fetch(`${basePath}/auth/register`, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ email, password, phoneE164 })
+        body: JSON.stringify({ email, password, phoneE164, displayName: profile.displayName, age: profile.age, stats: profile.stats ?? {} })
       });
       return (await readJsonOrThrow(res)) as RegisterResponse;
     },
@@ -2122,7 +1904,7 @@ export function apiClient(basePath = "/api"): Readonly<{
     },
     async createPublicPosting(
       sessionToken: string,
-      payload: Readonly<{ type: "ad" | "event"; title: string; body: string }>
+      payload: Readonly<{ type: "ad" | "event"; title: string; body: string; photoMediaId?: string }>
     ): Promise<{ posting: PublicPosting }> {
       const res = await fetch(`${basePath}/public-postings`, {
         method: "POST",
@@ -2163,7 +1945,10 @@ export function apiClient(basePath = "/api"): Readonly<{
       const res = await fetch(`${basePath}/cruise-spots`, { method: "GET" });
       return (await readJsonOrThrow(res)) as { spots: ReadonlyArray<CruisingSpot> };
     },
-    async createCruisingSpot(sessionToken: string, payload: Readonly<{ name: string; address: string; description: string }>): Promise<{ spot: CruisingSpot }> {
+    async createCruisingSpot(
+      sessionToken: string,
+      payload: Readonly<{ name: string; address: string; description: string; photoMediaId?: string }>
+    ): Promise<{ spot: CruisingSpot }> {
       const res = await fetch(`${basePath}/cruise-spots`, {
         method: "POST",
         headers: headers(sessionToken),
@@ -2259,24 +2044,6 @@ export function apiClient(basePath = "/api"): Readonly<{
         body: JSON.stringify(payload)
       });
       return (await readJsonOrThrow(res)) as { listing: PromotedProfileListing };
-    },
-    async seedFakeUsers(
-      count: number,
-      centerLat?: number,
-      centerLng?: number
-    ): Promise<{ seededCount: number; seeded: ReadonlyArray<{ key: string; displayName: string; age: number }> }> {
-      const body: Record<string, unknown> = { count };
-      if (typeof centerLat === "number" && Number.isFinite(centerLat)) body.centerLat = centerLat;
-      if (typeof centerLng === "number" && Number.isFinite(centerLng)) body.centerLng = centerLng;
-      const res = await fetch(`${basePath}/dev/seed-fake-users`, {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify(body)
-      });
-      return (await readJsonOrThrow(res)) as {
-        seededCount: number;
-        seeded: ReadonlyArray<{ key: string; displayName: string; age: number }>;
-      };
     }
   };
 }

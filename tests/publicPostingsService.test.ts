@@ -76,4 +76,15 @@ describe("publicPostingsService", () => {
     expect(response.value.invitedUserIds).toEqual(["guest_2"]);
     expect(response.value.acceptedUserIds).toEqual(["guest_2"]);
   });
+
+  it("Given a posting with photo media id When create is called Then the media reference is persisted", () => {
+    const svc = createPublicPostingsService({ nowMs: () => 1000, idFactory: () => "ad_photo_1" });
+    const res = svc.create(
+      { userType: "registered", userId: "u_2", ageVerified: true },
+      { type: "ad", title: "With photo", body: "Details", photoMediaId: "media_123" }
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.value.photoMediaId).toBe("media_123");
+  });
 });

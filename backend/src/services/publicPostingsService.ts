@@ -30,6 +30,7 @@ export type Posting = Readonly<{
   type: PostingType;
   title: string;
   body: string;
+  photoMediaId?: string;
   authorUserId: string;
   createdAtMs: number;
   invitedUserIds?: ReadonlyArray<string>;
@@ -40,6 +41,7 @@ export type PostingInput = Readonly<{
   type: unknown;
   title: unknown;
   body: unknown;
+  photoMediaId?: unknown;
 }>;
 
 export type EventInvite = Readonly<{
@@ -65,6 +67,13 @@ function asText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const t = value.trim();
   return t.length > 0 ? t : null;
+}
+
+function asOptionalText(value: unknown): string | undefined | null {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") return null;
+  const t = value.trim();
+  return t.length > 0 ? t : undefined;
 }
 
 function requirePostingIdentity(session: SessionLike): Result<{ userId: string }> {
@@ -131,12 +140,18 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
       const body = asText(input.body);
       if (!body) return err("INVALID_INPUT", "Body is required.");
       if (body.length > 4000) return err("INVALID_INPUT", "Body is too long.", { max: 4000 });
+      const photoMediaId = asOptionalText(input.photoMediaId);
+      if (photoMediaId === null) return err("INVALID_INPUT", "photoMediaId must be a string when provided.");
+      if (typeof photoMediaId === "string" && photoMediaId.length > 200) {
+        return err("INVALID_INPUT", "photoMediaId is too long.", { max: 200 });
+      }
 
       const posting: Posting = {
         postingId: idFactory(),
         type,
         title,
         body,
+        ...(photoMediaId ? { photoMediaId } : {}),
         authorUserId: auth.value.userId,
         createdAtMs: nowMs(),
         invitedUserIds: type === "event" ? [] : undefined,

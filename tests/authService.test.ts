@@ -537,4 +537,112 @@ describe("authService", () => {
     if (!mode.ok) throw new Error("unreachable");
     expect(mode.value.mode).toBe("hybrid");
   });
+
+  it("Given an initial auth state When service is created Then state is hydrated and snapshotState returns users/sessions", () => {
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      initialState: {
+        users: [
+          {
+            id: "u1",
+            email: "seed@example.com",
+            phoneE164: "+15555550000",
+            userType: "registered",
+            tier: "free",
+            ageVerified: true,
+            emailVerified: true,
+            verificationCodeSaltB64: null,
+            verificationCodeHashB64: null,
+            verificationCodeExpiresAtMs: null,
+            passwordSaltB64: Buffer.from("salt").toString("base64"),
+            passwordHashB64: Buffer.from("hash").toString("base64"),
+            createdAtMs: 1_700_000_000_000
+          }
+        ],
+        sessions: [
+          {
+            sessionToken: "s1",
+            userType: "registered",
+            tier: "free",
+            mode: "cruise",
+            userId: "u1",
+            ageVerified: true,
+            hybridOptIn: false,
+            expiresAtMs: Date.now() + 60_000
+          }
+        ]
+      }
+    });
+
+    const session = svc.getSession("s1");
+    expect(session.ok).toBe(true);
+    const snapshot = svc.snapshotState();
+    expect(snapshot.users).toHaveLength(1);
+    expect(snapshot.sessions).toHaveLength(1);
+  });
+
+  it("Given onStateChanged throws When auth mutates state Then operation still succeeds", () => {
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      userStoreFilePath: tempStorePath(),
+      onStateChanged: () => {
+        throw new Error("persist failed");
+      }
+    });
+    const res = svc.createGuestSession();
+    expect(res.ok).toBe(true);
+  });
+
+  it("Given edge auth validation paths When called Then explicit errors are returned", () => {
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      userStoreFilePath: tempStorePath()
+    });
+
+    const badPhone = svc.register("user@example.com", "StrongPass1!", "123");
+    expect(badPhone.ok).toBe(false);
+    if (badPhone.ok) throw new Error("unreachable");
+    expect(badPhone.error.code).toBe("UNAUTHORIZED_ACTION");
+
+    const missingVerify = svc.verifyEmail("missing@example.com", "123456");
+    expect(missingVerify.ok).toBe(false);
+    if (missingVerify.ok) throw new Error("unreachable");
+    expect(missingVerify.error.code).toBe("INVALID_VERIFICATION_CODE");
+
+    const guest = svc.createGuestSession();
+    expect(guest.ok).toBe(true);
+    if (!guest.ok) throw new Error("unreachable");
+
+    const badAge = svc.verifyAge(guest.value.session.sessionToken, Number.NaN);
+    expect(badAge.ok).toBe(false);
+    if (badAge.ok) throw new Error("unreachable");
+    expect(badAge.error).toEqual({ code: "UNAUTHORIZED_ACTION", message: "Invalid age." });
+
+    const guestHybrid = svc.setHybridOptIn(guest.value.session.sessionToken, true);
+    expect(guestHybrid.ok).toBe(false);
+    if (guestHybrid.ok) throw new Error("unreachable");
+    expect(guestHybrid.error.code).toBe("ANONYMOUS_FORBIDDEN");
+  });
+
+  it("Given a non-hybrid-capable session When setMode is called to hybrid Then mode transition is rejected", () => {
+    const sent: Array<{ destination: string; code: string }> = [];
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      userStoreFilePath: tempStorePath(),
+      onVerificationCodeIssued: (destination, code) => sent.push({ destination, code })
+    });
+    const reg = svc.register("hybrid@example.com", "StrongPass1!", "+15555551234");
+    expect(reg.ok).toBe(true);
+    const verified = svc.verifyEmail("hybrid@example.com", sent[0]?.code ?? "");
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) throw new Error("unreachable");
+    const aged = svc.verifyAge(verified.value.session.sessionToken, 30);
+    expect(aged.ok).toBe(true);
+    if (!aged.ok) throw new Error("unreachable");
+
+    const mode = svc.setMode(aged.value.sessionToken, "hybrid");
+    expect(mode.ok).toBe(false);
+    if (mode.ok) throw new Error("unreachable");
+    expect(mode.error.code).toBe("INVALID_MODE_TRANSITION");
+  });
 });

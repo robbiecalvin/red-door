@@ -74,4 +74,15 @@ describe("cruisingSpotsService", () => {
     expect(spots.value[0].checkInCount).toBe(1);
     expect(spots.value[0].actionCount).toBe(1);
   });
+
+  it("Given a spot with photo media id When create is called Then the media reference is persisted", () => {
+    const svc = createCruisingSpotsService({ nowMs: () => 1000, idFactory: () => "spot_photo_1" });
+    const res = svc.create(
+      { userType: "registered", userId: "u_3", ageVerified: true },
+      { name: "Tunnel", address: "11 South", lat: 1, lng: 2, description: "Quiet", photoMediaId: "media_456" }
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.value.photoMediaId).toBe("media_456");
+  });
 });
