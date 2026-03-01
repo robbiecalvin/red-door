@@ -2747,8 +2747,10 @@ function ThreadsPanel({
     let cancelled = false;
     async function refresh(): Promise<void> {
       try {
-        const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
-        const [profilesRes, presenceRes] = await Promise.all([api.getPublicProfiles(), api.listActivePresence(session.sessionToken)]);
+        const [profilesRes, threadsRes] = await Promise.all([
+          api.getPublicProfiles(),
+          api.listChatThreads(session.sessionToken, selectedChatKind)
+        ]);
         const nameByKey: Record<string, string> = {};
         const photoMediaIdByKey: Record<string, string> = {};
         for (const p of profilesRes.profiles) {
@@ -2757,40 +2759,28 @@ function ThreadsPanel({
             photoMediaIdByKey[chatKeyFromProfileUserId(p.userId)] = p.mainPhotoMediaId;
           }
         }
-        const candidateKeys = Array.from(
-          new Set<string>(
-            [
-              ...profilesRes.profiles.map((p) => chatKeyFromProfileUserId(p.userId)),
-              ...presenceRes.presence.map((p) => normalizePeerKey(p.key))
-            ].filter((k) => k && k !== meKey)
-          )
-        ).slice(0, 24);
         const next: Array<{ key: string; displayName: string; preview: string; at: number; avatarUrl?: string }> = [];
-        for (const key of candidateKeys) {
-          try {
-            const res = await api.listChat(session.sessionToken, "cruise", key);
-            const list = ((res as any)?.messages ?? []) as ChatMessage[];
-            if (!Array.isArray(list) || list.length === 0) continue;
-            const last = list[list.length - 1];
-            const preview =
-              typeof last.text === "string" && last.text.trim().length > 0
-                ? displayMessageText(last.text)
-                : last.media?.kind === "image"
-                  ? "[Photo]"
-                  : last.media?.kind === "video"
-                    ? "[Video]"
-                    : last.media?.kind === "audio"
-                      ? "[Voice]"
-                      : "";
-            next.push({
-              key,
-              displayName: nameByKey[key] ?? key,
-              preview,
-              at: last.createdAtMs
-            });
-          } catch {
-            // ignore per-peer failures
-          }
+        for (const thread of threadsRes.threads ?? []) {
+          const normalizedKey = normalizePeerKey(thread?.otherKey ?? "");
+          if (!normalizedKey || normalizedKey === meKey || normalizedKey.startsWith("spot:")) continue;
+          const last = thread?.lastMessage as ChatMessage | undefined;
+          if (!last || typeof last.createdAtMs !== "number" || !Number.isFinite(last.createdAtMs)) continue;
+          const preview =
+            typeof last.text === "string" && last.text.trim().length > 0
+              ? displayMessageText(last.text)
+              : last.media?.kind === "image"
+                ? "[Photo]"
+                : last.media?.kind === "video"
+                  ? "[Video]"
+                  : last.media?.kind === "audio"
+                    ? "[Voice]"
+                    : "";
+          next.push({
+            key: normalizedKey,
+            displayName: nameByKey[normalizedKey] ?? normalizedKey,
+            preview,
+            at: last.createdAtMs
+          });
         }
         const mediaRows = await Promise.all(
           next.map(async (row) => {
@@ -2828,7 +2818,7 @@ function ThreadsPanel({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [api, selectedPeerKey, session.sessionToken, session.userId, setLastError]);
+  }, [api, session.sessionToken, session.userId, setLastError]);
 
   useEffect(() => {
     if (!openThreadRequest?.key) return;
@@ -3688,7 +3678,52 @@ function PublicPostings({
     );
   };
 
-  const spotsPanel = (
+  const spotsPanel = selectedSpot ? (
+    <div
+      style={{
+        display: "grid",
+        gap: 0,
+        minHeight: isMobile ? "calc(100dvh - 150px)" : undefined,
+        marginInline: isMobile ? -10 : 0,
+        marginBlock: 0
+      }}
+    >
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 46,
+          background: "rgba(8,8,12,0.96)",
+          borderBottom: "1px solid rgba(255,58,77,0.35)",
+          padding: "6px 10px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 8
+        }}
+      >
+        <button type="button" style={{ ...buttonSecondary(false), padding: "6px 10px", fontSize: 12 }} onClick={() => setSelectedSpotId(null)}>
+          BACK TO SPOTS
+        </button>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#ced3dc" }}>{selectedSpot.name}</div>
+        <button type="button" style={{ ...buttonSecondary(false), padding: "6px 10px", fontSize: 12 }} onClick={() => void checkInSpot(selectedSpot.spotId)}>
+          CHECK IN
+        </button>
+      </div>
+      {spotThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13, padding: "8px 10px" }}>Loading thread...</div> : null}
+      <ChatWindow
+        chatKind="cruise"
+        peerKey={selectedSpotThreadKey}
+        currentUserKey={myActorKey}
+        messages={spotThreadMessages}
+        client={spotChatClient}
+        title={`${selectedSpot.name} Chat`}
+        showHeader={false}
+        edgeToEdge={isMobile}
+        fillHeight={isMobile}
+      />
+    </div>
+  ) : (
     <div style={{ border: "1px solid rgba(255,58,77,0.38)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.2)" }}>
       <div style={{ display: "grid", gap: 10 }}>
         <div style={{ fontSize: 20, fontWeight: 700 }}>CRUISE</div>
@@ -3754,7 +3789,7 @@ function PublicPostings({
                   type="button"
                   onClick={() => setSelectedSpotId(spot.spotId)}
                   style={{
-                    border: selectedSpotId === spot.spotId ? "1px solid #26d5ff" : "1px solid rgba(255,58,77,0.35)",
+                    border: "1px solid rgba(255,58,77,0.35)",
                     background: "rgba(0,0,0,0.5)",
                     borderRadius: 0,
                     display: "grid",
@@ -3794,26 +3829,6 @@ function PublicPostings({
             </div>
           )}
         </div>
-        {selectedSpot ? (
-          <div style={{ border: "1px solid rgba(255,58,77,0.38)", background: "rgba(0,0,0,0.4)", padding: 8 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>{selectedSpot.name} Thread</div>
-              <button type="button" style={buttonSecondary(false)} onClick={() => setSelectedSpotId(null)}>
-                CLOSE THREAD
-              </button>
-            </div>
-            {spotThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13, marginBottom: 8 }}>Loading thread...</div> : null}
-            <ChatWindow
-              chatKind="cruise"
-              peerKey={selectedSpotThreadKey}
-              currentUserKey={myActorKey}
-              messages={spotThreadMessages}
-              client={spotChatClient}
-              title={`${selectedSpot.name} Chat`}
-              showHeader={false}
-            />
-          </div>
-        ) : null}
       </div>
     </div>
   );

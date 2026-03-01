@@ -77,6 +77,65 @@ describe("chatService", () => {
     expect(list.error).toEqual({ code: "CHAT_EXPIRED", message: "Chat messages have expired." });
   });
 
+  it("Given multiple peers with chat history When listThreads is requested Then it returns latest thread per peer sorted by newest first", () => {
+    let now = 1_700_000_000_000;
+    const svc = createChatService({
+      nowMs: () => now,
+      cruiseRetentionHours: 24 * 365,
+      maxHistoryDays: 365,
+      rateLimitPerMinute: 100
+    });
+    const sessionA = { sessionToken: "s_a", userType: "guest", mode: "cruise", ageVerified: true } as const;
+
+    const first = svc.sendMessage(sessionA, { chatKind: "cruise", toKey: "session:s_b", text: "hello b" });
+    expect(first.ok).toBe(true);
+    now += 10;
+    const second = svc.sendMessage(sessionA, { chatKind: "cruise", toKey: "session:s_c", text: "hello c" });
+    expect(second.ok).toBe(true);
+    now += 10;
+    const third = svc.sendMessage(sessionA, { chatKind: "cruise", toKey: "session:s_b", text: "newer b" });
+    expect(third.ok).toBe(true);
+
+    const threads = svc.listThreads(sessionA, "cruise");
+    expect(threads.ok).toBe(true);
+    if (!threads.ok) throw new Error("unreachable");
+    expect(threads.value.map((row) => row.otherKey)).toEqual(["session:s_b", "session:s_c"]);
+    expect(threads.value.map((row) => row.lastMessage.text)).toEqual(["newer b", "hello c"]);
+  });
+
+  it("Given invalid session state for listThreads When age gate or mode rules fail Then explicit errors are returned", () => {
+    const svc = createChatService({ rateLimitPerMinute: 100 });
+
+    const ageGate = svc.listThreads({ sessionToken: "s_a", userType: "guest", mode: "cruise", ageVerified: false }, "cruise");
+    expect(ageGate.ok).toBe(false);
+    if (ageGate.ok) throw new Error("unreachable");
+    expect(ageGate.error.code).toBe("AGE_GATE_REQUIRED");
+
+    const guestDate = svc.listThreads({ sessionToken: "s_a", userType: "guest", mode: "hybrid", ageVerified: true }, "date");
+    expect(guestDate.ok).toBe(false);
+    if (guestDate.ok) throw new Error("unreachable");
+    expect(guestDate.error.code).toBe("ANONYMOUS_FORBIDDEN");
+  });
+
+  it("Given cruise spot and direct threads When listThreads is requested Then spot threads are excluded", () => {
+    const svc = createChatService({ rateLimitPerMinute: 100 });
+    const a = { sessionToken: "s_a", userType: "guest", mode: "cruise", ageVerified: true } as const;
+    const b = { sessionToken: "s_b", userType: "guest", mode: "cruise", ageVerified: true } as const;
+
+    const spotMessage = svc.sendMessage(a, { chatKind: "cruise", toKey: "spot:abc123", text: "at the spot" });
+    expect(spotMessage.ok).toBe(true);
+    const directMessage = svc.sendMessage(a, { chatKind: "cruise", toKey: "session:s_b", text: "hi b" });
+    expect(directMessage.ok).toBe(true);
+    const reply = svc.sendMessage(b, { chatKind: "cruise", toKey: "session:s_a", text: "hi a" });
+    expect(reply.ok).toBe(true);
+
+    const threads = svc.listThreads(a, "cruise");
+    expect(threads.ok).toBe(true);
+    if (!threads.ok) throw new Error("unreachable");
+    expect(threads.value).toHaveLength(1);
+    expect(threads.value[0]?.otherKey).toBe("session:s_b");
+  });
+
   it("Given a chat created while both participants are in Cruise Mode When 72 hours have elapsed since message creation Then the messages are expired and no longer retrievable And expired messages cannot be restored", () => {
     let now = 1_700_000_000_000;
     const svc = createChatService({

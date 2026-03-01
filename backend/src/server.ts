@@ -988,6 +988,16 @@ async function main(): Promise<void> {
     return res.status(200).json({ messages: result.value });
   });
 
+  app.get("/chat/threads", (req, res) => {
+    const token = getSessionToken(req);
+    const sessionResult = authService.getSession(token ?? "");
+    if (!sessionResult.ok) return sendError(res, sessionResult.error);
+    const chatKind = req.query.chatKind;
+    const result = chatService.listThreads(sessionResult.value, chatKind as any);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ threads: result.value });
+  });
+
   app.post("/chat/read", (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");

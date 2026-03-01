@@ -664,6 +664,10 @@ function createLocalApiClient(): Readonly<{
     }>
   ): Promise<{ ok: true }>;
   listChat(sessionToken: string, chatKind: "cruise" | "date", otherKey: string): Promise<any>;
+  listChatThreads(
+    sessionToken: string,
+    chatKind: "cruise" | "date"
+  ): Promise<{ threads: ReadonlyArray<Readonly<{ otherKey: string; lastMessage: LocalChatMessage }>> }>;
   markChatRead(sessionToken: string, chatKind: "cruise" | "date", otherKey: string): Promise<{ readAtMs: number }>;
   initiateChatMediaUpload(
     sessionToken: string,
@@ -1015,6 +1019,29 @@ function createLocalApiClient(): Readonly<{
         .filter((m) => (isSpotThread ? m.toKey === peer : (m.fromKey === me && m.toKey === peer) || (m.fromKey === peer && m.toKey === me)))
         .sort((a, b) => a.createdAtMs - b.createdAtMs);
       return { messages: clone(messages) };
+    },
+    async listChatThreads(
+      sessionToken: string,
+      chatKind: "cruise" | "date"
+    ): Promise<{ threads: ReadonlyArray<Readonly<{ otherKey: string; lastMessage: LocalChatMessage }>> }> {
+      const state = readState();
+      const session = requireSession(state, sessionToken);
+      const me = actorKeyForSession(session);
+      const latestByPeer = new Map<string, LocalChatMessage>();
+      for (const message of state.messages) {
+        if (message.chatKind !== chatKind) continue;
+        if (chatKind === "cruise" && isCruiseSpotThreadKey(message.toKey)) continue;
+        if (message.fromKey !== me && message.toKey !== me) continue;
+        const peer = message.fromKey === me ? message.toKey : message.fromKey;
+        const current = latestByPeer.get(peer);
+        if (!current || message.createdAtMs > current.createdAtMs) {
+          latestByPeer.set(peer, message);
+        }
+      }
+      const threads = Array.from(latestByPeer.entries())
+        .map(([otherKey, lastMessage]) => ({ otherKey, lastMessage }))
+        .sort((a, b) => b.lastMessage.createdAtMs - a.lastMessage.createdAtMs);
+      return { threads: clone(threads) };
     },
     async markChatRead(sessionToken: string, chatKind: "cruise" | "date", otherKey: string): Promise<{ readAtMs: number }> {
       const state = readState();
@@ -1717,6 +1744,10 @@ export function apiClient(basePath = "/api"): Readonly<{
     }>
   ): Promise<{ ok: true }>;
   listChat(sessionToken: string, chatKind: "cruise" | "date", otherKey: string): Promise<any>;
+  listChatThreads(
+    sessionToken: string,
+    chatKind: "cruise" | "date"
+  ): Promise<{ threads: ReadonlyArray<Readonly<{ otherKey: string; lastMessage: LocalChatMessage }>> }>;
   markChatRead(sessionToken: string, chatKind: "cruise" | "date", otherKey: string): Promise<{ readAtMs: number }>;
   initiateChatMediaUpload(
     sessionToken: string,
@@ -1938,6 +1969,15 @@ export function apiClient(basePath = "/api"): Readonly<{
       url.searchParams.set("otherKey", otherKey);
       const res = await fetch(url.toString(), { method: "GET", headers: headers(sessionToken) });
       return readJsonOrThrow(res);
+    },
+    async listChatThreads(
+      sessionToken: string,
+      chatKind: "cruise" | "date"
+    ): Promise<{ threads: ReadonlyArray<Readonly<{ otherKey: string; lastMessage: LocalChatMessage }>> }> {
+      const url = new URL(`${basePath}/chat/threads`, window.location.origin);
+      url.searchParams.set("chatKind", chatKind);
+      const res = await fetch(url.toString(), { method: "GET", headers: headers(sessionToken) });
+      return (await readJsonOrThrow(res)) as { threads: ReadonlyArray<Readonly<{ otherKey: string; lastMessage: LocalChatMessage }>> };
     },
     async markChatRead(sessionToken: string, chatKind: "cruise" | "date", otherKey: string): Promise<{ readAtMs: number }> {
       const res = await fetch(`${basePath}/chat/read`, {

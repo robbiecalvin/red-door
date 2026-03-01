@@ -94,6 +94,7 @@ export type ChatServiceDeps = Readonly<{
 export type ChatService = Readonly<{
   sendMessage(session: Session, input: SendMessageInput): Result<ChatMessage>;
   listMessages(session: Session, chatKind: ChatKind, otherKey: string): Result<ReadonlyArray<ChatMessage>>;
+  listThreads(session: Session, chatKind: ChatKind): Result<ReadonlyArray<Readonly<{ otherKey: string; lastMessage: ChatMessage }>>>;
   markRead(session: Session, chatKind: ChatKind, otherKey: string): Result<{ readAtMs: number }>;
   getThread(chatKind: ChatKind, aKey: string, bKey: string): ChatThread;
   snapshotState(): ChatPersistenceState;
@@ -534,6 +535,68 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
           return { ...m, deliveredAtMs: m.deliveredAtMs ?? m.createdAtMs, readAtMs };
         })
       );
+    },
+
+    listThreads(session: Session, chatKind: ChatKind): Result<ReadonlyArray<Readonly<{ otherKey: string; lastMessage: ChatMessage }>>> {
+      const sessionValid = validateSession(session);
+      if (!sessionValid.ok) return sessionValid;
+      if (session.ageVerified !== true) {
+        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+      }
+      if (!isChatKind(chatKind)) {
+        return err("UNAUTHORIZED_ACTION", "Invalid chat kind.");
+      }
+      if (!canUseChatKind(session.mode, chatKind)) {
+        return err("UNAUTHORIZED_ACTION", "Chat kind is not allowed in the current mode.", {
+          mode: session.mode,
+          chatKind
+        });
+      }
+      if (chatKind === "date" && session.userType === "guest") {
+        return err("ANONYMOUS_FORBIDDEN", "Anonymous users cannot use Date chat.");
+      }
+
+      const fromKey = deriveFromKey(session);
+      const now = nowMs();
+      const latestByOtherKey = new Map<string, ChatMessage>();
+      let changed = false;
+
+      for (const [threadId, list] of messagesByThread.entries()) {
+        if (!threadId.startsWith(`${chatKind}::`)) continue;
+        const purged = purgeExpiredInThread(chatKind, threadId, now);
+        if (purged) changed = true;
+        const activeList = messagesByThread.get(threadId) ?? [];
+        if (activeList.length === 0) continue;
+        if (chatKind === "cruise" && threadId.startsWith("cruise::spot:")) continue;
+
+        let otherKey = "";
+        for (let i = activeList.length - 1; i >= 0; i -= 1) {
+          const message = activeList[i];
+          if (message.fromKey === fromKey && message.toKey !== fromKey) {
+            otherKey = message.toKey;
+            break;
+          }
+          if (message.toKey === fromKey && message.fromKey !== fromKey) {
+            otherKey = message.fromKey;
+            break;
+          }
+        }
+        if (!isNonEmptyString(otherKey)) continue;
+
+        const lastMessage = activeList[activeList.length - 1];
+        const current = latestByOtherKey.get(otherKey);
+        if (!current || lastMessage.createdAtMs > current.createdAtMs) {
+          latestByOtherKey.set(otherKey, lastMessage);
+        }
+      }
+
+      if (changed && !persistenceFilePath) notifyStateChanged();
+
+      const rows = Array.from(latestByOtherKey.entries())
+        .map(([otherKey, lastMessage]) => ({ otherKey, lastMessage }))
+        .sort((a, b) => b.lastMessage.createdAtMs - a.lastMessage.createdAtMs);
+
+      return ok(rows);
     },
 
     markRead(session: Session, chatKind: ChatKind, otherKey: string): Result<{ readAtMs: number }> {
