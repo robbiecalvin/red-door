@@ -14,6 +14,7 @@ type DiscoverScreen = "map" | "chat";
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const API_BASE_OVERRIDE_KEY = "reddoor_api_base_path";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
+const DEFAULT_SHARED_API_BASE = "https://red-door-api.onrender.com";
 const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "public", "profile", "settings", "submissions", "promoted"]);
 const DEFAULT_TAB: TopTab = "discover";
 const FULL_PAGE_TAB_NAV = false;
@@ -194,7 +195,7 @@ function resolveApiBasePath(): string {
   }
   const host = window.location.hostname.toLowerCase();
   if (host.endsWith(".github.io")) {
-    return "__local__";
+    return DEFAULT_SHARED_API_BASE;
   }
   const envBasePath = normalizeApiBasePath(typeof __DUALMODE_API_BASE_PATH__ === "string" ? __DUALMODE_API_BASE_PATH__ : "");
   return envBasePath ?? "__local__";
