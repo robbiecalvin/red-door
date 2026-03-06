@@ -54,7 +54,8 @@ describe("publicPostingsService", () => {
       createdAtMs: 1000,
       invitedUserIds: [],
       acceptedUserIds: [],
-      joinRequestUserIds: []
+      joinRequestUserIds: [],
+      moderationStatus: "pending"
     });
   });
 
@@ -127,5 +128,27 @@ describe("publicPostingsService", () => {
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.error).toEqual({ code: "INVALID_INPUT", message: "Body contains disallowed language." });
+  });
+
+  it("Given a pending posting When listing publicly Then it is hidden until approved", () => {
+    const svc = createPublicPostingsService({ nowMs: () => 1000, idFactory: () => "ad_mod_1" });
+    const created = svc.create(
+      { userType: "registered", userId: "u_9", ageVerified: true },
+      { type: "ad", title: "Pending ad", body: "Waiting review." }
+    );
+    expect(created.ok).toBe(true);
+
+    const before = svc.list();
+    expect(before.ok).toBe(true);
+    if (!before.ok) throw new Error("unreachable");
+    expect(before.value).toHaveLength(0);
+
+    const approved = svc.approve({ userType: "registered", userId: "admin_9", ageVerified: true, role: "admin" }, "ad_mod_1");
+    expect(approved.ok).toBe(true);
+
+    const after = svc.list();
+    expect(after.ok).toBe(true);
+    if (!after.ok) throw new Error("unreachable");
+    expect(after.value).toHaveLength(1);
   });
 });

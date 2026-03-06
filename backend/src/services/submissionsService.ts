@@ -16,7 +16,10 @@ export type SessionLike = Readonly<{
   userType: "guest" | "registered" | "subscriber";
   userId?: string;
   ageVerified: boolean;
+  role?: "user" | "admin";
 }>;
+
+export type ModerationStatus = "pending" | "approved" | "rejected";
 
 export type Submission = Readonly<{
   submissionId: string;
@@ -27,6 +30,10 @@ export type Submission = Readonly<{
   ratingCount: number;
   ratingSum: number;
   createdAtMs: number;
+  moderationStatus: ModerationStatus;
+  moderatedAtMs?: number;
+  moderatedByUserId?: string;
+  moderationReason?: string;
 }>;
 
 function ok<T>(value: T): ResultOk<T> {
@@ -51,10 +58,14 @@ function requireRegistered(session: SessionLike): Result<{ userId: string }> {
 }
 
 export function createSubmissionsService(deps?: Readonly<{ nowMs?: () => number; idFactory?: () => string }>): Readonly<{
-  list(): Result<ReadonlyArray<Submission>>;
+  list(viewer?: SessionLike): Result<ReadonlyArray<Submission>>;
+  listAll(): Result<ReadonlyArray<Submission>>;
   create(session: SessionLike, title: unknown, body: unknown): Result<Submission>;
   recordView(submissionId: unknown): Result<Submission>;
   rate(submissionId: unknown, stars: unknown): Result<Submission>;
+  approve(adminSession: SessionLike, submissionId: unknown, reason?: unknown): Result<Submission>;
+  reject(adminSession: SessionLike, submissionId: unknown, reason?: unknown): Result<Submission>;
+  remove(submissionId: unknown): Result<{ submissionId: string }>;
 }> {
   const nowMs = deps?.nowMs ?? (() => Date.now());
   const idFactory = deps?.idFactory ?? (() => `sub_${Math.random().toString(16).slice(2)}_${Date.now()}`);
@@ -65,7 +76,13 @@ export function createSubmissionsService(deps?: Readonly<{ nowMs?: () => number;
   }
 
   return {
-    list(): Result<ReadonlyArray<Submission>> {
+    list(viewer?: SessionLike): Result<ReadonlyArray<Submission>> {
+      const isAdmin = viewer?.role === "admin";
+      const visible = isAdmin ? listSorted() : listSorted().filter((submission) => submission.moderationStatus === "approved");
+      return ok(visible);
+    },
+
+    listAll(): Result<ReadonlyArray<Submission>> {
       return ok(listSorted());
     },
 
@@ -91,7 +108,8 @@ export function createSubmissionsService(deps?: Readonly<{ nowMs?: () => number;
         viewCount: 0,
         ratingCount: 0,
         ratingSum: 0,
-        createdAtMs: nowMs()
+        createdAtMs: nowMs(),
+        moderationStatus: "pending"
       };
 
       byId.set(created.submissionId, created);
@@ -126,6 +144,48 @@ export function createSubmissionsService(deps?: Readonly<{ nowMs?: () => number;
       };
       byId.set(next.submissionId, next);
       return ok(next);
+    },
+
+    approve(adminSession: SessionLike, submissionId: unknown, reason?: unknown): Result<Submission> {
+      if (typeof submissionId !== "string" || submissionId.trim() === "") return err("INVALID_INPUT", "Invalid submission id.");
+      const existing = byId.get(submissionId.trim());
+      if (!existing) return err("SUBMISSION_NOT_FOUND", "Submission not found.");
+      const adminUserId = typeof adminSession.userId === "string" && adminSession.userId.trim() ? adminSession.userId : "system";
+      const reasonText = typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 500) : undefined;
+      const next: Submission = {
+        ...existing,
+        moderationStatus: "approved",
+        moderatedAtMs: nowMs(),
+        moderatedByUserId: adminUserId,
+        ...(reasonText ? { moderationReason: reasonText } : {})
+      };
+      byId.set(next.submissionId, next);
+      return ok(next);
+    },
+
+    reject(adminSession: SessionLike, submissionId: unknown, reason?: unknown): Result<Submission> {
+      if (typeof submissionId !== "string" || submissionId.trim() === "") return err("INVALID_INPUT", "Invalid submission id.");
+      const existing = byId.get(submissionId.trim());
+      if (!existing) return err("SUBMISSION_NOT_FOUND", "Submission not found.");
+      const adminUserId = typeof adminSession.userId === "string" && adminSession.userId.trim() ? adminSession.userId : "system";
+      const reasonText = typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 500) : undefined;
+      const next: Submission = {
+        ...existing,
+        moderationStatus: "rejected",
+        moderatedAtMs: nowMs(),
+        moderatedByUserId: adminUserId,
+        ...(reasonText ? { moderationReason: reasonText } : {})
+      };
+      byId.set(next.submissionId, next);
+      return ok(next);
+    },
+
+    remove(submissionId: unknown): Result<{ submissionId: string }> {
+      if (typeof submissionId !== "string" || submissionId.trim() === "") return err("INVALID_INPUT", "Invalid submission id.");
+      const id = submissionId.trim();
+      if (!byId.has(id)) return err("SUBMISSION_NOT_FOUND", "Submission not found.");
+      byId.delete(id);
+      return ok({ submissionId: id });
     }
   };
 }

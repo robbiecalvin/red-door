@@ -42,4 +42,23 @@ describe("submissionsService", () => {
     if (created.ok) throw new Error("unreachable");
     expect(created.error).toEqual({ code: "INVALID_INPUT", message: "Title contains disallowed language." });
   });
+
+  it("Given a pending submission When listing publicly Then it is hidden until approved", () => {
+    const svc = createSubmissionsService({ nowMs: () => 100, idFactory: () => "s1" });
+    const created = svc.create({ userType: "registered", userId: "u_1", ageVerified: true }, "Story", "Body");
+    expect(created.ok).toBe(true);
+
+    const before = svc.list();
+    expect(before.ok).toBe(true);
+    if (!before.ok) throw new Error("unreachable");
+    expect(before.value).toHaveLength(0);
+
+    const approved = svc.approve({ userType: "registered", userId: "admin_1", ageVerified: true, role: "admin" }, "s1");
+    expect(approved.ok).toBe(true);
+
+    const after = svc.list();
+    expect(after.ok).toBe(true);
+    if (!after.ok) throw new Error("unreachable");
+    expect(after.value).toHaveLength(1);
+  });
 });

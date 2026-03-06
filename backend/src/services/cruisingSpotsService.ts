@@ -17,7 +17,10 @@ export type SessionLike = Readonly<{
   userId?: string;
   sessionToken?: string;
   ageVerified: boolean;
+  role?: "user" | "admin";
 }>;
+
+export type ModerationStatus = "pending" | "approved" | "rejected";
 
 export type CruisingSpot = Readonly<{
   spotId: string;
@@ -31,6 +34,10 @@ export type CruisingSpot = Readonly<{
   createdAtMs: number;
   checkInCount: number;
   actionCount: number;
+  moderationStatus: ModerationStatus;
+  moderatedAtMs?: number;
+  moderatedByUserId?: string;
+  moderationReason?: string;
 }>;
 
 export type SpotCheckIn = Readonly<{
@@ -76,7 +83,8 @@ function requireAge(session: SessionLike): Result<void> {
 export function createCruisingSpotsService(
   deps?: Readonly<{ nowMs?: () => number; idFactory?: () => string }>
 ): Readonly<{
-  list(): Result<ReadonlyArray<CruisingSpot>>;
+  list(viewer?: SessionLike): Result<ReadonlyArray<CruisingSpot>>;
+  listAll(): Result<ReadonlyArray<CruisingSpot>>;
   create(
     session: SessionLike,
     input: Readonly<{ name: unknown; address: unknown; lat: unknown; lng: unknown; description: unknown; photoMediaId?: unknown }>
@@ -84,6 +92,9 @@ export function createCruisingSpotsService(
   checkIn(session: SessionLike, spotId: unknown): Result<SpotCheckIn>;
   recordAction(session: SessionLike, spotId: unknown): Result<{ spotId: string; actorKey: string; markedAtMs: number }>;
   listCheckIns(spotId: unknown): Result<ReadonlyArray<SpotCheckIn>>;
+  approve(adminSession: SessionLike, spotId: unknown, reason?: unknown): Result<CruisingSpot>;
+  reject(adminSession: SessionLike, spotId: unknown, reason?: unknown): Result<CruisingSpot>;
+  remove(spotId: unknown): Result<{ spotId: string }>;
 }> {
   const nowMs = deps?.nowMs ?? (() => Date.now());
   const idFactory = deps?.idFactory ?? (() => `spot_${Math.random().toString(16).slice(2)}_${Date.now()}`);
@@ -100,7 +111,13 @@ export function createCruisingSpotsService(
   }
 
   return {
-    list(): Result<ReadonlyArray<CruisingSpot>> {
+    list(viewer?: SessionLike): Result<ReadonlyArray<CruisingSpot>> {
+      const isAdmin = viewer?.role === "admin";
+      const visible = isAdmin ? spots : spots.filter((spot) => spot.moderationStatus === "approved");
+      return ok([...visible].sort((a, b) => b.createdAtMs - a.createdAtMs));
+    },
+
+    listAll(): Result<ReadonlyArray<CruisingSpot>> {
       return ok([...spots].sort((a, b) => b.createdAtMs - a.createdAtMs));
     },
 
@@ -137,7 +154,8 @@ export function createCruisingSpotsService(
         creatorUserId: actorKey(session),
         createdAtMs: nowMs(),
         checkInCount: 0,
-        actionCount: 0
+        actionCount: 0,
+        moderationStatus: "pending"
       };
       spots.push(spot);
       return ok(spot);
@@ -179,6 +197,51 @@ export function createCruisingSpotsService(
       if (!spots.some((s) => s.spotId === id)) return err("SPOT_NOT_FOUND", "Cruising spot not found.");
       const values = Array.from((checkInsBySpot.get(id) ?? new Map()).values()).sort((a, b) => b.checkedInAtMs - a.checkedInAtMs);
       return ok(values);
+    },
+
+    approve(adminSession: SessionLike, spotId: unknown, reason?: unknown): Result<CruisingSpot> {
+      const id = asText(spotId);
+      if (!id) return err("INVALID_INPUT", "Spot id is required.");
+      const idx = spots.findIndex((s) => s.spotId === id);
+      if (idx < 0) return err("SPOT_NOT_FOUND", "Cruising spot not found.");
+      const adminUserId = typeof adminSession.userId === "string" && adminSession.userId.trim() ? adminSession.userId : "system";
+      const reasonText = typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 500) : undefined;
+      spots[idx] = {
+        ...spots[idx],
+        moderationStatus: "approved",
+        moderatedAtMs: nowMs(),
+        moderatedByUserId: adminUserId,
+        ...(reasonText ? { moderationReason: reasonText } : {})
+      };
+      return ok(spots[idx]);
+    },
+
+    reject(adminSession: SessionLike, spotId: unknown, reason?: unknown): Result<CruisingSpot> {
+      const id = asText(spotId);
+      if (!id) return err("INVALID_INPUT", "Spot id is required.");
+      const idx = spots.findIndex((s) => s.spotId === id);
+      if (idx < 0) return err("SPOT_NOT_FOUND", "Cruising spot not found.");
+      const adminUserId = typeof adminSession.userId === "string" && adminSession.userId.trim() ? adminSession.userId : "system";
+      const reasonText = typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 500) : undefined;
+      spots[idx] = {
+        ...spots[idx],
+        moderationStatus: "rejected",
+        moderatedAtMs: nowMs(),
+        moderatedByUserId: adminUserId,
+        ...(reasonText ? { moderationReason: reasonText } : {})
+      };
+      return ok(spots[idx]);
+    },
+
+    remove(spotId: unknown): Result<{ spotId: string }> {
+      const id = asText(spotId);
+      if (!id) return err("INVALID_INPUT", "Spot id is required.");
+      const idx = spots.findIndex((s) => s.spotId === id);
+      if (idx < 0) return err("SPOT_NOT_FOUND", "Cruising spot not found.");
+      spots.splice(idx, 1);
+      checkInsBySpot.delete(id);
+      actionBySpot.delete(id);
+      return ok({ spotId: id });
     }
   };
 }

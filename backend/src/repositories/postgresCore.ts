@@ -80,8 +80,11 @@ export async function ensurePostgresSchema(pool: Pool): Promise<void> {
       phone_e164 TEXT,
       user_type TEXT NOT NULL,
       tier TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
       age_verified BOOLEAN NOT NULL DEFAULT false,
       email_verified BOOLEAN NOT NULL DEFAULT false,
+      banned_at_ms BIGINT,
+      banned_reason TEXT,
       verification_code_salt_b64 TEXT,
       verification_code_hash_b64 TEXT,
       verification_code_expires_at_ms BIGINT,
@@ -96,6 +99,7 @@ export async function ensurePostgresSchema(pool: Pool): Promise<void> {
       session_token TEXT PRIMARY KEY,
       user_type TEXT NOT NULL,
       tier TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
       mode TEXT NOT NULL,
       user_id TEXT,
       age_verified BOOLEAN NOT NULL DEFAULT false,
@@ -103,6 +107,10 @@ export async function ensurePostgresSchema(pool: Pool): Promise<void> {
       expires_at_ms BIGINT NOT NULL
     )
   `);
+  await pool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'`);
+  await pool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS banned_at_ms BIGINT`);
+  await pool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS banned_reason TEXT`);
+  await pool.query(`ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'`);
   await pool.query("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id)");
   await pool.query("CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at_ms ON auth_sessions(expires_at_ms)");
 

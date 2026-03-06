@@ -4772,7 +4772,6 @@ function SettingsPanel({
     travelLng: ""
   });
   const [status, setStatus] = useState<string>("Loading settings...");
-  const [mediaConfigured, setMediaConfigured] = useState<boolean>(false);
   const [blockedUsers, setBlockedUsers] = useState<ReadonlyArray<string>>([]);
 
   async function refresh(): Promise<void> {
@@ -4800,20 +4799,8 @@ function SettingsPanel({
     }
   }
 
-  async function refreshConfig(): Promise<void> {
-    try {
-      const res = await fetch("/api/config");
-      const json = await res.json();
-      if (!res.ok) throw json;
-      setMediaConfigured(json.mediaStorageConfigured === true);
-    } catch {
-      setMediaConfigured(false);
-    }
-  }
-
   useEffect(() => {
     void refresh();
-    void refreshConfig();
   }, [session.sessionToken, session.userType]);
 
   async function savePrivacy(): Promise<void> {
@@ -4916,17 +4903,6 @@ function SettingsPanel({
             <button type="button" style={buttonSecondary(false)} onClick={() => void detectActualLocation()}>DETECT ACTUAL LOCATION</button>
             <button type="button" style={buttonSecondary(false)} onClick={() => onLogout?.()}>LOGOUT</button>
           </div>
-        </div>
-      </div>
-      <div style={cardStyle()}>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>MEDIA STORAGE</div>
-          <div style={{ color: mediaConfigured ? "#26d5ff" : "#ff8a95", fontSize: 14 }}>
-            {mediaConfigured ? "Configured: uploads enabled." : "Not configured: set S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY."}
-          </div>
-          <button type="button" style={buttonSecondary(false)} onClick={() => void refreshConfig()}>
-            REFRESH STORAGE STATUS
-          </button>
         </div>
       </div>
       {session.userType !== "guest" ? (

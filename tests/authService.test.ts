@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import crypto from "node:crypto";
 
 import { createAuthService } from "../backend/src/services/authService";
 
@@ -644,5 +645,263 @@ describe("authService", () => {
     expect(mode.ok).toBe(false);
     if (mode.ok) throw new Error("unreachable");
     expect(mode.error.code).toBe("INVALID_MODE_TRANSITION");
+  });
+
+  it("Given configured admin emails When registering that email Then user/session role is admin", () => {
+    const sent: Array<{ destination: string; code: string }> = [];
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      userStoreFilePath: tempStorePath(),
+      adminEmails: ["admin@example.com"],
+      onVerificationCodeIssued: (destination, code) => sent.push({ destination, code })
+    });
+    const reg = svc.register("admin@example.com", "StrongPass1!", "+15555551234");
+    expect(reg.ok).toBe(true);
+    const verified = svc.verifyEmail("admin@example.com", sent[0]?.code ?? "");
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) throw new Error("unreachable");
+    expect(verified.value.user.role).toBe("admin");
+    expect(verified.value.session.role).toBe("admin");
+  });
+
+  it("Given an existing user When banUser is called Then login/session are blocked until unban", () => {
+    const sent: Array<{ destination: string; code: string }> = [];
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      userStoreFilePath: tempStorePath(),
+      onVerificationCodeIssued: (destination, code) => sent.push({ destination, code })
+    });
+    const reg = svc.register("user@example.com", "StrongPass1!", "+15555551234");
+    expect(reg.ok).toBe(true);
+    const verified = svc.verifyEmail("user@example.com", sent[0]?.code ?? "");
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) throw new Error("unreachable");
+
+    const banned = svc.banUser(verified.value.user.id, "Abuse");
+    expect(banned.ok).toBe(true);
+    if (!banned.ok) throw new Error("unreachable");
+    expect(banned.value.bannedReason).toBe("Abuse");
+
+    const sessionAfterBan = svc.getSession(verified.value.session.sessionToken);
+    expect(sessionAfterBan.ok).toBe(false);
+    if (sessionAfterBan.ok) throw new Error("unreachable");
+    expect(sessionAfterBan.error.code).toBe("INVALID_SESSION");
+
+    const loginWhileBanned = svc.login("user@example.com", "StrongPass1!");
+    expect(loginWhileBanned.ok).toBe(false);
+    if (loginWhileBanned.ok) throw new Error("unreachable");
+    expect(loginWhileBanned.error.code).toBe("USER_BANNED");
+
+    const unbanned = svc.unbanUser(verified.value.user.id);
+    expect(unbanned.ok).toBe(true);
+    if (!unbanned.ok) throw new Error("unreachable");
+    expect(unbanned.value.bannedAtMs).toBeNull();
+
+    const loginAfterUnban = svc.login("user@example.com", "StrongPass1!");
+    expect(loginAfterUnban.ok).toBe(true);
+  });
+
+  it("Given managed users When listUsers is called Then it returns admin moderation fields", () => {
+    const sent: Array<{ destination: string; code: string }> = [];
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      userStoreFilePath: tempStorePath(),
+      adminEmails: ["admin2@example.com"],
+      onVerificationCodeIssued: (destination, code) => sent.push({ destination, code })
+    });
+    const regA = svc.register("admin2@example.com", "StrongPass1!", "+15555551234");
+    const regB = svc.register("user2@example.com", "StrongPass2!", "+15555551235");
+    expect(regA.ok).toBe(true);
+    expect(regB.ok).toBe(true);
+    const users = svc.listUsers();
+    expect(users.length).toBe(2);
+    expect(users.some((u) => u.role === "admin")).toBe(true);
+    expect(users.every((u) => "bannedAtMs" in u)).toBe(true);
+  });
+
+  it("Given invalid user ids for ban APIs When called Then explicit errors are returned", () => {
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      userStoreFilePath: tempStorePath()
+    });
+    const badBan = svc.banUser("", "");
+    expect(badBan.ok).toBe(false);
+    if (badBan.ok) throw new Error("unreachable");
+    expect(badBan.error.code).toBe("UNAUTHORIZED_ACTION");
+
+    const missingUnban = svc.unbanUser("missing");
+    expect(missingUnban.ok).toBe(false);
+    if (missingUnban.ok) throw new Error("unreachable");
+    expect(missingUnban.error.code).toBe("USER_NOT_FOUND");
+
+    const badUnban = svc.unbanUser("");
+    expect(badUnban.ok).toBe(false);
+    if (badUnban.ok) throw new Error("unreachable");
+    expect(badUnban.error.code).toBe("UNAUTHORIZED_ACTION");
+  });
+
+  it("Given skip-email-verification mode with invalid non-empty phone When register is called Then it still validates E.164", () => {
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      skipEmailVerification: true,
+      userStoreFilePath: tempStorePath()
+    });
+    const reg = svc.register("user@example.com", "password1", "123");
+    expect(reg.ok).toBe(false);
+    if (reg.ok) throw new Error("unreachable");
+    expect(reg.error.code).toBe("UNAUTHORIZED_ACTION");
+  });
+
+  it("Given a session token with no matching user When getSession is called Then session is invalidated", () => {
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      initialState: {
+        users: [],
+        sessions: [
+          {
+            sessionToken: "orphan_session",
+            userType: "registered",
+            tier: "free",
+            role: "user",
+            mode: "cruise",
+            userId: "missing_user",
+            ageVerified: true,
+            hybridOptIn: false,
+            expiresAtMs: Date.now() + 60_000
+          }
+        ]
+      }
+    });
+    const res = svc.getSession("orphan_session");
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.error.code).toBe("INVALID_SESSION");
+  });
+
+  it("Given a banned user in initial state When getSession is called Then USER_BANNED is returned", () => {
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      initialState: {
+        users: [
+          {
+            id: "banned_1",
+            email: "banned@example.com",
+            phoneE164: null,
+            userType: "registered",
+            tier: "free",
+            role: "user",
+            ageVerified: true,
+            emailVerified: true,
+            bannedAtMs: Date.now() - 1000,
+            bannedReason: "policy",
+            verificationCodeSaltB64: null,
+            verificationCodeHashB64: null,
+            verificationCodeExpiresAtMs: null,
+            passwordSaltB64: Buffer.from("salt").toString("base64"),
+            passwordHashB64: Buffer.from("hash").toString("base64"),
+            createdAtMs: Date.now() - 2000
+          }
+        ],
+        sessions: [
+          {
+            sessionToken: "banned_session",
+            userType: "registered",
+            tier: "free",
+            role: "user",
+            mode: "cruise",
+            userId: "banned_1",
+            ageVerified: true,
+            hybridOptIn: false,
+            expiresAtMs: Date.now() + 60_000
+          }
+        ]
+      }
+    });
+    const res = svc.getSession("banned_session");
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.error.code).toBe("USER_BANNED");
+  });
+
+  it("Given stale session role in initial state When getSession is called Then role is refreshed from user", () => {
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      initialState: {
+        users: [
+          {
+            id: "admin_user_1",
+            email: "admin3@example.com",
+            phoneE164: null,
+            userType: "registered",
+            tier: "free",
+            role: "admin",
+            ageVerified: true,
+            emailVerified: true,
+            bannedAtMs: null,
+            bannedReason: null,
+            verificationCodeSaltB64: null,
+            verificationCodeHashB64: null,
+            verificationCodeExpiresAtMs: null,
+            passwordSaltB64: Buffer.from("salt").toString("base64"),
+            passwordHashB64: Buffer.from("hash").toString("base64"),
+            createdAtMs: Date.now() - 2000
+          }
+        ],
+        sessions: [
+          {
+            sessionToken: "stale_role_session",
+            userType: "registered",
+            tier: "free",
+            role: "user",
+            mode: "cruise",
+            userId: "admin_user_1",
+            ageVerified: true,
+            hybridOptIn: false,
+            expiresAtMs: Date.now() + 60_000
+          }
+        ]
+      }
+    });
+    const res = svc.getSession("stale_role_session");
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.value.role).toBe("admin");
+  });
+
+  it("Given skip-email-verification and unverified persisted user When login is called Then user is auto-verified", () => {
+    const password = "StrongPass1!";
+    const salt = Buffer.from("0123456789abcdef");
+    const hash = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 }).toString("base64");
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      skipEmailVerification: true,
+      initialState: {
+        users: [
+          {
+            id: "u_auto_verify",
+            email: "autoverify@example.com",
+            phoneE164: null,
+            userType: "registered",
+            tier: "free",
+            role: "user",
+            ageVerified: true,
+            emailVerified: false,
+            bannedAtMs: null,
+            bannedReason: null,
+            verificationCodeSaltB64: null,
+            verificationCodeHashB64: null,
+            verificationCodeExpiresAtMs: null,
+            passwordSaltB64: salt.toString("base64"),
+            passwordHashB64: hash,
+            createdAtMs: Date.now() - 1000
+          }
+        ],
+        sessions: []
+      }
+    });
+    const login = svc.login("autoverify@example.com", password);
+    expect(login.ok).toBe(true);
+    if (!login.ok) throw new Error("unreachable");
+    expect(login.value.user.email).toBe("autoverify@example.com");
   });
 });

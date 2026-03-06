@@ -6,7 +6,7 @@ import express, { type Request, type Response } from "express";
 import { WebSocketServer } from "ws";
 import nodemailer from "nodemailer";
 
-import { createAuthService, type AuthStateSnapshot, type Mode, type ServiceError as AuthError } from "./services/authService";
+import { createAuthService, type AuthStateSnapshot, type Mode, type ServiceError as AuthError, type Session as AuthSession } from "./services/authService";
 import { createBlockService } from "./services/blockService";
 import { createChatService, type ChatPersistenceState, type ServiceError as ChatError } from "./services/chatService";
 import { createMatchingService, type ServiceError as MatchingError } from "./services/matchingService";
@@ -78,6 +78,10 @@ function sendError(res: Response, error: AnyServiceError): void {
         ? 403
       : code === "INVALID_VERIFICATION_CODE"
         ? 400
+      : code === "USER_BANNED"
+        ? 403
+      : code === "USER_NOT_FOUND"
+        ? 404
       : code === "INVALID_INPUT"
         ? 400
       : code === "SUBMISSION_NOT_FOUND"
@@ -107,6 +111,12 @@ function getSessionToken(req: Request): string | null {
   if (typeof token !== "string") return null;
   const trimmed = token.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+function parseAdminEmails(raw: string | undefined): ReadonlyArray<string> {
+  const fromEnv = typeof raw === "string" ? raw.split(",").map((v) => v.trim().toLowerCase()).filter((v) => v.length > 0) : [];
+  const merged = new Set<string>([...fromEnv, "admin@robbiecalvin.com"]);
+  return Array.from(merged.values());
 }
 
 function getModeFromBody(req: Request): Mode | null {
@@ -396,6 +406,7 @@ async function main(): Promise<void> {
   const authService = createAuthService({
     jwtSecret,
     skipEmailVerification: true,
+    adminEmails: parseAdminEmails(process.env.ADMIN_EMAILS),
     onVerificationCodeIssued: verificationCodeSender,
     initialState: initialAuthState,
     onStateChanged: authStateRepo ? queueAuthStateSave : undefined
@@ -544,6 +555,20 @@ async function main(): Promise<void> {
   };
   app.get("/storage/local/download/:encodedKey", handleLocalStorageDownload);
   app.get("/api/storage/local/download/:encodedKey", handleLocalStorageDownload);
+
+  function requireAdminSession(req: Request, res: Response): AuthSession | null {
+    const token = getSessionToken(req);
+    const sessionResult = authService.getSession(token ?? "");
+    if (!sessionResult.ok) {
+      sendError(res, sessionResult.error);
+      return null;
+    }
+    if (sessionResult.value.role !== "admin") {
+      res.status(403).json({ code: "FORBIDDEN", message: "Admin access required." });
+      return null;
+    }
+    return sessionResult.value;
+  }
 
   // Auth
   app.post("/auth/guest", (_req, res) => {
@@ -784,8 +809,11 @@ async function main(): Promise<void> {
   });
 
   // Cruising spots
-  app.get("/cruise-spots", (_req, res) => {
-    const result = cruisingSpotsService.list();
+  app.get("/cruise-spots", (req, res) => {
+    const token = getSessionToken(req);
+    const sessionResult = token ? authService.getSession(token) : null;
+    const viewer = sessionResult && sessionResult.ok ? sessionResult.value : undefined;
+    const result = cruisingSpotsService.list(viewer);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ spots: result.value });
   });
@@ -841,8 +869,11 @@ async function main(): Promise<void> {
   });
 
   // Story submissions
-  app.get("/submissions", (_req, res) => {
-    const result = submissionsService.list();
+  app.get("/submissions", (req, res) => {
+    const token = getSessionToken(req);
+    const sessionResult = token ? authService.getSession(token) : null;
+    const viewer = sessionResult && sessionResult.ok ? sessionResult.value : undefined;
+    const result = submissionsService.list(viewer);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ submissions: result.value });
   });
@@ -866,6 +897,123 @@ async function main(): Promise<void> {
     const result = submissionsService.rate((req.body as any)?.submissionId, (req.body as any)?.stars);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ submission: result.value });
+  });
+
+  // Admin moderation and enforcement
+  app.get("/admin/users", (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    return res.status(200).json({ users: authService.listUsers() });
+  });
+
+  app.post("/admin/users/:userId/ban", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const targetUserId = (req.params as any)?.userId;
+    const result = authService.banUser(targetUserId, (req.body as any)?.reason);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ user: result.value });
+  });
+
+  app.post("/admin/users/:userId/unban", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const targetUserId = (req.params as any)?.userId;
+    const result = authService.unbanUser(targetUserId);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ user: result.value });
+  });
+
+  app.get("/admin/cruise-spots", (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const result = cruisingSpotsService.listAll();
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ spots: result.value });
+  });
+
+  app.post("/admin/cruise-spots/:spotId/approve", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const result = cruisingSpotsService.approve(adminSessionResult, (req.params as any)?.spotId, (req.body as any)?.reason);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ spot: result.value });
+  });
+
+  app.post("/admin/cruise-spots/:spotId/reject", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const result = cruisingSpotsService.reject(adminSessionResult, (req.params as any)?.spotId, (req.body as any)?.reason);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ spot: result.value });
+  });
+
+  app.delete("/admin/cruise-spots/:spotId", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const result = cruisingSpotsService.remove((req.params as any)?.spotId);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json(result.value);
+  });
+
+  app.get("/admin/public-postings", (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const result = publicPostingsService.listAll((req.query as any)?.type);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ postings: result.value });
+  });
+
+  app.post("/admin/public-postings/:postingId/approve", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const result = publicPostingsService.approve(adminSessionResult, (req.params as any)?.postingId, (req.body as any)?.reason);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ posting: result.value });
+  });
+
+  app.post("/admin/public-postings/:postingId/reject", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const result = publicPostingsService.reject(adminSessionResult, (req.params as any)?.postingId, (req.body as any)?.reason);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ posting: result.value });
+  });
+
+  app.delete("/admin/public-postings/:postingId", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const result = publicPostingsService.remove((req.params as any)?.postingId);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json(result.value);
+  });
+
+  app.get("/admin/submissions", (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const result = submissionsService.listAll();
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ submissions: result.value });
+  });
+
+  app.post("/admin/submissions/:submissionId/approve", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const result = submissionsService.approve(adminSessionResult, (req.params as any)?.submissionId, (req.body as any)?.reason);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ submission: result.value });
+  });
+
+  app.post("/admin/submissions/:submissionId/reject", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const result = submissionsService.reject(adminSessionResult, (req.params as any)?.submissionId, (req.body as any)?.reason);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ submission: result.value });
+  });
+
+  app.delete("/admin/submissions/:submissionId", (req, res) => {
+    const adminSessionResult = requireAdminSession(req, res);
+    if (!adminSessionResult) return;
+    const result = submissionsService.remove((req.params as any)?.submissionId);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json(result.value);
   });
 
   // Promoted profiles (safe paid listings)

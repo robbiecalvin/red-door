@@ -8,6 +8,7 @@ export type Session = Readonly<{
   sessionToken: string;
   userType: "guest" | "registered" | "subscriber";
   tier: "free" | "premium";
+  role?: "user" | "admin";
   mode: "cruise" | "date" | "hybrid";
   userId?: string;
   ageVerified: boolean;
@@ -16,7 +17,15 @@ export type Session = Readonly<{
 }>;
 
 export type VerifyEmailOrLoginResponse = Readonly<{
-  user: { id: string; email: string; userType: "registered" | "subscriber"; tier: "free" | "premium" };
+  user: {
+    id: string;
+    email: string;
+    userType: "registered" | "subscriber";
+    tier: "free" | "premium";
+    role?: "user" | "admin";
+    bannedAtMs?: number | null;
+    bannedReason?: string | null;
+  };
   jwt: string;
   session: Session;
 }>;
@@ -142,6 +151,7 @@ export type PublicPosting = Readonly<{
   invitedUserIds?: ReadonlyArray<string>;
   acceptedUserIds?: ReadonlyArray<string>;
   joinRequestUserIds?: ReadonlyArray<string>;
+  moderationStatus?: "pending" | "approved" | "rejected";
 }>;
 
 export type CruisingSpot = Readonly<{
@@ -156,6 +166,7 @@ export type CruisingSpot = Readonly<{
   createdAtMs: number;
   checkInCount: number;
   actionCount: number;
+  moderationStatus?: "pending" | "approved" | "rejected";
 }>;
 
 export type Submission = Readonly<{
@@ -167,6 +178,7 @@ export type Submission = Readonly<{
   ratingCount: number;
   ratingSum: number;
   createdAtMs: number;
+  moderationStatus?: "pending" | "approved" | "rejected";
 }>;
 
 export type PromotedProfileListing = Readonly<{

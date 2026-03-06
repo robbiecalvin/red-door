@@ -25,7 +25,10 @@ export type SessionLike = Readonly<{
   userId?: string;
   sessionToken?: string;
   ageVerified: boolean;
+  role?: "user" | "admin";
 }>;
+
+export type ModerationStatus = "pending" | "approved" | "rejected";
 
 export type Posting = Readonly<{
   postingId: string;
@@ -41,6 +44,10 @@ export type Posting = Readonly<{
   invitedUserIds?: ReadonlyArray<string>;
   acceptedUserIds?: ReadonlyArray<string>;
   joinRequestUserIds?: ReadonlyArray<string>;
+  moderationStatus: ModerationStatus;
+  moderatedAtMs?: number;
+  moderatedByUserId?: string;
+  moderationReason?: string;
 }>;
 
 export type PostingInput = Readonly<{
@@ -142,12 +149,16 @@ function redactPostingForViewer(posting: Posting, viewer?: SessionLike): Posting
 
 export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => number; idFactory?: () => string }>): Readonly<{
   list(type?: unknown, viewer?: SessionLike): Result<ReadonlyArray<Posting>>;
+  listAll(type?: unknown): Result<ReadonlyArray<Posting>>;
   create(session: SessionLike, input: PostingInput): Result<Posting>;
   inviteToEvent(session: SessionLike, postingId: unknown, targetUserId: unknown): Result<EventInvite>;
   respondToEventInvite(session: SessionLike, postingId: unknown, accept: unknown): Result<Posting>;
   requestToJoinEvent(session: SessionLike, postingId: unknown): Result<Posting>;
   respondToEventJoinRequest(session: SessionLike, postingId: unknown, targetUserId: unknown, accept: unknown): Result<Posting>;
   listEventInvites(session: SessionLike): Result<ReadonlyArray<Posting>>;
+  approve(adminSession: SessionLike, postingId: unknown, reason?: unknown): Result<Posting>;
+  reject(adminSession: SessionLike, postingId: unknown, reason?: unknown): Result<Posting>;
+  remove(postingId: unknown): Result<{ postingId: string }>;
 }> {
   const nowMs = deps?.nowMs ?? (() => Date.now());
   const idFactory = deps?.idFactory ?? (() => `post_${Math.random().toString(16).slice(2)}_${Date.now()}`);
@@ -155,12 +166,25 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
 
   return {
     list(type?: unknown, viewer?: SessionLike): Result<ReadonlyArray<Posting>> {
+      const includeAll = viewer?.role === "admin";
       if (type === undefined) {
-        return ok([...posts].sort((a, b) => b.createdAtMs - a.createdAtMs).map((p) => redactPostingForViewer(p, viewer)));
+        const visible = includeAll ? posts : posts.filter((p) => p.moderationStatus === "approved");
+        return ok([...visible].sort((a, b) => b.createdAtMs - a.createdAtMs).map((p) => redactPostingForViewer(p, viewer)));
       }
       const parsed = asType(type);
       if (!parsed) return err("POSTING_TYPE_NOT_ALLOWED", "Invalid posting type.");
-      return ok(posts.filter((p) => p.type === parsed).sort((a, b) => b.createdAtMs - a.createdAtMs).map((p) => redactPostingForViewer(p, viewer)));
+      const filtered = posts.filter((p) => p.type === parsed);
+      const visible = includeAll ? filtered : filtered.filter((p) => p.moderationStatus === "approved");
+      return ok(visible.sort((a, b) => b.createdAtMs - a.createdAtMs).map((p) => redactPostingForViewer(p, viewer)));
+    },
+
+    listAll(type?: unknown): Result<ReadonlyArray<Posting>> {
+      if (type === undefined) {
+        return ok([...posts].sort((a, b) => b.createdAtMs - a.createdAtMs));
+      }
+      const parsed = asType(type);
+      if (!parsed) return err("POSTING_TYPE_NOT_ALLOWED", "Invalid posting type.");
+      return ok(posts.filter((p) => p.type === parsed).sort((a, b) => b.createdAtMs - a.createdAtMs));
     },
 
     create(session: SessionLike, input: PostingInput): Result<Posting> {
@@ -212,7 +236,8 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
         createdAtMs: nowMs(),
         invitedUserIds: type === "event" ? [] : undefined,
         acceptedUserIds: type === "event" ? [] : undefined,
-        joinRequestUserIds: type === "event" ? [] : undefined
+        joinRequestUserIds: type === "event" ? [] : undefined,
+        moderationStatus: "pending"
       };
       posts.push(posting);
       return ok(posting);
@@ -350,9 +375,53 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
       if (!auth.ok) return auth as Result<ReadonlyArray<Posting>>;
       const invitedEvents = posts
         .filter((p) => p.type === "event")
+        .filter((p) => p.moderationStatus === "approved")
         .filter((p) => (p.invitedUserIds ?? []).includes(auth.value.userId))
         .sort((a, b) => b.createdAtMs - a.createdAtMs);
       return ok(invitedEvents);
+    },
+
+    approve(adminSession: SessionLike, postingId: unknown, reason?: unknown): Result<Posting> {
+      const id = asText(postingId);
+      if (!id) return err("INVALID_INPUT", "Posting id is required.");
+      const idx = posts.findIndex((p) => p.postingId === id);
+      if (idx < 0) return err("POSTING_NOT_FOUND", "Posting not found.");
+      const adminUserId = typeof adminSession.userId === "string" && adminSession.userId.trim() ? adminSession.userId : "system";
+      const reasonText = typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 500) : undefined;
+      posts[idx] = {
+        ...posts[idx],
+        moderationStatus: "approved",
+        moderatedAtMs: nowMs(),
+        moderatedByUserId: adminUserId,
+        ...(reasonText ? { moderationReason: reasonText } : {})
+      };
+      return ok(posts[idx]);
+    },
+
+    reject(adminSession: SessionLike, postingId: unknown, reason?: unknown): Result<Posting> {
+      const id = asText(postingId);
+      if (!id) return err("INVALID_INPUT", "Posting id is required.");
+      const idx = posts.findIndex((p) => p.postingId === id);
+      if (idx < 0) return err("POSTING_NOT_FOUND", "Posting not found.");
+      const adminUserId = typeof adminSession.userId === "string" && adminSession.userId.trim() ? adminSession.userId : "system";
+      const reasonText = typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 500) : undefined;
+      posts[idx] = {
+        ...posts[idx],
+        moderationStatus: "rejected",
+        moderatedAtMs: nowMs(),
+        moderatedByUserId: adminUserId,
+        ...(reasonText ? { moderationReason: reasonText } : {})
+      };
+      return ok(posts[idx]);
+    },
+
+    remove(postingId: unknown): Result<{ postingId: string }> {
+      const id = asText(postingId);
+      if (!id) return err("INVALID_INPUT", "Posting id is required.");
+      const idx = posts.findIndex((p) => p.postingId === id);
+      if (idx < 0) return err("POSTING_NOT_FOUND", "Posting not found.");
+      posts.splice(idx, 1);
+      return ok({ postingId: id });
     }
   };
 }

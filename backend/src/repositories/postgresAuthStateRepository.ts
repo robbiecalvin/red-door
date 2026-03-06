@@ -28,6 +28,10 @@ function asTier(value: unknown): StoredUser["tier"] {
   return value === "premium" ? "premium" : "free";
 }
 
+function asRole(value: unknown): StoredUser["role"] {
+  return value === "admin" ? "admin" : "user";
+}
+
 function asMode(value: unknown): Session["mode"] {
   if (value === "date" || value === "hybrid") return value;
   return "cruise";
@@ -53,8 +57,16 @@ function parseStoredUser(row: Record<string, unknown>): StoredUser | null {
     phoneE164: asNullableString(row.phone_e164),
     userType: asUserType(row.user_type),
     tier: asTier(row.tier),
+    role: asRole(row.role),
     ageVerified: asBoolean(row.age_verified),
     emailVerified: asBoolean(row.email_verified),
+    bannedAtMs: (() => {
+      const n = row.banned_at_ms;
+      if (n === null || n === undefined) return null;
+      const v = asNumber(n);
+      return Number.isFinite(v) ? v : null;
+    })(),
+    bannedReason: asNullableString(row.banned_reason),
     verificationCodeSaltB64: asNullableString(row.verification_code_salt_b64),
     verificationCodeHashB64: asNullableString(row.verification_code_hash_b64),
     verificationCodeExpiresAtMs: (() => {
@@ -80,6 +92,7 @@ function parseSession(row: Record<string, unknown>): Session | null {
     sessionToken,
     userType: asSessionUserType(row.user_type),
     tier: asTier(row.tier),
+    role: asRole(row.role),
     mode: asMode(row.mode),
     userId: typeof userIdRaw === "string" && userIdRaw.trim() !== "" ? userIdRaw : undefined,
     ageVerified: asBoolean(row.age_verified),
@@ -98,13 +111,13 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
     async loadState(): Promise<AuthStateSnapshot> {
       const [usersRes, sessionsRes] = await Promise.all([
         pool.query(
-          `SELECT id, email, phone_e164, user_type, tier, age_verified, email_verified,
+          `SELECT id, email, phone_e164, user_type, tier, role, age_verified, email_verified, banned_at_ms, banned_reason,
                   verification_code_salt_b64, verification_code_hash_b64, verification_code_expires_at_ms,
                   password_salt_b64, password_hash_b64, created_at_ms
            FROM auth_users`
         ),
         pool.query(
-          `SELECT session_token, user_type, tier, mode, user_id, age_verified, hybrid_opt_in, expires_at_ms
+          `SELECT session_token, user_type, tier, role, mode, user_id, age_verified, hybrid_opt_in, expires_at_ms
            FROM auth_sessions`
         )
       ]);
@@ -134,13 +147,13 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
         for (const user of state.users) {
           await client.query(
             `INSERT INTO auth_users (
-              id, email, phone_e164, user_type, tier, age_verified, email_verified,
+              id, email, phone_e164, user_type, tier, role, age_verified, email_verified, banned_at_ms, banned_reason,
               verification_code_salt_b64, verification_code_hash_b64, verification_code_expires_at_ms,
               password_salt_b64, password_hash_b64, created_at_ms
             ) VALUES (
-              $1, $2, $3, $4, $5, $6, $7,
-              $8, $9, $10,
-              $11, $12, $13
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+              $11, $12, $13,
+              $14, $15, $16
             )`,
             [
               user.id,
@@ -148,8 +161,11 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
               user.phoneE164,
               user.userType,
               user.tier,
+              user.role,
               user.ageVerified,
               user.emailVerified,
+              user.bannedAtMs,
+              user.bannedReason,
               user.verificationCodeSaltB64,
               user.verificationCodeHashB64,
               user.verificationCodeExpiresAtMs,
@@ -163,14 +179,15 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
         for (const session of state.sessions) {
           await client.query(
             `INSERT INTO auth_sessions (
-              session_token, user_type, tier, mode, user_id, age_verified, hybrid_opt_in, expires_at_ms
+              session_token, user_type, tier, role, mode, user_id, age_verified, hybrid_opt_in, expires_at_ms
             ) VALUES (
-              $1, $2, $3, $4, $5, $6, $7, $8
+              $1, $2, $3, $4, $5, $6, $7, $8, $9
             )`,
             [
               session.sessionToken,
               session.userType,
               session.tier,
+              session.role,
               session.mode,
               session.userId ?? null,
               session.ageVerified,

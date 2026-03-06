@@ -8,6 +8,7 @@ import * as modeService from "./modeService";
 export type UserType = "guest" | "registered" | "subscriber";
 export type SubscriptionTier = "free" | "premium";
 export type Mode = "cruise" | "date" | "hybrid";
+export type UserRole = "user" | "admin";
 
 export type ErrorCode =
   | "INVALID_SESSION"
@@ -17,7 +18,9 @@ export type ErrorCode =
   | "ANONYMOUS_FORBIDDEN"
   | "INVALID_MODE_TRANSITION"
   | "EMAIL_VERIFICATION_REQUIRED"
-  | "INVALID_VERIFICATION_CODE";
+  | "INVALID_VERIFICATION_CODE"
+  | "USER_NOT_FOUND"
+  | "USER_BANNED";
 
 export type ServiceError = {
   code: ErrorCode;
@@ -35,8 +38,11 @@ export type StoredUser = Readonly<{
   phoneE164: string | null;
   userType: Exclude<UserType, "guest">;
   tier: SubscriptionTier;
+  role?: UserRole;
   ageVerified: boolean;
   emailVerified: boolean;
+  bannedAtMs?: number | null;
+  bannedReason?: string | null;
   verificationCodeSaltB64: string | null;
   verificationCodeHashB64: string | null;
   verificationCodeExpiresAtMs: number | null;
@@ -49,6 +55,7 @@ export type Session = Readonly<{
   sessionToken: string;
   userType: UserType;
   tier: SubscriptionTier;
+  role?: UserRole;
   mode: Mode;
   userId?: string;
   ageVerified: boolean;
@@ -64,7 +71,7 @@ export type RegisterResult = Readonly<{
 export type LoginResult = VerifyEmailResult;
 
 export type VerifyEmailResult = Readonly<{
-  user: Pick<StoredUser, "id" | "email" | "userType" | "tier">;
+  user: Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role" | "bannedAtMs" | "bannedReason">;
   jwt: string;
   session: Session;
 }>;
@@ -79,12 +86,15 @@ export type AuthService = Readonly<{
   verifyEmail(email: string, code: string): Result<VerifyEmailResult>;
   resendVerificationCode(email: string): Result<RegisterResult>;
   login(email: string, password: string): Result<VerifyEmailResult>;
-  issueJWT(user: Pick<StoredUser, "id" | "email" | "userType" | "tier">): Result<string>;
+  issueJWT(user: Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role">): Result<string>;
   getSession(sessionToken: string): Result<Session>;
   verifyAge(sessionToken: string, ageYears: number): Result<Session>;
   setHybridOptIn(sessionToken: string, optIn: boolean): Result<Session>;
   setMode(sessionToken: string, mode: Mode): Result<Session>;
   listRegisteredUserIds(): ReadonlyArray<string>;
+  listUsers(): ReadonlyArray<Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role" | "ageVerified" | "emailVerified" | "bannedAtMs" | "bannedReason" | "createdAtMs">>;
+  banUser(userId: unknown, reason: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">>;
+  unbanUser(userId: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">>;
   snapshotState(): AuthStateSnapshot;
 }>;
 
@@ -109,6 +119,7 @@ export type AuthServiceDeps = Readonly<{
     channel: "sms" | "email",
     user: Pick<StoredUser, "email" | "phoneE164" | "id">
   ) => void;
+  adminEmails?: ReadonlyArray<string>;
 }>;
 
 const DEFAULT_GUEST_SESSION_LIFETIME_MINUTES = 120;
@@ -131,6 +142,10 @@ function ok<T>(value: T): ResultOk<T> {
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+function normalizeRole(value: unknown): UserRole {
+  return value === "admin" ? "admin" : "user";
 }
 
 function isLikelyValidEmail(email: string): boolean {
@@ -192,6 +207,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       console.log(`[RedDoor] Verification code via ${channel} for ${destination}: ${code}`);
     });
   const onStateChanged = deps.onStateChanged;
+  const adminEmails = new Set((deps.adminEmails ?? []).map((value) => normalizeEmail(value)).filter((value) => value.length > 0));
 
   if (typeof jwtSecret !== "string" || jwtSecret.trim() === "") {
     // Deterministic, explicit failure: without a secret we cannot issue/verify JWTs.
@@ -254,8 +270,11 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         !(typeof c.phoneE164 === "string" || c.phoneE164 === null || c.phoneE164 === undefined) ||
         (c.userType !== "registered" && c.userType !== "subscriber") ||
         (c.tier !== "free" && c.tier !== "premium") ||
+        !(c.role === "admin" || c.role === "user" || c.role === undefined) ||
         !(typeof c.ageVerified === "boolean" || c.ageVerified === undefined) ||
         typeof c.emailVerified !== "boolean" ||
+        !(typeof c.bannedAtMs === "number" || c.bannedAtMs === null || c.bannedAtMs === undefined) ||
+        !(typeof c.bannedReason === "string" || c.bannedReason === null || c.bannedReason === undefined) ||
         !(typeof c.verificationCodeSaltB64 === "string" || c.verificationCodeSaltB64 === null) ||
         !(typeof c.verificationCodeHashB64 === "string" || c.verificationCodeHashB64 === null) ||
         !(typeof c.verificationCodeExpiresAtMs === "number" || c.verificationCodeExpiresAtMs === null) ||
@@ -271,8 +290,11 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         phoneE164: typeof c.phoneE164 === "string" ? c.phoneE164 : null,
         userType: c.userType,
         tier: c.tier,
+        role: c.role === "admin" || c.role === "user" ? c.role : adminEmails.has(normalizeEmail(c.email)) ? "admin" : "user",
         ageVerified: c.ageVerified === true,
         emailVerified: c.emailVerified,
+        bannedAtMs: typeof c.bannedAtMs === "number" ? c.bannedAtMs : null,
+        bannedReason: typeof c.bannedReason === "string" ? c.bannedReason : null,
         verificationCodeSaltB64: c.verificationCodeSaltB64,
         verificationCodeHashB64: c.verificationCodeHashB64,
         verificationCodeExpiresAtMs: c.verificationCodeExpiresAtMs,
@@ -288,18 +310,41 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
   function hydrateInitialState(state: AuthStateSnapshot): void {
     for (const candidate of state.users) {
       if (!candidate || typeof candidate !== "object") continue;
-      usersById.set(candidate.id, candidate);
-      usersByEmail.set(candidate.email, candidate);
+      const user: StoredUser = {
+        ...candidate,
+        role: normalizeRole(candidate.role ?? (adminEmails.has(normalizeEmail(candidate.email)) ? "admin" : "user")),
+        bannedAtMs: typeof candidate.bannedAtMs === "number" ? candidate.bannedAtMs : null,
+        bannedReason: typeof candidate.bannedReason === "string" ? candidate.bannedReason : null
+      };
+      usersById.set(user.id, user);
+      usersByEmail.set(user.email, user);
     }
     for (const session of state.sessions) {
       if (!session || typeof session !== "object") continue;
       if (typeof session.sessionToken !== "string" || session.sessionToken.trim() === "") continue;
-      sessionsByToken.set(session.sessionToken, session);
+      sessionsByToken.set(session.sessionToken, { ...session, role: normalizeRole(session.role) });
     }
   }
 
-  function userPublic(user: StoredUser): Pick<StoredUser, "id" | "email" | "userType" | "tier"> {
-    return { id: user.id, email: user.email, userType: user.userType, tier: user.tier };
+  function userPublic(user: StoredUser): Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role" | "bannedAtMs" | "bannedReason"> {
+    return {
+      id: user.id,
+      email: user.email,
+      userType: user.userType,
+      tier: user.tier,
+      role: normalizeRole(user.role),
+      bannedAtMs: typeof user.bannedAtMs === "number" ? user.bannedAtMs : null,
+      bannedReason: typeof user.bannedReason === "string" ? user.bannedReason : null
+    };
+  }
+
+  function assertNotBanned(user: StoredUser): Result<void> {
+    if (typeof user.bannedAtMs !== "number") return ok(undefined);
+    return err("USER_BANNED", "User account is banned.", {
+      userId: user.id,
+      bannedAtMs: user.bannedAtMs,
+      reason: typeof user.bannedReason === "string" ? user.bannedReason : undefined
+    });
   }
 
   function setVerificationCode(user: StoredUser, now: number): StoredUser {
@@ -335,7 +380,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
   }
 
   function issueJWTInternal(
-    user: Pick<StoredUser, "id" | "email" | "userType" | "tier">,
+    user: Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role">,
     issuedAtMs: number
   ): string {
     return jwt.sign(
@@ -343,6 +388,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         email: user.email,
         userType: user.userType,
         tier: user.tier,
+        role: normalizeRole(user.role),
         iat: Math.floor(issuedAtMs / 1000)
       },
       jwtSecret,
@@ -360,6 +406,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       sessionToken,
       userType: user.userType,
       tier: user.tier,
+      role: normalizeRole(user.role),
       mode: "cruise",
       userId: user.id,
       ageVerified: user.ageVerified === true,
@@ -379,6 +426,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       sessionToken,
       userType: "guest",
       tier: "free",
+      role: "user",
       mode: "cruise",
       ageVerified: false,
       hybridOptIn: false,
@@ -404,6 +452,26 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       sessionsByToken.delete(sessionToken);
       notifyStateChanged();
       return err("INVALID_SESSION", "Session expired.");
+    }
+
+    if (typeof existing.userId === "string" && existing.userId.trim() !== "") {
+      const user = usersById.get(existing.userId);
+      if (!user) {
+        sessionsByToken.delete(sessionToken);
+        notifyStateChanged();
+        return err("INVALID_SESSION", "Invalid session.");
+      }
+      const banned = assertNotBanned(user);
+      if (!banned.ok) {
+        sessionsByToken.delete(sessionToken);
+        notifyStateChanged();
+        return banned as Result<Session>;
+      }
+      if (normalizeRole(existing.role) !== normalizeRole(user.role)) {
+        const refreshed: Session = { ...existing, role: normalizeRole(user.role) };
+        sessionsByToken.set(sessionToken, refreshed);
+        return ok(refreshed);
+      }
     }
 
     return ok(existing);
@@ -453,9 +521,12 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         phoneE164: normalizedPhone.length > 0 ? normalizedPhone : null,
         userType: "registered",
         tier: "free",
+        role: adminEmails.has(normalizedEmail) ? "admin" : "user",
         ageVerified: false,
         // Web build currently runs without verification-code UX; treat new registrations as verified.
         emailVerified: skipEmailVerification,
+        bannedAtMs: null,
+        bannedReason: null,
         verificationCodeSaltB64: null,
         verificationCodeHashB64: null,
         verificationCodeExpiresAtMs: null,
@@ -483,6 +554,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (!user) {
         return err("INVALID_VERIFICATION_CODE", "Invalid or expired verification code.");
       }
+      const banned = assertNotBanned(user);
+      if (!banned.ok) return banned as Result<VerifyEmailResult>;
       if (user.emailVerified) {
         const now = nowMs();
         const token = issueJWTInternal(user, now);
@@ -558,6 +631,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (!user) {
         return err("UNAUTHORIZED_ACTION", "Invalid credentials.");
       }
+      const banned = assertNotBanned(user);
+      if (!banned.ok) return banned as Result<VerifyEmailResult>;
 
       const salt = Buffer.from(user.passwordSaltB64, "base64");
       const expectedHash = Buffer.from(user.passwordHashB64, "base64");
@@ -598,7 +673,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       });
     },
 
-    issueJWT(user: Pick<StoredUser, "id" | "email" | "userType" | "tier">): Result<string> {
+    issueJWT(user: Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role">): Result<string> {
       if (
         typeof user !== "object" ||
         user === null ||
@@ -607,11 +682,12 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         typeof user.email !== "string" ||
         !isLikelyValidEmail(user.email) ||
         (user.userType !== "registered" && user.userType !== "subscriber") ||
-        (user.tier !== "free" && user.tier !== "premium")
+        (user.tier !== "free" && user.tier !== "premium") ||
+        (user.role !== undefined && user.role !== "user" && user.role !== "admin")
       ) {
         return err("UNAUTHORIZED_ACTION", "Invalid user.");
       }
-      return ok(issueJWTInternal({ ...user, email: normalizeEmail(user.email) }, nowMs()));
+      return ok(issueJWTInternal({ ...user, email: normalizeEmail(user.email), role: normalizeRole(user.role) }, nowMs()));
     },
 
     getSession(sessionToken: string): Result<Session> {
@@ -693,6 +769,73 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       return Array.from(usersById.values())
         .filter((u) => (u.userType === "registered" || u.userType === "subscriber") && u.emailVerified === true)
         .map((u) => u.id);
+    },
+
+    listUsers(): ReadonlyArray<Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role" | "ageVerified" | "emailVerified" | "bannedAtMs" | "bannedReason" | "createdAtMs">> {
+      return Array.from(usersById.values())
+        .sort((a, b) => b.createdAtMs - a.createdAtMs)
+        .map((u) => ({
+          id: u.id,
+          email: u.email,
+          userType: u.userType,
+          tier: u.tier,
+          role: normalizeRole(u.role),
+          ageVerified: u.ageVerified,
+          emailVerified: u.emailVerified,
+          bannedAtMs: typeof u.bannedAtMs === "number" ? u.bannedAtMs : null,
+          bannedReason: typeof u.bannedReason === "string" ? u.bannedReason : null,
+          createdAtMs: u.createdAtMs
+        }));
+    },
+
+    banUser(userId: unknown, reason: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">> {
+      if (typeof userId !== "string" || userId.trim() === "") {
+        return err("UNAUTHORIZED_ACTION", "Invalid user id.");
+      }
+      const user = usersById.get(userId.trim());
+      if (!user) return err("USER_NOT_FOUND", "User not found.");
+      const reasonText = typeof reason === "string" ? reason.trim().slice(0, 500) : "";
+      const updated: StoredUser = {
+        ...user,
+        bannedAtMs: nowMs(),
+        bannedReason: reasonText.length > 0 ? reasonText : null
+      };
+      usersById.set(updated.id, updated);
+      usersByEmail.set(updated.email, updated);
+      for (const [token, session] of sessionsByToken.entries()) {
+        if (session.userId === updated.id) {
+          sessionsByToken.delete(token);
+        }
+      }
+      persistUsers();
+      notifyStateChanged();
+      return ok({
+        id: updated.id,
+        bannedAtMs: updated.bannedAtMs ?? null,
+        bannedReason: updated.bannedReason ?? null
+      });
+    },
+
+    unbanUser(userId: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">> {
+      if (typeof userId !== "string" || userId.trim() === "") {
+        return err("UNAUTHORIZED_ACTION", "Invalid user id.");
+      }
+      const user = usersById.get(userId.trim());
+      if (!user) return err("USER_NOT_FOUND", "User not found.");
+      const updated: StoredUser = {
+        ...user,
+        bannedAtMs: null,
+        bannedReason: null
+      };
+      usersById.set(updated.id, updated);
+      usersByEmail.set(updated.email, updated);
+      persistUsers();
+      notifyStateChanged();
+      return ok({
+        id: updated.id,
+        bannedAtMs: updated.bannedAtMs,
+        bannedReason: updated.bannedReason
+      });
     },
 
     snapshotState(): AuthStateSnapshot {

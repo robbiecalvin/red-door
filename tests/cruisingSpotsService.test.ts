@@ -19,10 +19,11 @@ describe("cruisingSpotsService", () => {
       creatorUserId: "user:u_1",
       createdAtMs: 1000,
       checkInCount: 0,
-      actionCount: 0
+      actionCount: 0,
+      moderationStatus: "pending"
     });
 
-    const list = svc.list();
+    const list = svc.listAll();
     expect(list.ok).toBe(true);
     if (!list.ok) throw new Error("unreachable");
     expect(list.value).toHaveLength(1);
@@ -68,7 +69,7 @@ describe("cruisingSpotsService", () => {
     now = 3000;
     const action = svc.recordAction({ userType: "guest", sessionToken: "s_guest", ageVerified: true }, "spot_2");
     expect(action.ok).toBe(true);
-    const spots = svc.list();
+    const spots = svc.listAll();
     expect(spots.ok).toBe(true);
     if (!spots.ok) throw new Error("unreachable");
     expect(spots.value[0].checkInCount).toBe(1);
@@ -95,5 +96,30 @@ describe("cruisingSpotsService", () => {
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.error).toEqual({ code: "INVALID_INPUT", message: "Spot description contains disallowed language." });
+  });
+
+  it("Given a newly created spot When listed publicly before approval Then it is hidden until approved", () => {
+    const svc = createCruisingSpotsService({ nowMs: () => 1000, idFactory: () => "spot_mod_1" });
+    const created = svc.create(
+      { userType: "registered", userId: "u_admin", ageVerified: true },
+      { name: "Night Dock", address: "Pier 4", lat: 1, lng: 2, description: "Late nights." }
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error("unreachable");
+
+    const before = svc.list();
+    expect(before.ok).toBe(true);
+    if (!before.ok) throw new Error("unreachable");
+    expect(before.value).toHaveLength(0);
+
+    const approved = svc.approve({ userType: "registered", userId: "admin_1", ageVerified: true, role: "admin" }, "spot_mod_1");
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) throw new Error("unreachable");
+    expect(approved.value.moderationStatus).toBe("approved");
+
+    const after = svc.list();
+    expect(after.ok).toBe(true);
+    if (!after.ok) throw new Error("unreachable");
+    expect(after.value).toHaveLength(1);
   });
 });
