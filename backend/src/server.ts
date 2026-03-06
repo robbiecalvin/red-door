@@ -1016,6 +1016,55 @@ async function main(): Promise<void> {
     return res.status(200).json(result.value);
   });
 
+  app.get("/admin/db/health", async (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    if (!postgresPool) {
+      return res.status(200).json({
+        persistenceMode: "local",
+        databaseConfigured: false,
+        healthy: true,
+        details: {
+          message: "PostgreSQL is not configured. Backend is running with local file persistence."
+        }
+      });
+    }
+
+    try {
+      const [pingRes, usersCountRes, sessionsCountRes] = await Promise.all([
+        postgresPool.query("SELECT NOW()::text AS now_utc"),
+        postgresPool.query("SELECT COUNT(*)::bigint AS count FROM auth_users"),
+        postgresPool.query("SELECT COUNT(*)::bigint AS count FROM auth_sessions")
+      ]);
+
+      const nowUtc = String((pingRes.rows[0] as Record<string, unknown>)?.now_utc ?? "");
+      const usersCount = Number((usersCountRes.rows[0] as Record<string, unknown>)?.count ?? 0);
+      const sessionsCount = Number((sessionsCountRes.rows[0] as Record<string, unknown>)?.count ?? 0);
+
+      return res.status(200).json({
+        persistenceMode: "postgres",
+        databaseConfigured: true,
+        healthy: true,
+        details: {
+          sourceEnvKey: postgresSettings?.sourceEnvKey ?? "unknown",
+          nowUtc,
+          authUsersCount: Number.isFinite(usersCount) ? usersCount : 0,
+          authSessionsCount: Number.isFinite(sessionsCount) ? sessionsCount : 0
+        }
+      });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      return res.status(503).json({
+        persistenceMode: "postgres",
+        databaseConfigured: true,
+        healthy: false,
+        details: {
+          sourceEnvKey: postgresSettings?.sourceEnvKey ?? "unknown",
+          error: message
+        }
+      });
+    }
+  });
+
   // Promoted profiles (safe paid listings)
   app.get("/promoted-profiles", (_req, res) => {
     const result = promotedProfilesService.listListings();

@@ -141,8 +141,6 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("DELETE FROM auth_users");
-        await client.query("DELETE FROM auth_sessions");
 
         for (const user of state.users) {
           await client.query(
@@ -154,7 +152,23 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
               $11, $12, $13,
               $14, $15, $16
-            )`,
+            )
+            ON CONFLICT (id) DO UPDATE SET
+              email = EXCLUDED.email,
+              phone_e164 = EXCLUDED.phone_e164,
+              user_type = EXCLUDED.user_type,
+              tier = EXCLUDED.tier,
+              role = EXCLUDED.role,
+              age_verified = EXCLUDED.age_verified,
+              email_verified = EXCLUDED.email_verified,
+              banned_at_ms = EXCLUDED.banned_at_ms,
+              banned_reason = EXCLUDED.banned_reason,
+              verification_code_salt_b64 = EXCLUDED.verification_code_salt_b64,
+              verification_code_hash_b64 = EXCLUDED.verification_code_hash_b64,
+              verification_code_expires_at_ms = EXCLUDED.verification_code_expires_at_ms,
+              password_salt_b64 = EXCLUDED.password_salt_b64,
+              password_hash_b64 = EXCLUDED.password_hash_b64,
+              created_at_ms = EXCLUDED.created_at_ms`,
             [
               user.id,
               user.email,
@@ -176,13 +190,28 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
           );
         }
 
+        if (state.users.length > 0) {
+          await client.query("DELETE FROM auth_users WHERE id <> ALL($1::text[])", [state.users.map((u) => u.id)]);
+        } else {
+          await client.query("DELETE FROM auth_users");
+        }
+
         for (const session of state.sessions) {
           await client.query(
             `INSERT INTO auth_sessions (
               session_token, user_type, tier, role, mode, user_id, age_verified, hybrid_opt_in, expires_at_ms
             ) VALUES (
               $1, $2, $3, $4, $5, $6, $7, $8, $9
-            )`,
+            )
+            ON CONFLICT (session_token) DO UPDATE SET
+              user_type = EXCLUDED.user_type,
+              tier = EXCLUDED.tier,
+              role = EXCLUDED.role,
+              mode = EXCLUDED.mode,
+              user_id = EXCLUDED.user_id,
+              age_verified = EXCLUDED.age_verified,
+              hybrid_opt_in = EXCLUDED.hybrid_opt_in,
+              expires_at_ms = EXCLUDED.expires_at_ms`,
             [
               session.sessionToken,
               session.userType,
@@ -195,6 +224,14 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
               session.expiresAtMs
             ]
           );
+        }
+
+        if (state.sessions.length > 0) {
+          await client.query("DELETE FROM auth_sessions WHERE session_token <> ALL($1::text[])", [
+            state.sessions.map((s) => s.sessionToken)
+          ]);
+        } else {
+          await client.query("DELETE FROM auth_sessions");
         }
 
         await client.query("COMMIT");
