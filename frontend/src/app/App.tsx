@@ -177,6 +177,15 @@ function resolveApiBasePath(): string {
   if (!configured || configured === "__disabled__") {
     return DEFAULT_SHARED_API_BASE;
   }
+  const normalized = configured.toLowerCase();
+  const isLocalModeConfig = normalized === "__local__" || normalized === "local" || normalized === "rdlocal";
+  const isLocalHost =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.hostname === "::1";
+  if (isLocalModeConfig && !isLocalHost) {
+    return DEFAULT_SHARED_API_BASE;
+  }
   return configured;
 }
 
@@ -361,13 +370,22 @@ export function App(): React.ReactElement {
         if (!cancelled) setTopAvatarUrl(null);
       }
     }
+
+    const onProfileMediaUpdated = (evt: Event): void => {
+      const detail = (evt as CustomEvent<{ userId?: string }>).detail;
+      if (detail?.userId && activeSession.userId && detail.userId !== activeSession.userId) return;
+      void refreshTopAvatar();
+    };
+
     void refreshTopAvatar();
     const id = window.setInterval(() => {
       void refreshTopAvatar();
     }, 10_000);
+    window.addEventListener("rd:profile-media-updated", onProfileMediaUpdated as EventListener);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      window.removeEventListener("rd:profile-media-updated", onProfileMediaUpdated as EventListener);
     };
   }, [api, session]);
 

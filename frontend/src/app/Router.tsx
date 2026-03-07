@@ -40,6 +40,7 @@ type MobileCruiseTab = "map" | "chat";
 type DiscoverScreen = MobileCruiseTab;
 type MessageChannel = "instant" | "direct";
 const FIRE_SIGNAL_TEXT = "FIRE_SIGNAL|1";
+const PROFILE_MEDIA_UPDATED_EVENT = "rd:profile-media-updated";
 declare const __DUALMODE_WS_URL__: string | undefined;
 
 type ProfileDraft = Readonly<{
@@ -234,6 +235,14 @@ function isFireSignalText(text: string): boolean {
 
 function displayMessageText(text: string): string {
   return isFireSignalText(text) ? "🔥 I'm into you" : text;
+}
+
+function emitProfileMediaUpdated(profile: UserProfile): void {
+  window.dispatchEvent(
+    new CustomEvent(PROFILE_MEDIA_UPDATED_EVENT, {
+      detail: { userId: profile.userId, profile }
+    })
+  );
 }
 
 function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -493,6 +502,78 @@ function CruiseSurface({
       }
     })();
   }, [api, session.sessionToken, session.userType]);
+
+  useEffect(() => {
+    const onProfileMediaUpdated = (evt: Event): void => {
+      const detail = (evt as CustomEvent<{ userId?: string; profile?: UserProfile }>).detail;
+      const userId = typeof detail?.userId === "string" ? detail.userId : "";
+      const profile = detail?.profile;
+      if (!userId || !profile) return;
+
+      setPublicProfiles((prev) =>
+        prev.map((row) =>
+          row.userId === userId
+            ? ({
+                ...row,
+                displayName: profile.displayName,
+                age: profile.age,
+                bio: profile.bio,
+                stats: profile.stats,
+                discreetMode: profile.discreetMode,
+                mainPhotoMediaId: profile.mainPhotoMediaId,
+                galleryMediaIds: profile.galleryMediaIds,
+                videoMediaId: profile.videoMediaId
+              } as typeof row)
+            : row
+        )
+      );
+      setSelectedPublicProfile((prev) =>
+        prev && prev.userId === userId
+          ? {
+              ...prev,
+              displayName: profile.displayName,
+              age: profile.age,
+              bio: profile.bio,
+              stats: profile.stats,
+              discreetMode: profile.discreetMode,
+              mainPhotoMediaId: profile.mainPhotoMediaId,
+              galleryMediaIds: profile.galleryMediaIds,
+              videoMediaId: profile.videoMediaId
+            }
+          : prev
+      );
+
+      const mediaIds = [profile.mainPhotoMediaId, ...(profile.galleryMediaIds ?? []), profile.videoMediaId].filter(
+        (id): id is string => typeof id === "string" && id.length > 0
+      );
+      if (mediaIds.length > 0) {
+        void Promise.all(
+          mediaIds.map(async (mediaId) => {
+            try {
+              const res = await api.getPublicMediaUrl(mediaId);
+              return { mediaId, url: res.downloadUrl };
+            } catch {
+              return null;
+            }
+          })
+        ).then((rows) => {
+          setMediaUrlById((prev) => {
+            const next = { ...prev };
+            for (const row of rows) {
+              if (!row) continue;
+              next[row.mediaId] = row.url;
+            }
+            return next;
+          });
+        });
+      }
+    };
+
+    window.addEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
+    return () => {
+      window.removeEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
+    };
+  }, [api]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3271,7 +3352,17 @@ function PublicPostings({
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [api, session.sessionToken, session.userType]);
+
+  useEffect(() => {
+    const onProfileMediaUpdated = (): void => {
+      void refresh();
+    };
+    window.addEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
+    return () => {
+      window.removeEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
+    };
+  }, [api, session.sessionToken, session.userType]);
 
   async function submit(type: "ad" | "event"): Promise<void> {
     if (type === "event" && !canPostEvents) {
@@ -3970,7 +4061,17 @@ function SubmissionsPanel({ api, session, setLastError }: Readonly<{ api: Api; s
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [api]);
+
+  useEffect(() => {
+    const onProfileMediaUpdated = (): void => {
+      void refresh();
+    };
+    window.addEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
+    return () => {
+      window.removeEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
+    };
+  }, [api]);
 
   async function create(): Promise<void> {
     try {
@@ -4332,22 +4433,24 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
   const [mediaPreviewUrlById, setMediaPreviewUrlById] = useState<Record<string, string>>({});
   const [showMyProfile, setShowMyProfile] = useState<boolean>(false);
 
-  async function refreshProfile(): Promise<void> {
+  async function refreshProfile(options?: Readonly<{ silent?: boolean }>): Promise<UserProfile | null> {
     setLoading(true);
     try {
       const res = await api.getMyProfile(session.sessionToken);
       setProfile(res.profile);
       setDraft(toProfileDraft(res.profile));
-      setStatus("Profile loaded.");
+      if (!options?.silent) setStatus("Profile loaded.");
+      return res.profile;
     } catch (e) {
       const err = e as ServiceError;
       if (err?.code === "PROFILE_NOT_FOUND") {
         setProfile(null);
         setDraft((prev) => ({ ...prev, age: prev.age || "18" }));
-        setStatus("No profile yet. Fill out the form and save.");
-        return;
+        if (!options?.silent) setStatus("No profile yet. Fill out the form and save.");
+        return null;
       }
-      setStatus(normalizeErrorMessage(e));
+      if (!options?.silent) setStatus(normalizeErrorMessage(e));
+      return null;
     } finally {
       setLoading(false);
     }
@@ -4417,6 +4520,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
       const res = await api.upsertMyProfile(session.sessionToken, payload);
       setProfile(res.profile);
       setDraft(toProfileDraft(res.profile));
+      emitProfileMediaUpdated(res.profile);
       try {
         localStorage.setItem(
           "reddoor_travel_center",
@@ -4482,7 +4586,8 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
       }
 
       await api.completeMediaUpload(session.sessionToken, initiated.mediaId);
-      await refreshProfile();
+      const nextProfile = await refreshProfile({ silent: true });
+      if (nextProfile) emitProfileMediaUpdated(nextProfile);
       setStatus("Media uploaded.");
     } catch (e) {
       const msg = normalizeErrorMessage(e);
@@ -4504,6 +4609,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
       const nextGallery = (profile.galleryMediaIds ?? []).filter((id) => id !== mediaId);
       const res = await api.updateProfileMediaReferences(session.sessionToken, { galleryMediaIds: nextGallery });
       setProfile(res.profile);
+      emitProfileMediaUpdated(res.profile);
       setStatus("Gallery updated.");
     } catch (e) {
       const msg = normalizeErrorMessage(e);
@@ -4523,6 +4629,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         mainPhotoMediaId: mediaId
       });
       setProfile(res.profile);
+      emitProfileMediaUpdated(res.profile);
       setStatus("Main photo updated.");
     } catch (e) {
       const msg = normalizeErrorMessage(e);
