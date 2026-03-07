@@ -190,6 +190,19 @@ export type PromotedProfileListing = Readonly<{
   createdAtMs: number;
 }>;
 
+export type AdminUserSummary = Readonly<{
+  id: string;
+  email: string;
+  userType: "registered" | "subscriber";
+  tier: "free" | "premium";
+  role?: "user" | "admin";
+  ageVerified: boolean;
+  emailVerified: boolean;
+  bannedAtMs?: number | null;
+  bannedReason?: string | null;
+  createdAtMs: number;
+}>;
+
 async function readJsonOrThrow(res: Response): Promise<any> {
   const text = await res.text();
   const parsed = text.length ? JSON.parse(text) : null;
@@ -278,6 +291,7 @@ const LOCAL_AUTH_STATE_KEY = "reddoor_local_auth_state_v1";
 const LOCAL_UPLOAD_PREFIX = "rdlocal://";
 // Full-page web navigation requires durable local state across reloads.
 const LOCAL_PERSIST_ENABLED = true;
+const LOCAL_ADMIN_EMAILS = new Set<string>(["admin@robbiecalvin.com", "robert.calvin.dev@gmail.com"]);
 const DISALLOWED_KID_VARIATION_PATTERN =
   /(^|[^a-z0-9])k+[\W_]*[i1!|l]+[\W_]*d+(?:[\W_]*(?:s|z|do|dos|dy|die|dies))?(?=$|[^a-z0-9])/i;
 
@@ -529,6 +543,18 @@ function requireUserSession(state: LocalState, sessionToken: string): Session {
   return session;
 }
 
+function requireAdminSession(state: LocalState, sessionToken: string): Session {
+  const session = requireUserSession(state, sessionToken);
+  if (session.role !== "admin") {
+    throw { code: "FORBIDDEN", message: "Admin access required." } as ServiceError;
+  }
+  return session;
+}
+
+function roleForLocalEmail(email: string): "user" | "admin" {
+  return LOCAL_ADMIN_EMAILS.has(email.trim().toLowerCase()) ? "admin" : "user";
+}
+
 function withUpdatedSession(state: LocalState, session: Session): LocalState {
   return {
     ...state,
@@ -746,6 +772,21 @@ function createLocalApiClient(): Readonly<{
   createSubmission(sessionToken: string, payload: Readonly<{ title: string; body: string }>): Promise<{ submission: Submission }>;
   recordSubmissionView(submissionId: string): Promise<{ submission: Submission }>;
   rateSubmission(submissionId: string, stars: number): Promise<{ submission: Submission }>;
+  adminListUsers(sessionToken: string): Promise<{ users: ReadonlyArray<AdminUserSummary> }>;
+  adminBanUser(sessionToken: string, userId: string, reason?: string): Promise<{ user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> }>;
+  adminUnbanUser(sessionToken: string, userId: string): Promise<{ user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> }>;
+  adminListCruisingSpots(sessionToken: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
+  adminApproveCruisingSpot(sessionToken: string, spotId: string, reason?: string): Promise<{ spot: CruisingSpot }>;
+  adminRejectCruisingSpot(sessionToken: string, spotId: string, reason?: string): Promise<{ spot: CruisingSpot }>;
+  adminDeleteCruisingSpot(sessionToken: string, spotId: string): Promise<{ spotId: string }>;
+  adminListPublicPostings(sessionToken: string, type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
+  adminApprovePublicPosting(sessionToken: string, postingId: string, reason?: string): Promise<{ posting: PublicPosting }>;
+  adminRejectPublicPosting(sessionToken: string, postingId: string, reason?: string): Promise<{ posting: PublicPosting }>;
+  adminDeletePublicPosting(sessionToken: string, postingId: string): Promise<{ postingId: string }>;
+  adminListSubmissions(sessionToken: string): Promise<{ submissions: ReadonlyArray<Submission> }>;
+  adminApproveSubmission(sessionToken: string, submissionId: string, reason?: string): Promise<{ submission: Submission }>;
+  adminRejectSubmission(sessionToken: string, submissionId: string, reason?: string): Promise<{ submission: Submission }>;
+  adminDeleteSubmission(sessionToken: string, submissionId: string): Promise<{ submissionId: string }>;
   listPromotedProfiles(): Promise<{ listings: ReadonlyArray<PromotedProfileListing>; feeCents: number }>;
   startPromotedPayment(sessionToken: string): Promise<{ payment: { paymentToken: string; amountCents: number; status: string; expiresAtMs: number } }>;
   confirmPromotedPayment(
@@ -766,6 +807,7 @@ function createLocalApiClient(): Readonly<{
         sessionToken,
         userType: "guest",
         tier: "free",
+        role: "user",
         mode: "hybrid",
         ageVerified: false,
         hybridOptIn: true,
@@ -821,6 +863,7 @@ function createLocalApiClient(): Readonly<{
         sessionToken,
         userType: verifiedUser.userType,
         tier: verifiedUser.tier,
+        role: roleForLocalEmail(normalizedEmail),
         mode: "hybrid",
         userId,
         ageVerified: true,
@@ -866,6 +909,7 @@ function createLocalApiClient(): Readonly<{
         sessionToken,
         userType: user.userType,
         tier: user.tier,
+        role: roleForLocalEmail(normalizedEmail),
         mode: "hybrid",
         userId,
         ageVerified: true,
@@ -1649,6 +1693,146 @@ function createLocalApiClient(): Readonly<{
       writeState({ ...state, submissions: next });
       return { submission: clone(updated) };
     },
+    async adminListUsers(sessionToken: string): Promise<{ users: ReadonlyArray<AdminUserSummary> }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const users = Object.values(state.usersById)
+        .map<AdminUserSummary>((user) => ({
+          id: user.id,
+          email: user.email,
+          userType: user.userType,
+          tier: user.tier,
+          role: roleForLocalEmail(user.email),
+          ageVerified: true,
+          emailVerified: user.verified === true,
+          bannedAtMs: null,
+          bannedReason: null,
+          createdAtMs: nowMs()
+        }))
+        .sort((a, b) => b.createdAtMs - a.createdAtMs);
+      return { users: clone(users) };
+    },
+    async adminBanUser(sessionToken: string, userId: string, reason?: string): Promise<{ user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const user = state.usersById[userId];
+      if (!user) throw { code: "USER_NOT_FOUND", message: "User not found." } as ServiceError;
+      const ts = nowMs();
+      const nextSessionsByToken = Object.fromEntries(
+        Object.entries(state.sessionsByToken).filter(([, session]) => session.userId !== userId)
+      );
+      writeState({ ...state, sessionsByToken: nextSessionsByToken });
+      return { user: { id: userId, bannedAtMs: ts, bannedReason: reason?.trim() || null } };
+    },
+    async adminUnbanUser(sessionToken: string, userId: string): Promise<{ user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      if (!state.usersById[userId]) throw { code: "USER_NOT_FOUND", message: "User not found." } as ServiceError;
+      return { user: { id: userId, bannedAtMs: null, bannedReason: null } };
+    },
+    async adminListCruisingSpots(sessionToken: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      return { spots: clone(state.cruisingSpots) };
+    },
+    async adminApproveCruisingSpot(sessionToken: string, spotId: string): Promise<{ spot: CruisingSpot }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const idx = state.cruisingSpots.findIndex((spot) => spot.spotId === spotId);
+      if (idx < 0) throw { code: "SPOT_NOT_FOUND", message: "Cruising spot not found." } as ServiceError;
+      const updated = { ...state.cruisingSpots[idx], moderationStatus: "approved" as const };
+      const next = [...state.cruisingSpots];
+      next[idx] = updated;
+      writeState({ ...state, cruisingSpots: next });
+      return { spot: clone(updated) };
+    },
+    async adminRejectCruisingSpot(sessionToken: string, spotId: string): Promise<{ spot: CruisingSpot }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const idx = state.cruisingSpots.findIndex((spot) => spot.spotId === spotId);
+      if (idx < 0) throw { code: "SPOT_NOT_FOUND", message: "Cruising spot not found." } as ServiceError;
+      const updated = { ...state.cruisingSpots[idx], moderationStatus: "rejected" as const };
+      const next = [...state.cruisingSpots];
+      next[idx] = updated;
+      writeState({ ...state, cruisingSpots: next });
+      return { spot: clone(updated) };
+    },
+    async adminDeleteCruisingSpot(sessionToken: string, spotId: string): Promise<{ spotId: string }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const next = state.cruisingSpots.filter((spot) => spot.spotId !== spotId);
+      writeState({ ...state, cruisingSpots: next });
+      return { spotId };
+    },
+    async adminListPublicPostings(sessionToken: string, type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const postings = type ? state.publicPostings.filter((posting) => posting.type === type) : state.publicPostings;
+      return { postings: clone(postings) };
+    },
+    async adminApprovePublicPosting(sessionToken: string, postingId: string): Promise<{ posting: PublicPosting }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const idx = state.publicPostings.findIndex((posting) => posting.postingId === postingId);
+      if (idx < 0) throw { code: "POSTING_NOT_FOUND", message: "Posting not found." } as ServiceError;
+      const updated = { ...state.publicPostings[idx], moderationStatus: "approved" as const };
+      const next = [...state.publicPostings];
+      next[idx] = updated;
+      writeState({ ...state, publicPostings: next });
+      return { posting: clone(updated) };
+    },
+    async adminRejectPublicPosting(sessionToken: string, postingId: string): Promise<{ posting: PublicPosting }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const idx = state.publicPostings.findIndex((posting) => posting.postingId === postingId);
+      if (idx < 0) throw { code: "POSTING_NOT_FOUND", message: "Posting not found." } as ServiceError;
+      const updated = { ...state.publicPostings[idx], moderationStatus: "rejected" as const };
+      const next = [...state.publicPostings];
+      next[idx] = updated;
+      writeState({ ...state, publicPostings: next });
+      return { posting: clone(updated) };
+    },
+    async adminDeletePublicPosting(sessionToken: string, postingId: string): Promise<{ postingId: string }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const next = state.publicPostings.filter((posting) => posting.postingId !== postingId);
+      writeState({ ...state, publicPostings: next });
+      return { postingId };
+    },
+    async adminListSubmissions(sessionToken: string): Promise<{ submissions: ReadonlyArray<Submission> }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      return { submissions: clone(state.submissions) };
+    },
+    async adminApproveSubmission(sessionToken: string, submissionId: string): Promise<{ submission: Submission }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const idx = state.submissions.findIndex((submission) => submission.submissionId === submissionId);
+      if (idx < 0) throw { code: "SUBMISSION_NOT_FOUND", message: "Submission not found." } as ServiceError;
+      const updated = { ...state.submissions[idx], moderationStatus: "approved" as const };
+      const next = [...state.submissions];
+      next[idx] = updated;
+      writeState({ ...state, submissions: next });
+      return { submission: clone(updated) };
+    },
+    async adminRejectSubmission(sessionToken: string, submissionId: string): Promise<{ submission: Submission }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const idx = state.submissions.findIndex((submission) => submission.submissionId === submissionId);
+      if (idx < 0) throw { code: "SUBMISSION_NOT_FOUND", message: "Submission not found." } as ServiceError;
+      const updated = { ...state.submissions[idx], moderationStatus: "rejected" as const };
+      const next = [...state.submissions];
+      next[idx] = updated;
+      writeState({ ...state, submissions: next });
+      return { submission: clone(updated) };
+    },
+    async adminDeleteSubmission(sessionToken: string, submissionId: string): Promise<{ submissionId: string }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const next = state.submissions.filter((submission) => submission.submissionId !== submissionId);
+      writeState({ ...state, submissions: next });
+      return { submissionId };
+    },
     async listPromotedProfiles(): Promise<{ listings: ReadonlyArray<PromotedProfileListing>; feeCents: number }> {
       const state = readState();
       return { listings: clone(state.promotedProfiles), feeCents };
@@ -1833,6 +2017,21 @@ export function apiClient(basePath = "/api"): Readonly<{
   createSubmission(sessionToken: string, payload: Readonly<{ title: string; body: string }>): Promise<{ submission: Submission }>;
   recordSubmissionView(submissionId: string): Promise<{ submission: Submission }>;
   rateSubmission(submissionId: string, stars: number): Promise<{ submission: Submission }>;
+  adminListUsers(sessionToken: string): Promise<{ users: ReadonlyArray<AdminUserSummary> }>;
+  adminBanUser(sessionToken: string, userId: string, reason?: string): Promise<{ user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> }>;
+  adminUnbanUser(sessionToken: string, userId: string): Promise<{ user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> }>;
+  adminListCruisingSpots(sessionToken: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
+  adminApproveCruisingSpot(sessionToken: string, spotId: string, reason?: string): Promise<{ spot: CruisingSpot }>;
+  adminRejectCruisingSpot(sessionToken: string, spotId: string, reason?: string): Promise<{ spot: CruisingSpot }>;
+  adminDeleteCruisingSpot(sessionToken: string, spotId: string): Promise<{ spotId: string }>;
+  adminListPublicPostings(sessionToken: string, type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
+  adminApprovePublicPosting(sessionToken: string, postingId: string, reason?: string): Promise<{ posting: PublicPosting }>;
+  adminRejectPublicPosting(sessionToken: string, postingId: string, reason?: string): Promise<{ posting: PublicPosting }>;
+  adminDeletePublicPosting(sessionToken: string, postingId: string): Promise<{ postingId: string }>;
+  adminListSubmissions(sessionToken: string): Promise<{ submissions: ReadonlyArray<Submission> }>;
+  adminApproveSubmission(sessionToken: string, submissionId: string, reason?: string): Promise<{ submission: Submission }>;
+  adminRejectSubmission(sessionToken: string, submissionId: string, reason?: string): Promise<{ submission: Submission }>;
+  adminDeleteSubmission(sessionToken: string, submissionId: string): Promise<{ submissionId: string }>;
   listPromotedProfiles(): Promise<{ listings: ReadonlyArray<PromotedProfileListing>; feeCents: number }>;
   startPromotedPayment(sessionToken: string): Promise<{ payment: { paymentToken: string; amountCents: number; status: string; expiresAtMs: number } }>;
   confirmPromotedPayment(
@@ -2286,6 +2485,123 @@ export function apiClient(basePath = "/api"): Readonly<{
         body: JSON.stringify({ submissionId, stars })
       });
       return (await readJsonOrThrow(res)) as { submission: Submission };
+    },
+    async adminListUsers(sessionToken: string): Promise<{ users: ReadonlyArray<AdminUserSummary> }> {
+      const res = await fetch(`${basePath}/admin/users`, {
+        method: "GET",
+        headers: headers(sessionToken)
+      });
+      return (await readJsonOrThrow(res)) as { users: ReadonlyArray<AdminUserSummary> };
+    },
+    async adminBanUser(
+      sessionToken: string,
+      userId: string,
+      reason?: string
+    ): Promise<{ user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> }> {
+      const res = await fetch(`${basePath}/admin/users/${encodeURIComponent(userId)}/ban`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify({ reason })
+      });
+      return (await readJsonOrThrow(res)) as { user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> };
+    },
+    async adminUnbanUser(sessionToken: string, userId: string): Promise<{ user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> }> {
+      const res = await fetch(`${basePath}/admin/users/${encodeURIComponent(userId)}/unban`, {
+        method: "POST",
+        headers: headers(sessionToken)
+      });
+      return (await readJsonOrThrow(res)) as { user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> };
+    },
+    async adminListCruisingSpots(sessionToken: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
+      const res = await fetch(`${basePath}/admin/cruise-spots`, {
+        method: "GET",
+        headers: headers(sessionToken)
+      });
+      return (await readJsonOrThrow(res)) as { spots: ReadonlyArray<CruisingSpot> };
+    },
+    async adminApproveCruisingSpot(sessionToken: string, spotId: string, reason?: string): Promise<{ spot: CruisingSpot }> {
+      const res = await fetch(`${basePath}/admin/cruise-spots/${encodeURIComponent(spotId)}/approve`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify({ reason })
+      });
+      return (await readJsonOrThrow(res)) as { spot: CruisingSpot };
+    },
+    async adminRejectCruisingSpot(sessionToken: string, spotId: string, reason?: string): Promise<{ spot: CruisingSpot }> {
+      const res = await fetch(`${basePath}/admin/cruise-spots/${encodeURIComponent(spotId)}/reject`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify({ reason })
+      });
+      return (await readJsonOrThrow(res)) as { spot: CruisingSpot };
+    },
+    async adminDeleteCruisingSpot(sessionToken: string, spotId: string): Promise<{ spotId: string }> {
+      const res = await fetch(`${basePath}/admin/cruise-spots/${encodeURIComponent(spotId)}`, {
+        method: "DELETE",
+        headers: headers(sessionToken)
+      });
+      return (await readJsonOrThrow(res)) as { spotId: string };
+    },
+    async adminListPublicPostings(sessionToken: string, type?: "ad" | "event"): Promise<{ postings: ReadonlyArray<PublicPosting> }> {
+      const query = type ? `?type=${encodeURIComponent(type)}` : "";
+      const res = await fetch(`${basePath}/admin/public-postings${query}`, {
+        method: "GET",
+        headers: headers(sessionToken)
+      });
+      return (await readJsonOrThrow(res)) as { postings: ReadonlyArray<PublicPosting> };
+    },
+    async adminApprovePublicPosting(sessionToken: string, postingId: string, reason?: string): Promise<{ posting: PublicPosting }> {
+      const res = await fetch(`${basePath}/admin/public-postings/${encodeURIComponent(postingId)}/approve`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify({ reason })
+      });
+      return (await readJsonOrThrow(res)) as { posting: PublicPosting };
+    },
+    async adminRejectPublicPosting(sessionToken: string, postingId: string, reason?: string): Promise<{ posting: PublicPosting }> {
+      const res = await fetch(`${basePath}/admin/public-postings/${encodeURIComponent(postingId)}/reject`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify({ reason })
+      });
+      return (await readJsonOrThrow(res)) as { posting: PublicPosting };
+    },
+    async adminDeletePublicPosting(sessionToken: string, postingId: string): Promise<{ postingId: string }> {
+      const res = await fetch(`${basePath}/admin/public-postings/${encodeURIComponent(postingId)}`, {
+        method: "DELETE",
+        headers: headers(sessionToken)
+      });
+      return (await readJsonOrThrow(res)) as { postingId: string };
+    },
+    async adminListSubmissions(sessionToken: string): Promise<{ submissions: ReadonlyArray<Submission> }> {
+      const res = await fetch(`${basePath}/admin/submissions`, {
+        method: "GET",
+        headers: headers(sessionToken)
+      });
+      return (await readJsonOrThrow(res)) as { submissions: ReadonlyArray<Submission> };
+    },
+    async adminApproveSubmission(sessionToken: string, submissionId: string, reason?: string): Promise<{ submission: Submission }> {
+      const res = await fetch(`${basePath}/admin/submissions/${encodeURIComponent(submissionId)}/approve`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify({ reason })
+      });
+      return (await readJsonOrThrow(res)) as { submission: Submission };
+    },
+    async adminRejectSubmission(sessionToken: string, submissionId: string, reason?: string): Promise<{ submission: Submission }> {
+      const res = await fetch(`${basePath}/admin/submissions/${encodeURIComponent(submissionId)}/reject`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify({ reason })
+      });
+      return (await readJsonOrThrow(res)) as { submission: Submission };
+    },
+    async adminDeleteSubmission(sessionToken: string, submissionId: string): Promise<{ submissionId: string }> {
+      const res = await fetch(`${basePath}/admin/submissions/${encodeURIComponent(submissionId)}`, {
+        method: "DELETE",
+        headers: headers(sessionToken)
+      });
+      return (await readJsonOrThrow(res)) as { submissionId: string };
     },
     async listPromotedProfiles(): Promise<{ listings: ReadonlyArray<PromotedProfileListing>; feeCents: number }> {
       const res = await fetch(`${basePath}/promoted-profiles`, { method: "GET" });

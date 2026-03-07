@@ -6,6 +6,7 @@ import {
   type MediaKind,
   type ProfileCutStatus,
   type ProfilePosition,
+  type AdminUserSummary,
   type PublicProfile,
   type PublicPosting,
   type CruisingSpot,
@@ -4773,6 +4774,43 @@ function SettingsPanel({
   });
   const [status, setStatus] = useState<string>("Loading settings...");
   const [blockedUsers, setBlockedUsers] = useState<ReadonlyArray<string>>([]);
+  const [adminStatus, setAdminStatus] = useState<string>("");
+  const [adminBusy, setAdminBusy] = useState<boolean>(false);
+  const [adminUsers, setAdminUsers] = useState<ReadonlyArray<AdminUserSummary>>([]);
+  const [adminSpots, setAdminSpots] = useState<ReadonlyArray<CruisingSpot>>([]);
+  const [adminPostings, setAdminPostings] = useState<ReadonlyArray<PublicPosting>>([]);
+  const [adminSubmissions, setAdminSubmissions] = useState<ReadonlyArray<Submission>>([]);
+
+  async function refreshAdmin(): Promise<void> {
+    if (session.role !== "admin") {
+      setAdminUsers([]);
+      setAdminSpots([]);
+      setAdminPostings([]);
+      setAdminSubmissions([]);
+      setAdminStatus("");
+      return;
+    }
+    setAdminBusy(true);
+    try {
+      const [usersRes, spotsRes, postingsRes, submissionsRes] = await Promise.all([
+        api.adminListUsers(session.sessionToken),
+        api.adminListCruisingSpots(session.sessionToken),
+        api.adminListPublicPostings(session.sessionToken),
+        api.adminListSubmissions(session.sessionToken)
+      ]);
+      setAdminUsers(usersRes.users);
+      setAdminSpots(spotsRes.spots);
+      setAdminPostings(postingsRes.postings);
+      setAdminSubmissions(submissionsRes.submissions);
+      setAdminStatus("Admin data loaded.");
+    } catch (e) {
+      const msg = normalizeErrorMessage(e);
+      setAdminStatus(msg);
+      setLastError(msg);
+    } finally {
+      setAdminBusy(false);
+    }
+  }
 
   async function refresh(): Promise<void> {
     try {
@@ -4793,6 +4831,15 @@ function SettingsPanel({
         }
       } else {
         setBlockedUsers([]);
+      }
+      if (session.role === "admin") {
+        await refreshAdmin();
+      } else {
+        setAdminUsers([]);
+        setAdminSpots([]);
+        setAdminPostings([]);
+        setAdminSubmissions([]);
+        setAdminStatus("");
       }
     } catch (e) {
       setStatus(normalizeErrorMessage(e));
@@ -4878,6 +4925,91 @@ function SettingsPanel({
     }
   }
 
+  async function banUser(userId: string): Promise<void> {
+    const reason = window.prompt("Ban reason (optional):", "") ?? "";
+    setAdminBusy(true);
+    try {
+      await api.adminBanUser(session.sessionToken, userId, reason);
+      await refreshAdmin();
+      setAdminStatus("User banned.");
+    } catch (e) {
+      const msg = normalizeErrorMessage(e);
+      setAdminStatus(msg);
+      setLastError(msg);
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function unbanUser(userId: string): Promise<void> {
+    setAdminBusy(true);
+    try {
+      await api.adminUnbanUser(session.sessionToken, userId);
+      await refreshAdmin();
+      setAdminStatus("User unbanned.");
+    } catch (e) {
+      const msg = normalizeErrorMessage(e);
+      setAdminStatus(msg);
+      setLastError(msg);
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function moderateSpot(spotId: string, action: "approve" | "reject" | "delete"): Promise<void> {
+    const reason = action === "delete" ? undefined : (window.prompt(`${action === "approve" ? "Approval" : "Rejection"} reason (optional):`, "") ?? "");
+    setAdminBusy(true);
+    try {
+      if (action === "approve") await api.adminApproveCruisingSpot(session.sessionToken, spotId, reason);
+      if (action === "reject") await api.adminRejectCruisingSpot(session.sessionToken, spotId, reason);
+      if (action === "delete") await api.adminDeleteCruisingSpot(session.sessionToken, spotId);
+      await refreshAdmin();
+      setAdminStatus(`Spot ${action}d.`);
+    } catch (e) {
+      const msg = normalizeErrorMessage(e);
+      setAdminStatus(msg);
+      setLastError(msg);
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function moderatePosting(postingId: string, action: "approve" | "reject" | "delete"): Promise<void> {
+    const reason = action === "delete" ? undefined : (window.prompt(`${action === "approve" ? "Approval" : "Rejection"} reason (optional):`, "") ?? "");
+    setAdminBusy(true);
+    try {
+      if (action === "approve") await api.adminApprovePublicPosting(session.sessionToken, postingId, reason);
+      if (action === "reject") await api.adminRejectPublicPosting(session.sessionToken, postingId, reason);
+      if (action === "delete") await api.adminDeletePublicPosting(session.sessionToken, postingId);
+      await refreshAdmin();
+      setAdminStatus(`Posting ${action}d.`);
+    } catch (e) {
+      const msg = normalizeErrorMessage(e);
+      setAdminStatus(msg);
+      setLastError(msg);
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function moderateSubmission(submissionId: string, action: "approve" | "reject" | "delete"): Promise<void> {
+    const reason = action === "delete" ? undefined : (window.prompt(`${action === "approve" ? "Approval" : "Rejection"} reason (optional):`, "") ?? "");
+    setAdminBusy(true);
+    try {
+      if (action === "approve") await api.adminApproveSubmission(session.sessionToken, submissionId, reason);
+      if (action === "reject") await api.adminRejectSubmission(session.sessionToken, submissionId, reason);
+      if (action === "delete") await api.adminDeleteSubmission(session.sessionToken, submissionId);
+      await refreshAdmin();
+      setAdminStatus(`Submission ${action}d.`);
+    } catch (e) {
+      const msg = normalizeErrorMessage(e);
+      setAdminStatus(msg);
+      setLastError(msg);
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={cardStyle()}>
@@ -4921,6 +5053,72 @@ function SettingsPanel({
                 </div>
               ))
             )}
+          </div>
+        </div>
+      ) : null}
+      {session.role === "admin" ? (
+        <div style={cardStyle()}>
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>ADMIN CONTROL</div>
+            <div style={{ color: "#b9bec9", fontSize: 13 }}>{adminStatus || "Moderator tools ready."}</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void refreshAdmin()}>
+                REFRESH ADMIN DATA
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>USERS</div>
+              {adminUsers.slice(0, 10).map((user) => (
+                <div key={user.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
+                  <div style={{ color: "#ced3dc", fontSize: 13 }}>
+                    {user.email} {user.bannedAtMs ? "(banned)" : ""}
+                  </div>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy || !!user.bannedAtMs} onClick={() => void banUser(user.id)}>
+                    BAN
+                  </button>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy || !user.bannedAtMs} onClick={() => void unbanUser(user.id)}>
+                    UNBAN
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>PENDING CRUISE SPOTS</div>
+              {adminSpots.filter((spot) => spot.moderationStatus === "pending").slice(0, 10).map((spot) => (
+                <div key={spot.spotId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 8, alignItems: "center" }}>
+                  <div style={{ color: "#ced3dc", fontSize: 13 }}>{spot.name}</div>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderateSpot(spot.spotId, "approve")}>APPROVE</button>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderateSpot(spot.spotId, "reject")}>REJECT</button>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderateSpot(spot.spotId, "delete")}>DELETE</button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>PENDING POSTS</div>
+              {adminPostings.filter((posting) => posting.moderationStatus === "pending").slice(0, 10).map((posting) => (
+                <div key={posting.postingId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 8, alignItems: "center" }}>
+                  <div style={{ color: "#ced3dc", fontSize: 13 }}>{posting.title}</div>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderatePosting(posting.postingId, "approve")}>APPROVE</button>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderatePosting(posting.postingId, "reject")}>REJECT</button>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderatePosting(posting.postingId, "delete")}>DELETE</button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>PENDING SUBMISSIONS</div>
+              {adminSubmissions.filter((submission) => submission.moderationStatus === "pending").slice(0, 10).map((submission) => (
+                <div key={submission.submissionId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 8, alignItems: "center" }}>
+                  <div style={{ color: "#ced3dc", fontSize: 13 }}>{submission.title}</div>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderateSubmission(submission.submissionId, "approve")}>APPROVE</button>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderateSubmission(submission.submissionId, "reject")}>REJECT</button>
+                  <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderateSubmission(submission.submissionId, "delete")}>DELETE</button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       ) : null}
