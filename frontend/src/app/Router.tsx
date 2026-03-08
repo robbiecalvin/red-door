@@ -3513,6 +3513,7 @@ function PublicPostings({
   const [groupThreadLoading, setGroupThreadLoading] = useState<boolean>(false);
   const [spotThreadMessages, setSpotThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [spotThreadLoading, setSpotThreadLoading] = useState<boolean>(false);
+  const refreshSeqRef = useRef<number>(0);
 
   const canPostAds = true;
   const canPostEvents = session.userType !== "guest";
@@ -3596,6 +3597,7 @@ function PublicPostings({
   }
 
   async function refresh(): Promise<void> {
+    const requestSeq = ++refreshSeqRef.current;
     try {
       const [adsRes, eventsRes, spotsRes, invitesRes, profilesRes] = await Promise.all([
         api.listPublicPostings("ad", session.sessionToken),
@@ -3604,6 +3606,7 @@ function PublicPostings({
         session.userType === "guest" ? Promise.resolve({ postings: [] as ReadonlyArray<PublicPosting> }) : api.listEventInvites(session.sessionToken),
         api.getPublicProfiles()
       ]);
+      if (requestSeq !== refreshSeqRef.current) return;
       // Public postings should render oldest -> newest so new posts land at the bottom.
       setAds([...adsRes.postings].sort((a, b) => a.createdAtMs - b.createdAtMs));
       setEvents([...eventsRes.postings].sort((a, b) => a.createdAtMs - b.createdAtMs));
@@ -3622,6 +3625,7 @@ function PublicPostings({
         ...profilesRes.profiles.map((p) => p.mainPhotoMediaId ?? "")
       ]);
     } catch (e) {
+      if (requestSeq !== refreshSeqRef.current) return;
       setLastError(normalizeErrorMessage(e));
     }
   }
@@ -3689,7 +3693,7 @@ function PublicPostings({
       return;
     }
     try {
-      await api.createPublicPosting(session.sessionToken, {
+      const created = await api.createPublicPosting(session.sessionToken, {
         type,
         title,
         body,
@@ -3698,6 +3702,11 @@ function PublicPostings({
         locationInstructions: type === "event" ? eventLocationInstructions.trim() : undefined,
         groupDetails: type === "event" ? eventGroupDetails.trim() : undefined
       });
+      if (type === "ad" && created?.posting) {
+        setAds((prev) => [...prev, created.posting].sort((a, b) => a.createdAtMs - b.createdAtMs));
+      } else if (type === "event" && created?.posting) {
+        setEvents((prev) => [...prev, created.posting].sort((a, b) => a.createdAtMs - b.createdAtMs));
+      }
       if (type === "ad") {
         setAdTitle("");
         setAdBody("");
@@ -3779,12 +3788,18 @@ function PublicPostings({
 
   async function createSpot(): Promise<void> {
     try {
-      await api.createCruisingSpot(session.sessionToken, {
+      const created = await api.createCruisingSpot(session.sessionToken, {
         name: spotName,
         address: spotAddress,
         description: spotDescription,
         photoMediaId: spotPhotoMediaId || undefined
       });
+      if (created?.spot) {
+        setSpots((prev) => {
+          const next = [created.spot, ...prev.filter((row) => row.spotId !== created.spot.spotId)];
+          return next.sort((a, b) => b.createdAtMs - a.createdAtMs);
+        });
+      }
       setSpotName("");
       setSpotAddress("");
       setSpotDescription("");
