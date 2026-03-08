@@ -116,6 +116,12 @@ textarea {
   gap: 12px;
 }
 
+.rd-topbar.rd-topbar-wide .rd-topbar-inner {
+  max-width: none;
+  margin: 0;
+  padding: 10px 10px;
+}
+
 .rd-brand {
   display: flex;
   align-items: baseline;

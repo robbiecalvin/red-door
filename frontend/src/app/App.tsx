@@ -741,7 +741,7 @@ export function App(): React.ReactElement {
   return (
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav" : ""}`}>
       {session ? (
-        <header className={`rd-topbar ${isMobile ? "mobile" : ""}`}>
+        <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
             {isMobile ? (
               <div style={{ display: "grid", gap: 10, width: "100%" }}>
