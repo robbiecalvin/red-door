@@ -154,22 +154,26 @@ function normalizeUiError(e: unknown, fallback: string): string {
 
 function requestLocationPermission(): void {
   if (!navigator.geolocation) return;
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const lat = Number(pos.coords.latitude.toFixed(6));
-      const lng = Number(pos.coords.longitude.toFixed(6));
-      try {
-        localStorage.setItem("reddoor_travel_center", JSON.stringify({ enabled: true, lat, lng }));
-      } catch {
-        // storage may be unavailable in strict privacy mode
-      }
-      window.dispatchEvent(new CustomEvent("rd:location-updated", { detail: { lat, lng } }));
-    },
-    () => {
-      // deny/error is handled later by map presence fallbacks
-    },
-    { enableHighAccuracy: true, timeout: 12_000, maximumAge: 0 }
-  );
+  try {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        try {
+          localStorage.setItem("reddoor_travel_center", JSON.stringify({ enabled: true, lat, lng }));
+        } catch {
+          // storage may be unavailable in strict privacy mode
+        }
+        window.dispatchEvent(new CustomEvent("rd:location-updated", { detail: { lat, lng } }));
+      },
+      () => {
+        // deny/error is handled later by map presence fallbacks
+      },
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 0 }
+    );
+  } catch {
+    // Some browser/security contexts can throw synchronously; auth flows must continue.
+  }
 }
 
 function resolveApiBasePath(): string {
@@ -348,7 +352,6 @@ export function App(): React.ReactElement {
   useEffect(() => {
     if (!sessionToken) return;
     if (session?.sessionToken === sessionToken) return;
-    setBusy(true);
     setLastError(null);
     refreshSession(sessionToken)
       .catch((e) => {
@@ -360,8 +363,7 @@ export function App(): React.ReactElement {
         clearPersistedSessionToken();
         setSessionToken(null);
         setSession(null);
-      })
-      .finally(() => setBusy(false));
+      });
   }, [clearPersistedSessionToken, refreshSession, session, sessionToken]);
 
   useEffect(() => {
