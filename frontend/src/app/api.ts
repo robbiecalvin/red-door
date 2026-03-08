@@ -143,6 +143,8 @@ export type PublicPosting = Readonly<{
   title: string;
   body: string;
   photoMediaId?: string;
+  lat?: number;
+  lng?: number;
   eventStartAtMs?: number;
   locationInstructions?: string;
   groupDetails?: string;
@@ -744,6 +746,8 @@ function createLocalApiClient(): Readonly<{
       title: string;
       body: string;
       photoMediaId?: string;
+      lat?: number;
+      lng?: number;
       eventStartAtMs?: number;
       locationInstructions?: string;
       groupDetails?: string;
@@ -760,7 +764,7 @@ function createLocalApiClient(): Readonly<{
     payload: Readonly<{ postingId: string; targetUserId: string; accept: boolean }>
   ): Promise<{ posting: PublicPosting }>;
   listEventInvites(sessionToken: string): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
-  listCruisingSpots(): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
+  listCruisingSpots(sessionToken?: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
   createCruisingSpot(
     sessionToken: string,
     payload: Readonly<{ name: string; address: string; description: string; photoMediaId?: string }>
@@ -1414,6 +1418,8 @@ function createLocalApiClient(): Readonly<{
         title: string;
         body: string;
         photoMediaId?: string;
+        lat?: number;
+        lng?: number;
         eventStartAtMs?: number;
         locationInstructions?: string;
         groupDetails?: string;
@@ -1428,6 +1434,8 @@ function createLocalApiClient(): Readonly<{
         typeof payload.eventStartAtMs === "number" && Number.isFinite(payload.eventStartAtMs) && payload.eventStartAtMs > 0
           ? Math.trunc(payload.eventStartAtMs)
           : undefined;
+      const lat = typeof payload.lat === "number" && Number.isFinite(payload.lat) ? Number(payload.lat.toFixed(6)) : undefined;
+      const lng = typeof payload.lng === "number" && Number.isFinite(payload.lng) ? Number(payload.lng.toFixed(6)) : undefined;
       const locationInstructions =
         typeof payload.locationInstructions === "string" && payload.locationInstructions.trim().length > 0
           ? payload.locationInstructions.trim()
@@ -1450,6 +1458,8 @@ function createLocalApiClient(): Readonly<{
         title,
         body,
         ...(photoMediaId ? { photoMediaId } : {}),
+        ...(payload.type === "event" && typeof lat === "number" ? { lat } : {}),
+        ...(payload.type === "event" && typeof lng === "number" ? { lng } : {}),
         ...(payload.type === "event" && eventStartAtMs ? { eventStartAtMs } : {}),
         ...(payload.type === "event" && locationInstructions ? { locationInstructions } : {}),
         ...(payload.type === "event" && groupDetails ? { groupDetails } : {}),
@@ -1567,7 +1577,7 @@ function createLocalApiClient(): Readonly<{
       const postings = state.publicPostings.filter((p) => p.type === "event" && (p.invitedUserIds ?? []).includes(userId));
       return { postings: clone(postings) };
     },
-    async listCruisingSpots(): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
+    async listCruisingSpots(_sessionToken?: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
       const state = readState();
       return { spots: clone(state.cruisingSpots) };
     },
@@ -1989,6 +1999,8 @@ export function apiClient(basePath = "/api"): Readonly<{
       title: string;
       body: string;
       photoMediaId?: string;
+      lat?: number;
+      lng?: number;
       eventStartAtMs?: number;
       locationInstructions?: string;
       groupDetails?: string;
@@ -2005,7 +2017,7 @@ export function apiClient(basePath = "/api"): Readonly<{
     payload: Readonly<{ postingId: string; targetUserId: string; accept: boolean }>
   ): Promise<{ posting: PublicPosting }>;
   listEventInvites(sessionToken: string): Promise<{ postings: ReadonlyArray<PublicPosting> }>;
-  listCruisingSpots(): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
+  listCruisingSpots(sessionToken?: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }>;
   createCruisingSpot(
     sessionToken: string,
     payload: Readonly<{ name: string; address: string; description: string; photoMediaId?: string }>
@@ -2358,6 +2370,8 @@ export function apiClient(basePath = "/api"): Readonly<{
         title: string;
         body: string;
         photoMediaId?: string;
+        lat?: number;
+        lng?: number;
         eventStartAtMs?: number;
         locationInstructions?: string;
         groupDetails?: string;
@@ -2417,8 +2431,11 @@ export function apiClient(basePath = "/api"): Readonly<{
       });
       return (await readJsonOrThrow(res)) as { postings: ReadonlyArray<PublicPosting> };
     },
-    async listCruisingSpots(): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
-      const res = await fetch(`${basePath}/cruise-spots`, { method: "GET" });
+    async listCruisingSpots(sessionToken?: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
+      const res = await fetch(`${basePath}/cruise-spots`, {
+        method: "GET",
+        headers: headers(sessionToken)
+      });
       return (await readJsonOrThrow(res)) as { spots: ReadonlyArray<CruisingSpot> };
     },
     async createCruisingSpot(

@@ -74,14 +74,15 @@ function markerEl(m: MapMarker): HTMLButtonElement {
   el.style.border = `2px solid ${m.color}`;
   el.style.touchAction = "manipulation";
   el.style.userSelect = "none";
-  if (m.markerType === "spot") {
+  if (m.markerType === "spot" || m.markerType === "group") {
     el.style.background = "radial-gradient(circle at 30% 30%, #ff4f60, #a70013)";
     el.style.display = "grid";
     el.style.placeItems = "center";
     el.style.color = "#ffffff";
     el.style.fontWeight = "700";
     el.style.fontSize = "13px";
-    el.textContent = typeof m.markerGlyph === "string" && m.markerGlyph.trim() ? m.markerGlyph.trim().slice(0, 2) : "SP";
+    const fallback = m.markerType === "group" ? "GR" : "SP";
+    el.textContent = typeof m.markerGlyph === "string" && m.markerGlyph.trim() ? m.markerGlyph.trim().slice(0, 2) : fallback;
   } else if (typeof m.imageUrl === "string" && m.imageUrl.trim() !== "") {
     el.style.backgroundImage = `url("${m.imageUrl}")`;
     el.style.backgroundSize = "cover";

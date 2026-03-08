@@ -7,7 +7,7 @@ export type MapMarker = Readonly<{
   id: string;
   position: LngLat;
   color: string;
-  markerType?: "user" | "spot";
+  markerType?: "user" | "spot" | "group";
   markerGlyph?: string;
   label?: string;
   imageUrl?: string;

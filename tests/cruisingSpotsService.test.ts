@@ -98,7 +98,7 @@ describe("cruisingSpotsService", () => {
     expect(res.error).toEqual({ code: "INVALID_INPUT", message: "Spot description contains disallowed language." });
   });
 
-  it("Given a newly created spot When listed publicly before approval Then it is hidden until approved", () => {
+  it("Given a newly created spot When listed before approval Then it is hidden publicly but visible to the creator", () => {
     const svc = createCruisingSpotsService({ nowMs: () => 1000, idFactory: () => "spot_mod_1" });
     const created = svc.create(
       { userType: "registered", userId: "u_admin", ageVerified: true },
@@ -111,6 +111,12 @@ describe("cruisingSpotsService", () => {
     expect(before.ok).toBe(true);
     if (!before.ok) throw new Error("unreachable");
     expect(before.value).toHaveLength(0);
+
+    const ownerView = svc.list({ userType: "registered", userId: "u_admin", ageVerified: true });
+    expect(ownerView.ok).toBe(true);
+    if (!ownerView.ok) throw new Error("unreachable");
+    expect(ownerView.value).toHaveLength(1);
+    expect(ownerView.value[0].moderationStatus).toBe("pending");
 
     const approved = svc.approve({ userType: "registered", userId: "admin_1", ageVerified: true, role: "admin" }, "spot_mod_1");
     expect(approved.ok).toBe(true);

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Cruising spot marker">
+  <defs>
+    <radialGradient id="spotGlow" cx="32%" cy="30%" r="75%">
+      <stop offset="0%" stop-color="#ffb8b8" />
+      <stop offset="38%" stop-color="#dc3b47" />
+      <stop offset="100%" stop-color="#7f0914" />
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#spotGlow)" stroke="#ffd3d8" stroke-width="4" />
+  <path
+    d="M64 24c-14.3 0-26 11.7-26 26 0 19 18.9 36.3 24.4 41.1.9.8 2.3.8 3.2 0C71.1 86.3 90 69 90 50c0-14.3-11.7-26-26-26z"
+    fill="#f4d3a7"
+  />
+  <circle cx="64" cy="50" r="9.5" fill="#b42a36" />
+</svg>

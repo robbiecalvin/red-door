@@ -772,7 +772,6 @@ export function App(): React.ReactElement {
                     <button type="button" className="rd-btn" onClick={() => setTabAndRoute("groups")} aria-label="Groups">Groups</button>
                     <button type="button" className="rd-btn" onClick={() => setTabAndRoute("promoted")} aria-label="Promoted profiles">Promoted</button>
                     <button type="button" className="rd-btn" onClick={() => setTabAndRoute("submissions")} aria-label="Submissions">Submissions</button>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("promoted")} aria-label="Promoted profiles">Promoted</button>
                     <div className="rd-chip" aria-label="Online status">
                       <span className="rd-dot on" aria-hidden="true" />
                       <span>Online status: {onlineCount}</span>
@@ -791,7 +790,6 @@ export function App(): React.ReactElement {
                     <button type="button" className="rd-btn" onClick={() => setTabAndRoute("groups")} aria-label="Groups">Groups</button>
                     <button type="button" className="rd-btn" onClick={() => setTabAndRoute("promoted")} aria-label="Promoted profiles">Promoted</button>
                     <button type="button" className="rd-btn" onClick={() => setTabAndRoute("submissions")} aria-label="Submissions">Submissions</button>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("promoted")} aria-label="Promoted profiles">Promoted</button>
                     <div className="rd-chip" aria-label="Online status">
                       <span className="rd-dot on" aria-hidden="true" />
                       <span>

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Group marker">
+  <defs>
+    <radialGradient id="groupGlow" cx="35%" cy="30%" r="75%">
+      <stop offset="0%" stop-color="#ffc3c3" />
+      <stop offset="42%" stop-color="#d63a46" />
+      <stop offset="100%" stop-color="#7a0913" />
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#groupGlow)" stroke="#ffd3d8" stroke-width="4" />
+  <g fill="#f2d8ba">
+    <circle cx="64" cy="51" r="10" />
+    <circle cx="47" cy="56" r="8" />
+    <circle cx="81" cy="56" r="8" />
+    <path d="M41 82c0-8.4 7.2-15 16-15h14c8.8 0 16 6.6 16 15v4H41z" />
+    <path d="M30 84c0-6.3 5.4-11.2 12-11.2h4.5c2.6 0 5 .8 6.9 2.1-2.5 2.2-4 5.2-4 8.4V88H30z" />
+    <path d="M98 84c0-6.3-5.4-11.2-12-11.2h-4.5c-2.6 0-5 .8-6.9 2.1 2.5 2.2 4 5.2 4 8.4V88H98z" />
+  </g>
+</svg>

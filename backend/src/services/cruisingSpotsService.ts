@@ -113,7 +113,13 @@ export function createCruisingSpotsService(
   return {
     list(viewer?: SessionLike): Result<ReadonlyArray<CruisingSpot>> {
       const isAdmin = viewer?.role === "admin";
-      const visible = isAdmin ? spots : spots.filter((spot) => spot.moderationStatus === "approved");
+      const viewerActorKey = viewer ? actorKey(viewer) : null;
+      const visible = isAdmin
+        ? spots
+        : spots.filter((spot) => {
+            if (spot.moderationStatus === "approved") return true;
+            return viewerActorKey !== null && spot.creatorUserId === viewerActorKey;
+          });
       return ok([...visible].sort((a, b) => b.createdAtMs - a.createdAtMs));
     },
 

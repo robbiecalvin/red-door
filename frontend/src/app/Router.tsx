@@ -267,6 +267,16 @@ function formatDistanceLabel(distanceInMeters: number): string {
   return `${Math.round(distanceInMeters / 1_000)} km`;
 }
 
+function chatMessagesEqual(a: ReadonlyArray<ChatMessage>, b: ReadonlyArray<ChatMessage>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].messageId !== b[i].messageId) return false;
+    if (a[i].readAtMs !== b[i].readAtMs) return false;
+    if (a[i].deliveredAtMs !== b[i].deliveredAtMs) return false;
+  }
+  return true;
+}
+
 function readTravelCenter(): { lat: number; lng: number } | null {
   try {
     const raw = localStorage.getItem("reddoor_travel_center");
@@ -632,7 +642,7 @@ function CruiseSurface({
     let cancelled = false;
     async function refreshCruisingSpots(): Promise<void> {
       try {
-        const res = await api.listCruisingSpots();
+        const res = await api.listCruisingSpots(session.sessionToken);
         if (!cancelled) setCruisingSpots(res.spots);
       } catch {
         if (!cancelled) setCruisingSpots([]);
@@ -1291,7 +1301,7 @@ function CruiseSurface({
           onClose={() => setSelectedSpotId(null)}
           onUpdated={async () => {
             try {
-              const res = await api.listCruisingSpots();
+              const res = await api.listCruisingSpots(session.sessionToken);
               setCruisingSpots(res.spots);
             } catch {
               // no-op
@@ -2904,7 +2914,8 @@ function ThreadsPanel({
   setLastError,
   openThreadRequest,
   onThreadRequestConsumed,
-  isMobile
+  isMobile,
+  onUnreadCountChange
 }: Readonly<{
   api: Api;
   session: Session;
@@ -2912,8 +2923,9 @@ function ThreadsPanel({
   openThreadRequest?: { key: string; nonce: number } | null;
   onThreadRequestConsumed?: () => void;
   isMobile: boolean;
+  onUnreadCountChange?(count: number): void;
 }>): React.ReactElement {
-  const [rows, setRows] = useState<ReadonlyArray<{ key: string; displayName: string; preview: string; at: number; avatarUrl?: string }>>(
+  const [rows, setRows] = useState<ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; avatarUrl?: string }>>(
     []
   );
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
@@ -2927,13 +2939,14 @@ function ThreadsPanel({
   const [groupStatus, setGroupStatus] = useState<string | null>(null);
 
   const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
-  const selectedChatKind: "cruise" = "cruise";
+  const [threadKindByPeerKey, setThreadKindByPeerKey] = useState<Record<string, "cruise" | "date">>({});
 
   const thirdCandidates = useMemo(
-    () => rows.filter((row) => row.key !== selectedPeerKey).map((row) => ({ key: row.key, label: row.displayName })),
+    () => rows.filter((row) => row.key !== selectedPeerKey && row.chatKind === "cruise").map((row) => ({ key: row.key, label: row.displayName })),
     [rows, selectedPeerKey]
   );
   const activeRow = useMemo(() => rows.find((row) => row.key === selectedPeerKey) ?? null, [rows, selectedPeerKey]);
+  const selectedChatKind: "cruise" | "date" = selectedPeerKey ? threadKindByPeerKey[selectedPeerKey] ?? "cruise" : "cruise";
 
   useEffect(() => {
     if (thirdCandidates.length === 0) {
@@ -2947,9 +2960,10 @@ function ThreadsPanel({
     let cancelled = false;
     async function refresh(): Promise<void> {
       try {
-        const [profilesRes, threadsRes] = await Promise.all([
+        const [profilesRes, cruiseThreadsRes, dateThreadsRes] = await Promise.all([
           api.getPublicProfiles(),
-          api.listChatThreads(session.sessionToken, selectedChatKind)
+          api.listChatThreads(session.sessionToken, "cruise"),
+          api.listChatThreads(session.sessionToken, "date")
         ]);
         const nameByKey: Record<string, string> = {};
         const photoMediaIdByKey: Record<string, string> = {};
@@ -2959,30 +2973,39 @@ function ThreadsPanel({
             photoMediaIdByKey[chatKeyFromProfileUserId(p.userId)] = p.mainPhotoMediaId;
           }
         }
-        const next: Array<{ key: string; displayName: string; preview: string; at: number; avatarUrl?: string }> = [];
-        for (const thread of threadsRes.threads ?? []) {
-          const normalizedKey = normalizePeerKey(thread?.otherKey ?? "");
-          if (!normalizedKey || normalizedKey === meKey || normalizedKey.startsWith("spot:")) continue;
-          if (session.userId && normalizedKey.startsWith("session:")) continue;
-          const last = thread?.lastMessage as ChatMessage | undefined;
-          if (!last || typeof last.createdAtMs !== "number" || !Number.isFinite(last.createdAtMs)) continue;
-          const preview =
-            typeof last.text === "string" && last.text.trim().length > 0
-              ? displayMessageText(last.text)
-              : last.media?.kind === "image"
-                ? "[Photo]"
-                : last.media?.kind === "video"
-                  ? "[Video]"
-                  : last.media?.kind === "audio"
-                    ? "[Voice]"
-                    : "";
-          next.push({
-            key: normalizedKey,
-            displayName: nameByKey[normalizedKey] ?? normalizedKey,
-            preview,
-            at: last.createdAtMs
-          });
+        const nextByKey = new Map<string, { key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; avatarUrl?: string }>();
+        const kinds: Array<"cruise" | "date"> = ["cruise", "date"];
+        for (const kind of kinds) {
+          const source = kind === "cruise" ? cruiseThreadsRes.threads : dateThreadsRes.threads;
+          for (const thread of source ?? []) {
+            const normalizedKey = normalizePeerKey(thread?.otherKey ?? "");
+            if (!normalizedKey || normalizedKey === meKey || normalizedKey.startsWith("spot:")) continue;
+            if (session.userId && normalizedKey.startsWith("session:")) continue;
+            const last = thread?.lastMessage as ChatMessage | undefined;
+            if (!last || typeof last.createdAtMs !== "number" || !Number.isFinite(last.createdAtMs)) continue;
+            const preview =
+              typeof last.text === "string" && last.text.trim().length > 0
+                ? displayMessageText(last.text)
+                : last.media?.kind === "image"
+                  ? "[Photo]"
+                  : last.media?.kind === "video"
+                    ? "[Video]"
+                    : last.media?.kind === "audio"
+                      ? "[Voice]"
+                      : "";
+            const existing = nextByKey.get(normalizedKey);
+            if (!existing || last.createdAtMs >= existing.at) {
+              nextByKey.set(normalizedKey, {
+                key: normalizedKey,
+                chatKind: kind,
+                displayName: nameByKey[normalizedKey] ?? normalizedKey,
+                preview,
+                at: last.createdAtMs
+              });
+            }
+          }
         }
+        const next = Array.from(nextByKey.values());
         const mediaRows = await Promise.all(
           next.map(async (row) => {
             const mediaId = photoMediaIdByKey[row.key];
@@ -3003,9 +3026,33 @@ function ThreadsPanel({
         for (const row of next) {
           row.avatarUrl = mediaByKey[row.key];
         }
+        const unreadCounts = await Promise.all(
+          next.slice(0, 20).map(async (row) => {
+            try {
+              const chat = await api.listChat(session.sessionToken, row.chatKind, row.key);
+              const messages = ((chat as { messages?: ChatMessage[] }).messages ?? []) as ChatMessage[];
+              let unread = 0;
+              for (const message of messages) {
+                if (message.fromKey === row.key && message.toKey === meKey && typeof message.readAtMs !== "number") unread += 1;
+              }
+              return unread;
+            } catch {
+              return 0;
+            }
+          })
+        );
         if (cancelled) return;
         next.sort((a, b) => b.at - a.at);
         setRows(next);
+        setThreadKindByPeerKey(
+          next.reduce<Record<string, "cruise" | "date">>((acc, row) => {
+            acc[row.key] = row.chatKind;
+            return acc;
+          }, {})
+        );
+        if (typeof onUnreadCountChange === "function") {
+          onUnreadCountChange(unreadCounts.reduce((sum, count) => sum + count, 0));
+        }
       } catch (e) {
         if (!cancelled) setLastError(normalizeErrorMessage(e));
       }
@@ -3014,12 +3061,12 @@ function ThreadsPanel({
     void refresh();
     const id = window.setInterval(() => {
       void refresh();
-    }, 10_000);
+    }, 1500);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [api, session.sessionToken, session.userId, setLastError]);
+  }, [api, meKey, onUnreadCountChange, session.sessionToken, session.userId, setLastError]);
 
   useEffect(() => {
     if (!openThreadRequest?.key) return;
@@ -3078,7 +3125,8 @@ function ThreadsPanel({
         const res = await api.listChat(session.sessionToken, selectedChatKind, selectedPeerKey);
         const list = ((res as any)?.messages ?? []) as ChatMessage[];
         if (!cancelled) {
-          setMessages(Array.isArray(list) ? list : []);
+          const safeList = Array.isArray(list) ? list : [];
+          setMessages((prev) => (chatMessagesEqual(prev, safeList) ? prev : safeList));
           void api.markChatRead(session.sessionToken, selectedChatKind, selectedPeerKey).catch(() => {});
         }
       } catch (e) {
@@ -3203,20 +3251,24 @@ function ThreadsPanel({
         </div>
         {threadView === "messages" ? (
           <ChatWindow
-            chatKind={"cruise"}
+            chatKind={selectedChatKind}
             peerKey={selectedPeerKey}
             currentUserKey={meKey}
             messages={messages}
             client={client}
-            title={`INSTANT THREAD: ${peerLabel}`}
+            title={`${selectedChatKind === "cruise" ? "INSTANT" : "DIRECT"} THREAD: ${peerLabel}`}
             peerSummary={{ displayName: peerLabel }}
-            thirdParty={{
-              candidates: thirdCandidates,
-              selectedKey: thirdCandidateKey,
-              onSelect: (key) => setThirdCandidateKey(key),
-              onAdd: () => void sendThirdInvite(),
-              disabled: false
-            }}
+            thirdParty={
+              selectedChatKind === "cruise"
+                ? {
+                    candidates: thirdCandidates,
+                    selectedKey: thirdCandidateKey,
+                    onSelect: (key) => setThirdCandidateKey(key),
+                    onAdd: () => void sendThirdInvite(),
+                    disabled: false
+                  }
+                : undefined
+            }
             showHeader={false}
             edgeToEdge={true}
             fillHeight={isMobile}
@@ -3441,7 +3493,7 @@ function PublicPostings({
       const [adsRes, eventsRes, spotsRes, invitesRes, profilesRes] = await Promise.all([
         api.listPublicPostings("ad", session.sessionToken),
         api.listPublicPostings("event", session.sessionToken),
-        api.listCruisingSpots(),
+        api.listCruisingSpots(session.sessionToken),
         session.userType === "guest" ? Promise.resolve({ postings: [] as ReadonlyArray<PublicPosting> }) : api.listEventInvites(session.sessionToken),
         api.getPublicProfiles()
       ]);
@@ -5830,6 +5882,7 @@ export function Router({
           openThreadRequest={externalOpenThreadRequest}
           onThreadRequestConsumed={() => setExternalOpenThreadRequest(null)}
           isMobile={isMobile}
+          onUnreadCountChange={onUnreadCountChange}
         />
       ) : null}
       {activeTab === "ads" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setLastError} /> : null}
