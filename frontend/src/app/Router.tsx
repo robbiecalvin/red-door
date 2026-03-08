@@ -2401,6 +2401,8 @@ function CruiseChat({
     );
   }
 
+  const chatGridColumns = isMobile ? "repeat(3, minmax(0, 1fr))" : "repeat(auto-fill, minmax(170px, 210px))";
+
   return (
     <div style={{ display: "grid", gap: 0, marginInline: isMobile ? -10 : 0 }}>
       {pendingInviteNotifs.length > 0 ? (
@@ -2504,7 +2506,7 @@ function CruiseChat({
         </div>
       ) : null}
       <div style={{ display: "grid", gap: 0 }}>
-          <div style={{ display: "grid", gap: 0, gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+          <div style={{ display: "grid", gap: 0, gridTemplateColumns: chatGridColumns, justifyContent: isMobile ? "stretch" : "space-between" }}>
             {gridCards.length === 0 ? (
               <div style={{ color: "#b9bec9", fontSize: 13, padding: 12, gridColumn: "1 / -1" }}>No users match current filters.</div>
             ) : (
@@ -4982,6 +4984,7 @@ function StyledFilePicker({
 }
 
 function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; session: Session; setLastError(value: string | null): void }>): React.ReactElement {
+  const profileIsMobile = useIsMobile();
   const [draft, setDraft] = useState<ProfileDraft>(emptyProfileDraft());
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -5204,8 +5207,8 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         : undefined;
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div style={cardStyle()}>
+    <div style={{ display: "grid", gap: 12, gridTemplateColumns: profileIsMobile ? "1fr" : "1fr 1fr", alignItems: "start" }}>
+      <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>PROFILE SETTINGS</div>
           {session.userType === "guest" ? (
@@ -5233,7 +5236,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         </div>
       </div>
 
-      <div style={cardStyle()}>
+      <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 18, fontWeight: 700 }}>ABOUT YOU</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
@@ -5261,7 +5264,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         </div>
       </div>
 
-      <div style={cardStyle()}>
+      <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 18, fontWeight: 700 }}>PROFILE DETAILS</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
@@ -5309,7 +5312,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         </div>
       </div>
 
-      <div style={cardStyle()}>
+      <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "2", gridRow: "1 / span 3" }}>
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 18, fontWeight: 700 }}>MEDIA</div>
           <div style={{ color: "#b9bec9", fontSize: 14 }}>Upload and manage your photos and video.</div>
