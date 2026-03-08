@@ -3013,7 +3013,6 @@ function ThreadsPanel({
           for (const thread of source ?? []) {
             const normalizedKey = normalizePeerKey(thread?.otherKey ?? "");
             if (!normalizedKey || normalizedKey === meKey || normalizedKey.startsWith("spot:")) continue;
-            if (session.userId && normalizedKey.startsWith("session:")) continue;
             const last = thread?.lastMessage as ChatMessage | undefined;
             if (!last || typeof last.createdAtMs !== "number" || !Number.isFinite(last.createdAtMs)) continue;
             const preview =
