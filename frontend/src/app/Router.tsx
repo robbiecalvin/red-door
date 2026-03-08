@@ -3343,8 +3343,13 @@ function PublicPostings({
   const [uploadingKind, setUploadingKind] = useState<"ad" | "event" | "spot" | null>(null);
   const [eventInvites, setEventInvites] = useState<ReadonlyArray<PublicPosting>>([]);
   const [inviteTargetByEventId, setInviteTargetByEventId] = useState<Record<string, string>>({});
+  const [selectedAdId, setSelectedAdId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
+  const [adThreadMessages, setAdThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
+  const [adThreadLoading, setAdThreadLoading] = useState<boolean>(false);
+  const [groupThreadMessages, setGroupThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
+  const [groupThreadLoading, setGroupThreadLoading] = useState<boolean>(false);
   const [spotThreadMessages, setSpotThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [spotThreadLoading, setSpotThreadLoading] = useState<boolean>(false);
 
@@ -3353,8 +3358,11 @@ function PublicPostings({
   const canCreateSpots = true;
   const gridColumns = isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))";
   const myActorKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const selectedAd = useMemo(() => ads.find((ad) => ad.postingId === selectedAdId) ?? null, [ads, selectedAdId]);
   const selectedGroup = useMemo(() => events.find((event) => event.postingId === selectedGroupId) ?? null, [events, selectedGroupId]);
   const selectedSpot = useMemo(() => spots.find((spot) => spot.spotId === selectedSpotId) ?? null, [selectedSpotId, spots]);
+  const selectedAdThreadKey = selectedAd?.authorUserId ? `user:${selectedAd.authorUserId}` : "";
+  const selectedGroupThreadKey = selectedGroup ? `event:${selectedGroup.postingId}` : "";
   const selectedSpotThreadKey = selectedSpotId ? `spot:${selectedSpotId}` : "";
 
   function combineEventDateTimeToEpochMs(dateText: string, timeText: string): number | null {
@@ -3470,6 +3478,21 @@ function PublicPostings({
       window.removeEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
     };
   }, [api, session.sessionToken, session.userType]);
+
+  useEffect(() => {
+    if (isMobile || screen !== "ads") return;
+    setSelectedAdId((prev) => (prev && ads.some((item) => item.postingId === prev) ? prev : ads[0]?.postingId ?? null));
+  }, [ads, isMobile, screen]);
+
+  useEffect(() => {
+    if (isMobile || screen !== "groups") return;
+    setSelectedGroupId((prev) => (prev && events.some((item) => item.postingId === prev) ? prev : events[0]?.postingId ?? null));
+  }, [events, isMobile, screen]);
+
+  useEffect(() => {
+    if (isMobile || screen !== "cruise") return;
+    setSelectedSpotId((prev) => (prev && spots.some((item) => item.spotId === prev) ? prev : spots[0]?.spotId ?? null));
+  }, [isMobile, screen, spots]);
 
   async function submit(type: "ad" | "event"): Promise<void> {
     if (type === "event" && !canPostEvents) {
@@ -3659,7 +3682,31 @@ function PublicPostings({
     }
   }
 
-  const spotChatClient: ChatApiClient = useMemo(
+  async function loadAdThread(posting: PublicPosting): Promise<void> {
+    const threadKey = `user:${posting.authorUserId}`;
+    try {
+      const res = await api.listChat(session.sessionToken, "date", threadKey);
+      const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
+      setAdThreadMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
+      void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
+  }
+
+  async function loadGroupThread(posting: PublicPosting): Promise<void> {
+    const threadKey = `event:${posting.postingId}`;
+    try {
+      const res = await api.listChat(session.sessionToken, "date", threadKey);
+      const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
+      setGroupThreadMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
+      void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
+  }
+
+  const postingChatClient: ChatApiClient = useMemo(
     () => ({
       async sendMessage(chatKind, toKey, text, media) {
         const res = await api.sendChat(session.sessionToken, chatKind, toKey, text, media);
@@ -3667,7 +3714,13 @@ function PublicPostings({
         if (!msg) {
           throw { code: "UNAUTHORIZED_ACTION", message: "Message rejected." } as ServiceError;
         }
-        setSpotThreadMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
+        if (toKey.startsWith("spot:")) {
+          setSpotThreadMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
+        } else if (toKey.startsWith("event:")) {
+          setGroupThreadMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
+        } else {
+          setAdThreadMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
+        }
         return msg;
       },
       async initiateMediaUpload(mimeType, sizeBytes) {
@@ -3694,6 +3747,52 @@ function PublicPostings({
   );
 
   useEffect(() => {
+    if (!selectedAd || screen !== "ads") return;
+    let cancelled = false;
+    let timer: number | null = null;
+    setAdThreadLoading(true);
+
+    const poll = async (): Promise<void> => {
+      if (cancelled) return;
+      await loadAdThread(selectedAd);
+      if (cancelled) return;
+      setAdThreadLoading(false);
+      timer = window.setTimeout(() => {
+        void poll();
+      }, 1500);
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [screen, selectedAd]);
+
+  useEffect(() => {
+    if (!selectedGroup || screen !== "groups") return;
+    let cancelled = false;
+    let timer: number | null = null;
+    setGroupThreadLoading(true);
+
+    const poll = async (): Promise<void> => {
+      if (cancelled) return;
+      await loadGroupThread(selectedGroup);
+      if (cancelled) return;
+      setGroupThreadLoading(false);
+      timer = window.setTimeout(() => {
+        void poll();
+      }, 1500);
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [screen, selectedGroup]);
+
+  useEffect(() => {
     if (!selectedSpotId || screen !== "cruise") return;
     let cancelled = false;
     let timer: number | null = null;
@@ -3716,7 +3815,7 @@ function PublicPostings({
     };
   }, [screen, selectedSpotId]);
 
-  const panel = (kind: "ads" | "groups"): React.ReactElement => {
+  const panel = (kind: "ads" | "groups", showGrid = true): React.ReactElement => {
     const title = kind === "ads" ? "ADS" : "GROUPS";
     const list = kind === "ads" ? ads : events;
     const draftTitle = kind === "ads" ? adTitle : eventTitle;
@@ -3806,94 +3905,96 @@ function PublicPostings({
           </button>
           {!canPostThis ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view groups but cannot post groups.</div> : null}
 
-          <div style={{ display: "grid", gap: 0, marginTop: 6 }}>
-            {list.length === 0 ? (
-              <div style={{ color: "#b9bec9", fontSize: 14 }}>No {title.toLowerCase()} yet.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 0, gridTemplateColumns: gridColumns }}>
-                {list.map((p) => {
-                  const isHost = !!session.userId && session.userId === p.authorUserId;
-                  const isInvited = !!session.userId && (p.invitedUserIds ?? []).includes(session.userId);
-                  const isAttending = !!session.userId && (p.authorUserId === session.userId || (p.acceptedUserIds ?? []).includes(session.userId));
-                  const hasRequested = !!session.userId && (p.joinRequestUserIds ?? []).includes(session.userId);
-                  const canRequestJoin = kind === "groups" && session.userType !== "guest" && !!session.userId && !isHost && !isAttending && !hasRequested;
-                  return (
-                    <div
-                      key={p.postingId}
-                      style={{
-                        background: "rgba(0,0,0,0.5)",
-                        border: "1px solid rgba(255,58,77,0.35)",
-                        borderRadius: 0,
-                        display: "grid",
-                        gap: 0
-                      }}
-                    >
-                      <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                        <img
-                          src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
-                          alt={`${title} posting`}
-                          style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
-                        />
-                      </div>
-                      <div style={{ padding: 8, display: "grid", gap: 6 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
-                        {kind === "groups" ? (
-                          <div style={{ color: "#9fb6bf", fontSize: 12 }}>
-                            {formatEventDate(p.eventStartAtMs)} at {formatEventTime(p.eventStartAtMs)}
-                          </div>
-                        ) : null}
-                        <div style={{ color: "#9fb6bf", fontSize: 12 }}>Host: {displayNameForUserId(p.authorUserId)}</div>
-                        <div style={{ color: "#ced3dc", fontSize: 13, whiteSpace: "pre-wrap" }}>{p.body}</div>
-                        {kind === "groups" ? (
-                          <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
+          {showGrid ? (
+            <div style={{ display: "grid", gap: 0, marginTop: 6 }}>
+              {list.length === 0 ? (
+                <div style={{ color: "#b9bec9", fontSize: 14 }}>No {title.toLowerCase()} yet.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 0, gridTemplateColumns: gridColumns }}>
+                  {list.map((p) => {
+                    const isHost = !!session.userId && session.userId === p.authorUserId;
+                    const isInvited = !!session.userId && (p.invitedUserIds ?? []).includes(session.userId);
+                    const isAttending = !!session.userId && (p.authorUserId === session.userId || (p.acceptedUserIds ?? []).includes(session.userId));
+                    const hasRequested = !!session.userId && (p.joinRequestUserIds ?? []).includes(session.userId);
+                    const canRequestJoin = kind === "groups" && session.userType !== "guest" && !!session.userId && !isHost && !isAttending && !hasRequested;
+                    return (
+                      <div
+                        key={p.postingId}
+                        style={{
+                          background: "rgba(0,0,0,0.5)",
+                          border: "1px solid rgba(255,58,77,0.35)",
+                          borderRadius: 0,
+                          display: "grid",
+                          gap: 0
+                        }}
+                      >
+                        <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                          <img
+                            src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
+                            alt={`${title} posting`}
+                            style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
+                          />
+                        </div>
+                        <div style={{ padding: 8, display: "grid", gap: 6 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
+                          {kind === "groups" ? (
                             <div style={{ color: "#9fb6bf", fontSize: 12 }}>
-                              Invited: {p.invitedUserIds?.length ?? 0} | Attending: {(p.acceptedUserIds?.length ?? 0) + 1}
+                              {formatEventDate(p.eventStartAtMs)} at {formatEventTime(p.eventStartAtMs)}
                             </div>
-                            {isHost ? (
-                              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
-                                <input
-                                  value={inviteTargetByEventId[p.postingId] ?? ""}
-                                  onChange={(e) => setInviteTargetByEventId((prev) => ({ ...prev, [p.postingId]: e.target.value }))}
-                                  placeholder="Invite user id"
-                                  style={fieldStyle()}
-                                />
-                                <button type="button" style={buttonSecondary(false)} onClick={() => void inviteToEvent(p.postingId)}>
-                                  INVITE
-                                </button>
+                          ) : null}
+                          <div style={{ color: "#9fb6bf", fontSize: 12 }}>Host: {displayNameForUserId(p.authorUserId)}</div>
+                          <div style={{ color: "#ced3dc", fontSize: 13, whiteSpace: "pre-wrap" }}>{p.body}</div>
+                          {kind === "groups" ? (
+                            <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
+                              <div style={{ color: "#9fb6bf", fontSize: 12 }}>
+                                Invited: {p.invitedUserIds?.length ?? 0} | Attending: {(p.acceptedUserIds?.length ?? 0) + 1}
                               </div>
-                            ) : null}
-                            {session.userType !== "guest" && isInvited ? (
-                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(p.postingId, true)}>
-                                  ACCEPT INVITE
+                              {isHost ? (
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                                  <input
+                                    value={inviteTargetByEventId[p.postingId] ?? ""}
+                                    onChange={(e) => setInviteTargetByEventId((prev) => ({ ...prev, [p.postingId]: e.target.value }))}
+                                    placeholder="Invite user id"
+                                    style={fieldStyle()}
+                                  />
+                                  <button type="button" style={buttonSecondary(false)} onClick={() => void inviteToEvent(p.postingId)}>
+                                    INVITE
+                                  </button>
+                                </div>
+                              ) : null}
+                              {session.userType !== "guest" && isInvited ? (
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(p.postingId, true)}>
+                                    ACCEPT INVITE
+                                  </button>
+                                  <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(p.postingId, false)}>
+                                    DECLINE
+                                  </button>
+                                </div>
+                              ) : null}
+                              {canRequestJoin ? (
+                                <button type="button" style={buttonSecondary(false)} onClick={() => void requestToJoin(p.postingId)}>
+                                  REQUEST TO JOIN
                                 </button>
-                                <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(p.postingId, false)}>
-                                  DECLINE
-                                </button>
-                              </div>
-                            ) : null}
-                            {canRequestJoin ? (
-                              <button type="button" style={buttonSecondary(false)} onClick={() => void requestToJoin(p.postingId)}>
-                                REQUEST TO JOIN
+                              ) : null}
+                              {hasRequested ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Join request pending host approval.</div> : null}
+                              <button
+                                type="button"
+                                style={selectedGroupId === p.postingId ? buttonPrimary(false) : buttonSecondary(false)}
+                                onClick={() => setSelectedGroupId((prev) => (prev === p.postingId ? null : p.postingId))}
+                              >
+                                {selectedGroupId === p.postingId ? "HIDE GROUP PROFILE" : "VIEW GROUP PROFILE"}
                               </button>
-                            ) : null}
-                            {hasRequested ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Join request pending host approval.</div> : null}
-                            <button
-                              type="button"
-                              style={selectedGroupId === p.postingId ? buttonPrimary(false) : buttonSecondary(false)}
-                              onClick={() => setSelectedGroupId((prev) => (prev === p.postingId ? null : p.postingId))}
-                            >
-                              {selectedGroupId === p.postingId ? "HIDE GROUP PROFILE" : "VIEW GROUP PROFILE"}
-                            </button>
-                          </div>
-                        ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -3937,7 +4038,7 @@ function PublicPostings({
         peerKey={selectedSpotThreadKey}
         currentUserKey={myActorKey}
         messages={spotThreadMessages}
-        client={spotChatClient}
+        client={postingChatClient}
         title={`${selectedSpot.name} Board`}
         showHeader={false}
         edgeToEdge={isMobile}
@@ -4055,6 +4156,147 @@ function PublicPostings({
       </div>
     </div>
   );
+
+  if (!isMobile) {
+    const shellStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "1.05fr 1.25fr", gap: 10, alignItems: "start" };
+    const gridStyle: React.CSSProperties = {
+      display: "grid",
+      gap: 0,
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      border: "1px solid rgba(255,58,77,0.35)",
+      background: "rgba(0,0,0,0.45)"
+    };
+    if (screen === "ads") {
+      return (
+        <div style={shellStyle}>
+          <div style={gridStyle}>
+            {ads.map((p) => (
+              <button
+                key={p.postingId}
+                type="button"
+                onClick={() => setSelectedAdId(p.postingId)}
+                style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedAdId === p.postingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
+              >
+                <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Ad media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #0fd9ff" }} />
+                </div>
+                <div style={{ padding: 8, display: "grid", gap: 4 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
+                  <div style={{ fontSize: 11, color: "#b9bec9" }}>Host: {displayNameForUserId(p.authorUserId)}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {panel("ads", false)}
+            {selectedAd ? (
+              <div style={{ ...cardStyle(), display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedAd.title}</div>
+                <div style={{ color: "#9fb6bf", fontSize: 13 }}>Host: {displayNameForUserId(selectedAd.authorUserId)}</div>
+                <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", fontSize: 14 }}>{selectedAd.body}</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={buttonSecondary(false)} onClick={() => setLastError("Ad favoriting is available from profile actions.")}>FAVORITE</button>
+                  <button type="button" style={buttonSecondary(false)} onClick={() => setLastError("Ad blocking is available from profile actions.")}>BLOCK</button>
+                  <button type="button" style={buttonSecondary(false)} onClick={() => setLastError("Thanks. Report logged for admin review.")}>REPORT</button>
+                  <button type="button" style={buttonPrimary(false)} onClick={() => void loadAdThread(selectedAd)}>CHAT</button>
+                </div>
+                {adThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13 }}>Loading chat...</div> : null}
+                <ChatWindow
+                  chatKind="date"
+                  peerKey={selectedAdThreadKey}
+                  currentUserKey={myActorKey}
+                  messages={adThreadMessages}
+                  client={postingChatClient}
+                  title="Ad Chat"
+                  peerSummary={{ displayName: displayNameForUserId(selectedAd.authorUserId), avatarUrl: avatarForUserId(selectedAd.authorUserId) }}
+                  showHeader={false}
+                />
+              </div>
+            ) : (
+              <div style={cardStyle()}>
+                <div style={{ color: "#b9bec9", fontSize: 14 }}>Select an ad to view details and chat with the publisher.</div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+    if (screen === "groups") {
+      return (
+        <div style={shellStyle}>
+          <div style={gridStyle}>
+            {events.map((p) => (
+              <button
+                key={p.postingId}
+                type="button"
+                onClick={() => setSelectedGroupId(p.postingId)}
+                style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedGroupId === p.postingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
+              >
+                <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Group media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #0fd9ff" }} />
+                </div>
+                <div style={{ padding: 8, display: "grid", gap: 4 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
+                  <div style={{ fontSize: 11, color: "#b9bec9" }}>{formatEventDate(p.eventStartAtMs)}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {panel("groups", false)}
+            {selectedGroup ? (
+              <div style={{ ...cardStyle(), display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedGroup.title}</div>
+                <div style={{ color: "#9fb6bf", fontSize: 13 }}>
+                  {formatEventDate(selectedGroup.eventStartAtMs)} at {formatEventTime(selectedGroup.eventStartAtMs)}
+                </div>
+                <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", fontSize: 14 }}>{selectedGroup.groupDetails ?? selectedGroup.body}</div>
+                {groupThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13 }}>Loading board...</div> : null}
+                <ChatWindow
+                  chatKind="date"
+                  peerKey={selectedGroupThreadKey}
+                  currentUserKey={myActorKey}
+                  messages={groupThreadMessages}
+                  client={postingChatClient}
+                  title="Group Board"
+                  presentation="board"
+                  authorLabelForKey={displayNameForActorKey}
+                  showHeader={false}
+                />
+              </div>
+            ) : (
+              <div style={cardStyle()}>
+                <div style={{ color: "#b9bec9", fontSize: 14 }}>Select a group to view details and message board.</div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div style={shellStyle}>
+        <div style={gridStyle}>
+          {spots.map((spot) => (
+            <button
+              key={spot.spotId}
+              type="button"
+              onClick={() => setSelectedSpotId(spot.spotId)}
+              style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedSpotId === spot.spotId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
+            >
+              <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                <img src={spot.photoMediaId ? (mediaUrlById[spot.photoMediaId] ?? avatarForKey(spot.spotId)) : avatarForKey(spot.spotId)} alt="Cruising spot" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #0fd9ff" }} />
+              </div>
+              <div style={{ padding: 8, display: "grid", gap: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{spot.name}</div>
+                <div style={{ fontSize: 11, color: "#b9bec9" }}>Check-ins: {spot.checkInCount ?? 0}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+        <div>{spotsPanel}</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "grid", gap: 8, marginInline: isMobile ? -10 : 0 }}>
@@ -4251,8 +4493,9 @@ function SubmissionsPanel({ api, session, setLastError }: Readonly<{ api: Api; s
 function PromotedProfilesPanel({
   api,
   session,
+  isMobile,
   setLastError
-}: Readonly<{ api: Api; session: Session; setLastError(value: string | null): void }>): React.ReactElement {
+}: Readonly<{ api: Api; session: Session; isMobile: boolean; setLastError(value: string | null): void }>): React.ReactElement {
   const [listings, setListings] = useState<ReadonlyArray<{ listingId: string; userId: string; title: string; body: string; displayName: string; createdAtMs: number }>>([]);
   const [avatarUrlByUserId, setAvatarUrlByUserId] = useState<Record<string, string>>({});
   const [selectedProfile, setSelectedProfile] = useState<{
@@ -4275,8 +4518,13 @@ function PromotedProfilesPanel({
   const [displayName, setDisplayName] = useState<string>("");
   const [paymentToken, setPaymentToken] = useState<string>("");
   const [status, setStatus] = useState<string>("Ready.");
+  const [selectedListingId, setSelectedListingId] = useState<string | null>(null);
+  const [promotedMessages, setPromotedMessages] = useState<ReadonlyArray<ChatMessage>>([]);
+  const [promotedThreadLoading, setPromotedThreadLoading] = useState<boolean>(false);
 
   const canPost = session.userType !== "guest";
+  const myActorKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const selectedListing = useMemo(() => listings.find((item) => item.listingId === selectedListingId) ?? null, [listings, selectedListingId]);
 
   async function refresh(): Promise<void> {
     try {
@@ -4311,6 +4559,74 @@ function PromotedProfilesPanel({
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    if (isMobile) return;
+    setSelectedListingId((prev) => (prev && listings.some((item) => item.listingId === prev) ? prev : listings[0]?.listingId ?? null));
+  }, [isMobile, listings]);
+
+  async function loadPromotedThread(listing: { userId: string }): Promise<void> {
+    const threadKey = `user:${listing.userId}`;
+    try {
+      const res = await api.listChat(session.sessionToken, "date", threadKey);
+      const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
+      setPromotedMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
+      void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
+  }
+
+  const promotedChatClient: ChatApiClient = useMemo(
+    () => ({
+      async sendMessage(chatKind, toKey, text, media) {
+        const res = await api.sendChat(session.sessionToken, chatKind, toKey, text, media);
+        const msg = (res as { message?: ChatMessage }).message;
+        if (!msg) throw { code: "UNAUTHORIZED_ACTION", message: "Message rejected." } as ServiceError;
+        setPromotedMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
+        return msg;
+      },
+      async initiateMediaUpload(mimeType, sizeBytes) {
+        const res = await api.initiateChatMediaUpload(session.sessionToken, { mimeType, sizeBytes });
+        return { objectKey: res.objectKey, uploadUrl: res.uploadUrl };
+      },
+      async uploadToSignedUrl(uploadUrl, file, mimeType) {
+        if (await uploadToLocalSignedUrl(uploadUrl, file, mimeType)) return;
+        const res = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "content-type": mimeType },
+          body: file
+        });
+        if (!res.ok) throw { code: "MEDIA_UPLOAD_INCOMPLETE", message: "Upload failed." } as ServiceError;
+      },
+      async getMediaUrl(objectKey) {
+        const res = await api.getChatMediaUrl(session.sessionToken, objectKey);
+        return res.downloadUrl;
+      }
+    }),
+    [api, session.sessionToken]
+  );
+
+  useEffect(() => {
+    if (!selectedListing) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    setPromotedThreadLoading(true);
+    const poll = async (): Promise<void> => {
+      if (cancelled) return;
+      await loadPromotedThread(selectedListing);
+      if (cancelled) return;
+      setPromotedThreadLoading(false);
+      timer = window.setTimeout(() => {
+        void poll();
+      }, 1500);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [selectedListing]);
 
   async function payAndUnlock(): Promise<void> {
     if (!canPost) {
@@ -4356,6 +4672,91 @@ function PromotedProfilesPanel({
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
+  }
+
+  if (!isMobile) {
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "1.05fr 1.25fr", gap: 10, alignItems: "start" }}>
+        <div
+          style={{
+            display: "grid",
+            gap: 0,
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            border: "1px solid rgba(255,58,77,0.35)",
+            background: "rgba(0,0,0,0.45)"
+          }}
+        >
+          {listings.map((listing) => (
+            <button
+              key={listing.listingId}
+              type="button"
+              onClick={() => setSelectedListingId(listing.listingId)}
+              style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedListingId === listing.listingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
+            >
+              <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                <img src={avatarUrlByUserId[listing.userId] ?? avatarForKey(`user:${listing.userId}`)} alt={`${listing.displayName} profile`} style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #0fd9ff" }} />
+              </div>
+              <div style={{ padding: 8, display: "grid", gap: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{listing.title}</div>
+                <div style={{ fontSize: 11, color: "#b9bec9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{listing.displayName}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ border: "1px solid rgba(255,58,77,0.35)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.22)" }}>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>PROMOTED PROFILES</div>
+              <div style={{ color: "#b9bec9", fontSize: 14 }}>Publishing requires a ${Math.round(feeCents / 100)} fee per profile.</div>
+              <div style={{ color: "#26d5ff", fontSize: 13 }}>{status}</div>
+            </div>
+          </div>
+          <div style={{ border: "1px solid rgba(255,58,77,0.35)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.22)" }}>
+            <div style={{ display: "grid", gap: 10 }}>
+              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Display name" style={fieldStyle()} disabled={!canPost} />
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Headline" style={fieldStyle()} disabled={!canPost} />
+              <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Profile description" style={{ ...fieldStyle(), minHeight: 92, resize: "vertical" }} disabled={!canPost} />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" style={canPost ? buttonSecondary(false) : buttonSecondary(true)} disabled={!canPost} onClick={() => void payAndUnlock()}>
+                  PAY ${Math.round(feeCents / 100)}
+                </button>
+                <button type="button" style={canPost ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPost} onClick={() => void publish()}>
+                  PUBLISH PROFILE
+                </button>
+              </div>
+            </div>
+          </div>
+          {selectedListing ? (
+            <div style={{ ...cardStyle(), display: "grid", gap: 10 }}>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedListing.title}</div>
+              <div style={{ color: "#9fb6bf", fontSize: 13 }}>{selectedListing.displayName}</div>
+              <div style={{ color: "#ced3dc", fontSize: 14, whiteSpace: "pre-wrap" }}>{selectedListing.body}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" style={buttonSecondary(false)} onClick={() => void openListingProfile(selectedListing.userId)}>VIEW PROFILE</button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => setLastError("Use profile actions to favorite promoted users.")}>FAVORITE</button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => setLastError("Use profile actions to block promoted users.")}>BLOCK</button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => setLastError("Thanks. Report logged for admin review.")}>REPORT</button>
+              </div>
+              {promotedThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13 }}>Loading chat...</div> : null}
+              <ChatWindow
+                chatKind="date"
+                peerKey={`user:${selectedListing.userId}`}
+                currentUserKey={myActorKey}
+                messages={promotedMessages}
+                client={promotedChatClient}
+                title="Promoted Chat"
+                peerSummary={{ displayName: selectedListing.displayName, avatarUrl: avatarUrlByUserId[selectedListing.userId] ?? avatarForKey(`user:${selectedListing.userId}`) }}
+                showHeader={false}
+              />
+            </div>
+          ) : (
+            <div style={cardStyle()}>
+              <div style={{ color: "#b9bec9", fontSize: 14 }}>Select a promoted profile to open details and chat.</div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -5433,7 +5834,7 @@ export function Router({
       {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setLastError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setLastError} /> : null}
-      {activeTab === "promoted" ? <PromotedProfilesPanel api={api} session={session} setLastError={setLastError} /> : null}
+      {activeTab === "promoted" ? <PromotedProfilesPanel api={api} session={session} isMobile={isMobile} setLastError={setLastError} /> : null}
     </div>
   );
 }
