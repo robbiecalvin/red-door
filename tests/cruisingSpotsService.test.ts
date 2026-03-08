@@ -20,7 +20,9 @@ describe("cruisingSpotsService", () => {
       createdAtMs: 1000,
       checkInCount: 0,
       actionCount: 0,
-      moderationStatus: "pending"
+      moderationStatus: "approved",
+      moderatedAtMs: 1000,
+      moderatedByUserId: "system:auto"
     });
 
     const list = svc.listAll();
@@ -98,7 +100,7 @@ describe("cruisingSpotsService", () => {
     expect(res.error).toEqual({ code: "INVALID_INPUT", message: "Spot description contains disallowed language." });
   });
 
-  it("Given a newly created spot When listed before approval Then it is hidden publicly but visible to the creator", () => {
+  it("Given a newly created spot When listed publicly Then it is visible immediately", () => {
     const svc = createCruisingSpotsService({ nowMs: () => 1000, idFactory: () => "spot_mod_1" });
     const created = svc.create(
       { userType: "registered", userId: "u_admin", ageVerified: true },
@@ -107,25 +109,10 @@ describe("cruisingSpotsService", () => {
     expect(created.ok).toBe(true);
     if (!created.ok) throw new Error("unreachable");
 
-    const before = svc.list();
-    expect(before.ok).toBe(true);
-    if (!before.ok) throw new Error("unreachable");
-    expect(before.value).toHaveLength(0);
-
-    const ownerView = svc.list({ userType: "registered", userId: "u_admin", ageVerified: true });
-    expect(ownerView.ok).toBe(true);
-    if (!ownerView.ok) throw new Error("unreachable");
-    expect(ownerView.value).toHaveLength(1);
-    expect(ownerView.value[0].moderationStatus).toBe("pending");
-
-    const approved = svc.approve({ userType: "registered", userId: "admin_1", ageVerified: true, role: "admin" }, "spot_mod_1");
-    expect(approved.ok).toBe(true);
-    if (!approved.ok) throw new Error("unreachable");
-    expect(approved.value.moderationStatus).toBe("approved");
-
-    const after = svc.list();
-    expect(after.ok).toBe(true);
-    if (!after.ok) throw new Error("unreachable");
-    expect(after.value).toHaveLength(1);
+    const listed = svc.list();
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw new Error("unreachable");
+    expect(listed.value).toHaveLength(1);
+    expect(listed.value[0].moderationStatus).toBe("approved");
   });
 });

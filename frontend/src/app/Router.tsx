@@ -3587,7 +3587,19 @@ function PublicPostings({
   }
 
   useEffect(() => {
-    void refresh();
+    let cancelled = false;
+    const run = async (): Promise<void> => {
+      if (cancelled) return;
+      await refresh();
+    };
+    void run();
+    const id = window.setInterval(() => {
+      void run();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [api, session.sessionToken, session.userType]);
 
   useEffect(() => {

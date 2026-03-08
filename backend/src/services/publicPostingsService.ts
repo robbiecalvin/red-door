@@ -237,7 +237,9 @@ export function createPublicPostingsService(deps?: Readonly<{ nowMs?: () => numb
         invitedUserIds: type === "event" ? [] : undefined,
         acceptedUserIds: type === "event" ? [] : undefined,
         joinRequestUserIds: type === "event" ? [] : undefined,
-        moderationStatus: "pending"
+        moderationStatus: "approved",
+        moderatedAtMs: nowMs(),
+        moderatedByUserId: "system:auto"
       };
       posts.push(posting);
       return ok(posting);

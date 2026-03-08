@@ -161,7 +161,9 @@ export function createCruisingSpotsService(
         createdAtMs: nowMs(),
         checkInCount: 0,
         actionCount: 0,
-        moderationStatus: "pending"
+        moderationStatus: "approved",
+        moderatedAtMs: nowMs(),
+        moderatedByUserId: "system:auto"
       };
       spots.push(spot);
       return ok(spot);

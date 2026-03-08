@@ -55,7 +55,9 @@ describe("publicPostingsService", () => {
       invitedUserIds: [],
       acceptedUserIds: [],
       joinRequestUserIds: [],
-      moderationStatus: "pending"
+      moderationStatus: "approved",
+      moderatedAtMs: 1000,
+      moderatedByUserId: "system:auto"
     });
   });
 
@@ -130,7 +132,7 @@ describe("publicPostingsService", () => {
     expect(res.error).toEqual({ code: "INVALID_INPUT", message: "Body contains disallowed language." });
   });
 
-  it("Given a pending posting When listing publicly Then it is hidden until approved", () => {
+  it("Given a newly created posting When listing publicly Then it is visible immediately", () => {
     const svc = createPublicPostingsService({ nowMs: () => 1000, idFactory: () => "ad_mod_1" });
     const created = svc.create(
       { userType: "registered", userId: "u_9", ageVerified: true },
@@ -138,17 +140,10 @@ describe("publicPostingsService", () => {
     );
     expect(created.ok).toBe(true);
 
-    const before = svc.list();
-    expect(before.ok).toBe(true);
-    if (!before.ok) throw new Error("unreachable");
-    expect(before.value).toHaveLength(0);
-
-    const approved = svc.approve({ userType: "registered", userId: "admin_9", ageVerified: true, role: "admin" }, "ad_mod_1");
-    expect(approved.ok).toBe(true);
-
-    const after = svc.list();
-    expect(after.ok).toBe(true);
-    if (!after.ok) throw new Error("unreachable");
-    expect(after.value).toHaveLength(1);
+    const listed = svc.list();
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw new Error("unreachable");
+    expect(listed.value).toHaveLength(1);
+    expect(listed.value[0].moderationStatus).toBe("approved");
   });
 });
