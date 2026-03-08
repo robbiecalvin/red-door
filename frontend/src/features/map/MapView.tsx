@@ -115,12 +115,17 @@ export function MapView({
   const runtimeRef = useRef<MapLibreRuntime | null>(null);
   const mapRef = useRef<MlMap | null>(null);
   const markersRef = useRef<Array<MlMarker>>([]);
+  const onMapClickRef = useRef<typeof onMapClick>(onMapClick);
 
   const [status, setStatus] = useState<MapStatus>({ kind: "ready" });
 
   const initialCenter: LngLat = useMemo(() => initialView.center, [initialView.center]);
   const isInteractive = interactive !== false;
   const isVisible = visible !== false;
+
+  useEffect(() => {
+    onMapClickRef.current = onMapClick;
+  }, [onMapClick]);
 
   useEffect(() => {
     let cancelled = false;
@@ -175,11 +180,12 @@ export function MapView({
         });
 
         mapClickHandler = (evt: unknown) => {
-          if (typeof onMapClick !== "function") return;
+          const handler = onMapClickRef.current;
+          if (typeof handler !== "function") return;
           const lng = (evt as { lngLat?: { lng?: unknown; lat?: unknown } }).lngLat?.lng;
           const lat = (evt as { lngLat?: { lng?: unknown; lat?: unknown } }).lngLat?.lat;
           if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
-          onMapClick({ lng: lng as number, lat: lat as number });
+          handler({ lng: lng as number, lat: lat as number });
         };
         map.on("click", mapClickHandler);
       } catch (e) {
@@ -203,7 +209,7 @@ export function MapView({
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, [isInteractive, onMapClick]);
+  }, [isInteractive]);
 
   useEffect(() => {
     const map = mapRef.current;
