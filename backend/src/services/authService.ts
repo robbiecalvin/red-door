@@ -284,13 +284,14 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       ) {
         continue;
       }
+      const normalizedEmail = normalizeEmail(c.email);
       const user: StoredUser = {
         id: c.id,
-        email: normalizeEmail(c.email),
+        email: normalizedEmail,
         phoneE164: typeof c.phoneE164 === "string" ? c.phoneE164 : null,
         userType: c.userType,
         tier: c.tier,
-        role: c.role === "admin" || c.role === "user" ? c.role : adminEmails.has(normalizeEmail(c.email)) ? "admin" : "user",
+        role: c.role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "user",
         ageVerified: c.ageVerified === true,
         emailVerified: c.emailVerified,
         bannedAtMs: typeof c.bannedAtMs === "number" ? c.bannedAtMs : null,
@@ -310,9 +311,11 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
   function hydrateInitialState(state: AuthStateSnapshot): void {
     for (const candidate of state.users) {
       if (!candidate || typeof candidate !== "object") continue;
+      const normalizedEmail = normalizeEmail(candidate.email);
       const user: StoredUser = {
         ...candidate,
-        role: normalizeRole(candidate.role ?? (adminEmails.has(normalizeEmail(candidate.email)) ? "admin" : "user")),
+        email: normalizedEmail,
+        role: candidate.role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "user",
         bannedAtMs: typeof candidate.bannedAtMs === "number" ? candidate.bannedAtMs : null,
         bannedReason: typeof candidate.bannedReason === "string" ? candidate.bannedReason : null
       };
@@ -631,27 +634,34 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (!user) {
         return err("UNAUTHORIZED_ACTION", "Invalid credentials.");
       }
-      const banned = assertNotBanned(user);
+      if (adminEmails.has(normalizedEmail) && user.role !== "admin") {
+        const promotedUser: StoredUser = { ...user, role: "admin" };
+        usersByEmail.set(promotedUser.email, promotedUser);
+        usersById.set(promotedUser.id, promotedUser);
+        persistUsers();
+      }
+      const currentUser = usersByEmail.get(normalizedEmail) ?? user;
+      const banned = assertNotBanned(currentUser);
       if (!banned.ok) return banned as Result<VerifyEmailResult>;
 
-      const salt = Buffer.from(user.passwordSaltB64, "base64");
-      const expectedHash = Buffer.from(user.passwordHashB64, "base64");
+      const salt = Buffer.from(currentUser.passwordSaltB64, "base64");
+      const expectedHash = Buffer.from(currentUser.passwordHashB64, "base64");
       const actualHash = hashPassword(password, salt);
 
       if (!safeEqual(expectedHash, actualHash)) {
         return err("UNAUTHORIZED_ACTION", "Invalid credentials.");
       }
-      let loginUser = user;
-      if (!user.emailVerified) {
+      let loginUser = currentUser;
+      if (!currentUser.emailVerified) {
         if (!skipEmailVerification) {
-          setVerificationCode(user, nowMs());
+          setVerificationCode(currentUser, nowMs());
           return err("EMAIL_VERIFICATION_REQUIRED", "Phone verification required before login.", {
-            email: user.email,
-            phoneE164: user.phoneE164
+            email: currentUser.email,
+            phoneE164: currentUser.phoneE164
           });
         }
         const autoVerifiedUser: StoredUser = {
-          ...user,
+          ...currentUser,
           emailVerified: true,
           verificationCodeSaltB64: null,
           verificationCodeHashB64: null,
