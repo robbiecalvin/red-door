@@ -4709,14 +4709,17 @@ function PromotedProfilesPanel({
   const [selectedListingId, setSelectedListingId] = useState<string | null>(null);
   const [promotedMessages, setPromotedMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [promotedThreadLoading, setPromotedThreadLoading] = useState<boolean>(false);
+  const refreshSeqRef = useRef<number>(0);
 
   const canPost = session.userType !== "guest";
   const myActorKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
   const selectedListing = useMemo(() => listings.find((item) => item.listingId === selectedListingId) ?? null, [listings, selectedListingId]);
 
   async function refresh(): Promise<void> {
+    const requestSeq = ++refreshSeqRef.current;
     try {
       const res = await api.listPromotedProfiles();
+      if (requestSeq !== refreshSeqRef.current) return;
       setListings([...res.listings].sort((a, b) => b.createdAtMs - a.createdAtMs));
       setFeeCents(res.feeCents);
       const uniqueUserIds = Array.from(new Set(res.listings.map((item) => item.userId))).filter((v) => v.trim().length > 0);
@@ -4733,6 +4736,7 @@ function PromotedProfilesPanel({
           }
         })
       );
+      if (requestSeq !== refreshSeqRef.current) return;
       const next: Record<string, string> = {};
       for (const row of rows) {
         if (!row) continue;
@@ -4740,13 +4744,36 @@ function PromotedProfilesPanel({
       }
       setAvatarUrlByUserId(next);
     } catch (e) {
+      if (requestSeq !== refreshSeqRef.current) return;
       setLastError(normalizeErrorMessage(e));
     }
   }
 
   useEffect(() => {
-    void refresh();
-  }, []);
+    let cancelled = false;
+    const run = async (): Promise<void> => {
+      if (cancelled) return;
+      await refresh();
+    };
+    void run();
+    const id = window.setInterval(() => {
+      void run();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [api, session.sessionToken]);
+
+  useEffect(() => {
+    const onProfileMediaUpdated = (): void => {
+      void refresh();
+    };
+    window.addEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
+    return () => {
+      window.removeEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
+    };
+  }, [api, session.sessionToken]);
 
   useEffect(() => {
     if (isMobile) return;
@@ -4839,13 +4866,20 @@ function PromotedProfilesPanel({
       return;
     }
     try {
-      await api.createPromotedProfile(session.sessionToken, { paymentToken, title, body, displayName });
+      const created = await api.createPromotedProfile(session.sessionToken, { paymentToken, title, body, displayName });
+      if (created?.listing) {
+        setListings((prev) => {
+          const next = [created.listing, ...prev.filter((item) => item.listingId !== created.listing.listingId)];
+          return next.sort((a, b) => b.createdAtMs - a.createdAtMs);
+        });
+        setSelectedListingId(created.listing.listingId);
+      }
       setTitle("");
       setBody("");
       setDisplayName("");
       setPaymentToken("");
       setStatus("Promoted profile published.");
-      await refresh();
+      void refresh();
     } catch (e) {
       const msg = normalizeErrorMessage(e);
       setStatus(msg);
