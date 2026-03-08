@@ -26,6 +26,8 @@ import type { ChatMessage } from "../features/chat/chat.types";
 import placeholderA from "../assets/reddoor-placeholder-1.svg";
 import placeholderB from "../assets/reddoor-placeholder-2.svg";
 import placeholderC from "../assets/reddoor-placeholder-3.svg";
+import mapSpotIcon from "../assets/map-spot-icon.svg";
+import mapGroupIcon from "../assets/map-group-icon.svg";
 
 type Api = ReturnType<typeof apiClient>;
 
@@ -402,6 +404,7 @@ function CruiseSurface({
   } | null>(null);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState<number>(0);
   const [cruisingSpots, setCruisingSpots] = useState<ReadonlyArray<CruisingSpot>>([]);
+  const [groupPostings, setGroupPostings] = useState<ReadonlyArray<PublicPosting>>([]);
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
   const [travelCenter, setTravelCenter] = useState<{ lat: number; lng: number } | null>(() => readTravelCenter());
   const [travelPickerArmed, setTravelPickerArmed] = useState<boolean>(false);
@@ -658,23 +661,32 @@ function CruiseSurface({
 
   useEffect(() => {
     let cancelled = false;
-    async function refreshCruisingSpots(): Promise<void> {
+    async function refreshMapListings(): Promise<void> {
       try {
-        const res = await api.listCruisingSpots(session.sessionToken);
-        if (!cancelled) setCruisingSpots(res.spots);
+        const [spotsRes, groupsRes] = await Promise.all([
+          api.listCruisingSpots(session.sessionToken),
+          api.listPublicPostings("event", session.sessionToken)
+        ]);
+        if (!cancelled) {
+          setCruisingSpots(spotsRes.spots);
+          setGroupPostings(groupsRes.postings);
+        }
       } catch {
-        if (!cancelled) setCruisingSpots([]);
+        if (!cancelled) {
+          setCruisingSpots([]);
+          setGroupPostings([]);
+        }
       }
     }
-    void refreshCruisingSpots();
+    void refreshMapListings();
     const id = window.setInterval(() => {
-      void refreshCruisingSpots();
+      void refreshMapListings();
     }, 12000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [api]);
+  }, [api, session.sessionToken]);
 
   useEffect(() => {
     const now = Date.now();
@@ -974,12 +986,40 @@ function CruiseSurface({
         position: { lat: spot.lat, lng: spot.lng },
         color: "#26d5ff",
         markerType: "spot" as const,
-        markerGlyph: "CS",
+        imageUrl: mapSpotIcon,
         label: `${spot.name} | check-ins: ${spot.checkInCount ?? 0} | action: ${spot.actionCount ?? 0}`,
         onClick: () => setSelectedSpotId(spot.spotId)
       })),
     [cruisingSpots]
   );
+  const groupMarkers = useMemo(() => {
+    const presenceByUserId = new Map<string, { lat: number; lng: number }>();
+    for (const row of mergedPresence) {
+      const userId = userIdFromPresenceKey(row.key);
+      if (!userId) continue;
+      presenceByUserId.set(userId, { lat: row.lat, lng: row.lng });
+    }
+    return groupPostings
+      .filter((posting) => posting.type === "event")
+      .map((posting) => {
+        const lat = typeof posting.lat === "number" && Number.isFinite(posting.lat) ? posting.lat : presenceByUserId.get(posting.authorUserId)?.lat;
+        const lng = typeof posting.lng === "number" && Number.isFinite(posting.lng) ? posting.lng : presenceByUserId.get(posting.authorUserId)?.lng;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+        return {
+          id: `group:${posting.postingId}`,
+          position: { lat: lat as number, lng: lng as number },
+          color: "#26d5ff",
+          markerType: "group" as const,
+          imageUrl: mapGroupIcon,
+          label: `Group: ${posting.title}`,
+          onClick: () => {
+            window.location.hash = "#/groups";
+          }
+        };
+      })
+      .filter((marker): marker is NonNullable<typeof marker> => marker !== null);
+  }, [groupPostings, mergedPresence]);
+  const mapOverlayMarkers = useMemo(() => [...spotMarkers, ...groupMarkers], [groupMarkers, spotMarkers]);
 
   const setDiscoverTab = (next: MobileCruiseTab): void => {
     setMobileTab(next);
@@ -994,7 +1034,7 @@ function CruiseSurface({
       realtimeErrorMessage={realtimeError}
       onMarkerSelect={(key) => void openProfileByKey(key)}
       avatarByKey={avatarUrlByKey}
-      additionalMarkers={spotMarkers}
+      additionalMarkers={mapOverlayMarkers}
       defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
       height={isMobile ? "calc(100vh - 340px)" : "calc(100dvh - 62px)"}
       visible
@@ -1044,7 +1084,7 @@ function CruiseSurface({
         realtimeErrorMessage={realtimeError}
         onMarkerSelect={(key) => void openProfileByKey(key)}
         avatarByKey={avatarUrlByKey}
-        additionalMarkers={spotMarkers}
+        additionalMarkers={mapOverlayMarkers}
         defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
         height={"calc(100dvh - 220px)"}
         visible={mobileTab === "map"}
