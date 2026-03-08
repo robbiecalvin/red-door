@@ -736,6 +736,8 @@ export function App(): React.ReactElement {
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
   const showBottomNav = Boolean(session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking);
 
+  const desktopWideSession = Boolean(session && session.ageVerified === true && !isMobile);
+
   return (
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav" : ""}`}>
       {session ? (
@@ -806,7 +808,9 @@ export function App(): React.ReactElement {
         </header>
       ) : null}
 
-      <main className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isDesktopFullMap ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""}`}>
+      <main
+        className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isDesktopFullMap ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
+      >
         <div className="rd-grid">
           {!session ? (
             <>

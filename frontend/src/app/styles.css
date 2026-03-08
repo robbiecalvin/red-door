@@ -206,6 +206,13 @@ textarea {
   height: 100%;
 }
 
+.rd-main.rd-main-desktop-wide {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px 14px;
+}
+
 .rd-home-main {
   max-width: 980px;
   padding-top: 36px;
