@@ -380,6 +380,8 @@ function CruiseSurface({
   const { state: presenceState, lastErrorMessage: realtimeError } = useCruisePresence({ wsUrl: wsProxyUrl(), sessionToken: session.sessionToken });
   const presence = useMemo(() => Array.from(presenceState.byKey.values()), [presenceState.byKey]);
   const mediaUrlFreshForMs = 8 * 60_000;
+  const profileRequestSeqRef = useRef<number>(0);
+  const selectedProfileKeyRef = useRef<string | null>(null);
 
   function applyResolvedMediaRows(
     rows: ReadonlyArray<{ mediaId: string; downloadUrl?: string; url?: string } | null>
@@ -434,6 +436,10 @@ function CruiseSurface({
   useEffect(() => {
     setMobileTab(discoverScreen);
   }, [discoverScreen]);
+
+  useEffect(() => {
+    selectedProfileKeyRef.current = selectedProfileKey;
+  }, [selectedProfileKey]);
 
   useEffect(() => {
     const refreshTravelCenter = (): void => {
@@ -688,16 +694,22 @@ function CruiseSurface({
   }, [api, mediaFetchedAtById, mediaRetryAfterById, mediaUrlById, mediaUrlFreshForMs, publicProfiles]);
 
   async function openProfileByKey(key: string): Promise<void> {
-    setSelectedProfileKey(key);
-    setSelectedMediaIndex(0);
+    const keyChanged = selectedProfileKeyRef.current !== key;
+    if (keyChanged) {
+      setSelectedPublicProfile(null);
+      setSelectedMediaIndex(0);
+    }
+    setSelectedProfileKey((prev) => (prev === key ? prev : key));
     const profileId = profileIdFromPresenceKey(key);
     if (!profileId) {
       setSelectedPublicProfile(null);
       return;
     }
+    const requestSeq = ++profileRequestSeqRef.current;
     try {
       if (key === meKey) {
         const meProfile = await api.getMyProfile(session.sessionToken);
+        if (requestSeq !== profileRequestSeqRef.current) return;
         if (typeof meProfile.profile.mainPhotoMediaId === "string" && meProfile.profile.mainPhotoMediaId) {
           // handled below with unified media id loading
         }
@@ -717,8 +729,10 @@ function CruiseSurface({
               }
             })
           );
+          if (requestSeq !== profileRequestSeqRef.current) return;
           applyResolvedMediaRows(rows);
         }
+        if (requestSeq !== profileRequestSeqRef.current) return;
         setSelectedPublicProfile({
           userId: meProfile.profile.userId,
           displayName: meProfile.profile.displayName,
@@ -732,6 +746,7 @@ function CruiseSurface({
         });
       } else {
         const res = await api.getPublicProfile(profileId);
+        if (requestSeq !== profileRequestSeqRef.current) return;
         const mediaIds = [
           res.profile.mainPhotoMediaId,
           ...(res.profile.galleryMediaIds ?? []),
@@ -748,18 +763,20 @@ function CruiseSurface({
               }
             })
           );
+          if (requestSeq !== profileRequestSeqRef.current) return;
           applyResolvedMediaRows(rows);
         }
+        if (requestSeq !== profileRequestSeqRef.current) return;
         setSelectedPublicProfile(res.profile as any);
       }
     } catch (e) {
+      if (requestSeq !== profileRequestSeqRef.current) return;
       const err = e as ServiceError;
       if (err?.code === "PROFILE_HIDDEN") {
         setSelectedProfileKey(null);
         setSelectedPublicProfile(null);
         return;
       }
-      setSelectedPublicProfile(null);
       setLastError(normalizeErrorMessage(e));
     }
   }
