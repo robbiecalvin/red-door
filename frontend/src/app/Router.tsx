@@ -3672,6 +3672,7 @@ function PublicPostings({
   }, [isMobile, screen, spots]);
 
   async function submit(type: "ad" | "event"): Promise<void> {
+    setLastError(null);
     if (type === "event" && !canPostEvents) {
       setLastError("Anonymous users cannot create groups.");
       return;
@@ -3795,6 +3796,7 @@ function PublicPostings({
   }
 
   async function createSpot(): Promise<void> {
+    setLastError(null);
     if (spotName.trim().length === 0) {
       setLastError("Spot name is required.");
       return;
