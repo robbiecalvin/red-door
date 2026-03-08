@@ -352,6 +352,7 @@ function CruiseSurface({
   const [favorites, setFavorites] = useState<ReadonlySet<string>>(new Set());
   const [blockedKeys, setBlockedKeys] = useState<ReadonlySet<string>>(new Set());
   const [mediaUrlById, setMediaUrlById] = useState<Record<string, string>>({});
+  const [mediaFetchedAtById, setMediaFetchedAtById] = useState<Record<string, number>>({});
   const [mediaRetryAfterById, setMediaRetryAfterById] = useState<Record<string, number>>({});
   const [selectedPublicProfile, setSelectedPublicProfile] = useState<{
     userId: string;
@@ -378,6 +379,57 @@ function CruiseSurface({
   const [travelPickerArmed, setTravelPickerArmed] = useState<boolean>(false);
   const { state: presenceState, lastErrorMessage: realtimeError } = useCruisePresence({ wsUrl: wsProxyUrl(), sessionToken: session.sessionToken });
   const presence = useMemo(() => Array.from(presenceState.byKey.values()), [presenceState.byKey]);
+  const mediaUrlFreshForMs = 8 * 60_000;
+
+  function applyResolvedMediaRows(
+    rows: ReadonlyArray<{ mediaId: string; downloadUrl?: string; url?: string } | null>
+  ): void {
+    const resolved: Array<{ mediaId: string; value: string }> = [];
+    for (const row of rows) {
+      if (!row || typeof row.mediaId !== "string" || !row.mediaId.trim()) continue;
+      const value = typeof row.downloadUrl === "string" ? row.downloadUrl : row.url;
+      if (typeof value !== "string" || value.trim().length === 0) continue;
+      resolved.push({ mediaId: row.mediaId, value });
+    }
+    if (resolved.length === 0) return;
+    const now = Date.now();
+    setMediaUrlById((prev) => {
+      const next = { ...prev };
+      for (const row of resolved) {
+        next[row.mediaId] = row.value;
+      }
+      return next;
+    });
+    setMediaFetchedAtById((prev) => {
+      const next = { ...prev };
+      for (const row of resolved) next[row.mediaId] = now;
+      return next;
+    });
+    setMediaRetryAfterById((prev) => {
+      const next = { ...prev };
+      for (const row of resolved) {
+        if (typeof next[row.mediaId] === "number") delete next[row.mediaId];
+      }
+      return next;
+    });
+  }
+
+  function invalidateMediaUrl(mediaId: string): void {
+    if (!mediaId.trim()) return;
+    setMediaUrlById((prev) => {
+      if (!(mediaId in prev)) return prev;
+      const next = { ...prev };
+      delete next[mediaId];
+      return next;
+    });
+    setMediaFetchedAtById((prev) => {
+      if (!(mediaId in prev)) return prev;
+      const next = { ...prev };
+      delete next[mediaId];
+      return next;
+    });
+    setMediaRetryAfterById((prev) => ({ ...prev, [mediaId]: 0 }));
+  }
 
   useEffect(() => {
     setMobileTab(discoverScreen);
@@ -560,16 +612,7 @@ function CruiseSurface({
               return null;
             }
           })
-        ).then((rows) => {
-          setMediaUrlById((prev) => {
-            const next = { ...prev };
-            for (const row of rows) {
-              if (!row) continue;
-              next[row.mediaId] = row.url;
-            }
-            return next;
-          });
-        });
+        ).then((rows) => applyResolvedMediaRows(rows));
       }
     };
 
@@ -601,7 +644,7 @@ function CruiseSurface({
 
   useEffect(() => {
     const now = Date.now();
-    const missing = publicProfiles
+    const pendingMediaIds = publicProfiles
       .flatMap((p) => {
         const ids: string[] = [];
         if (p.mainPhotoMediaId) ids.push(p.mainPhotoMediaId);
@@ -611,12 +654,15 @@ function CruiseSurface({
       })
       .filter(
         (id): id is string =>
-          typeof id === "string" && id.length > 0 && !mediaUrlById[id] && now >= (mediaRetryAfterById[id] ?? 0)
+          typeof id === "string" &&
+          id.length > 0 &&
+          now >= (mediaRetryAfterById[id] ?? 0) &&
+          (!mediaUrlById[id] || now - (mediaFetchedAtById[id] ?? 0) >= mediaUrlFreshForMs)
       )
       .slice(0, 6);
-    if (missing.length === 0) return;
+    if (pendingMediaIds.length === 0) return;
     void Promise.all(
-      missing.map(async (mediaId) => {
+      pendingMediaIds.map(async (mediaId) => {
         try {
           const r = await api.getPublicMediaUrl(mediaId);
           return { mediaId, url: r.downloadUrl };
@@ -625,18 +671,11 @@ function CruiseSurface({
         }
       })
     ).then((rows) => {
-      setMediaUrlById((prev) => {
-        const next = { ...prev };
-        for (const row of rows) {
-          if (!row) continue;
-          next[row.mediaId] = row.url;
-        }
-        return next;
-      });
+      applyResolvedMediaRows(rows);
       setMediaRetryAfterById((prev) => {
         const next = { ...prev };
-        for (let i = 0; i < missing.length; i += 1) {
-          const mediaId = missing[i];
+        for (let i = 0; i < pendingMediaIds.length; i += 1) {
+          const mediaId = pendingMediaIds[i];
           if (!rows[i]) {
             next[mediaId] = Date.now() + 30_000;
           } else if (next[mediaId]) {
@@ -646,7 +685,7 @@ function CruiseSurface({
         return next;
       });
     });
-  }, [api, mediaRetryAfterById, mediaUrlById, publicProfiles]);
+  }, [api, mediaFetchedAtById, mediaRetryAfterById, mediaUrlById, mediaUrlFreshForMs, publicProfiles]);
 
   async function openProfileByKey(key: string): Promise<void> {
     setSelectedProfileKey(key);
@@ -678,14 +717,7 @@ function CruiseSurface({
               }
             })
           );
-          setMediaUrlById((prev) => {
-            const next = { ...prev };
-            for (const row of rows) {
-              if (!row) continue;
-              next[row.mediaId] = row.downloadUrl;
-            }
-            return next;
-          });
+          applyResolvedMediaRows(rows);
         }
         setSelectedPublicProfile({
           userId: meProfile.profile.userId,
@@ -716,14 +748,7 @@ function CruiseSurface({
               }
             })
           );
-          setMediaUrlById((prev) => {
-            const next = { ...prev };
-            for (const row of rows) {
-              if (!row) continue;
-              next[row.mediaId] = row.downloadUrl;
-            }
-            return next;
-          });
+          applyResolvedMediaRows(rows);
         }
         setSelectedPublicProfile(res.profile as any);
       }
@@ -1003,6 +1028,7 @@ function CruiseSurface({
       publicProfiles={publicProfiles}
       favorites={favorites}
       mediaUrlById={mediaUrlById}
+      onAvatarLoadError={invalidateMediaUrl}
       onUnreadCountChange={onUnreadCountChange}
     />
   );
@@ -1060,6 +1086,9 @@ function CruiseSurface({
                         ? mediaUrlById[selectedPublicProfile.mainPhotoMediaId]
                         : avatarForKey(selectedProfileKey)
                     }
+                    onError={() => {
+                      if (selectedPublicProfile?.mainPhotoMediaId) invalidateMediaUrl(selectedPublicProfile.mainPhotoMediaId);
+                    }}
                     alt="Profile avatar"
                     style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover", border: "2px solid #ff3047" }}
                   />
@@ -1151,11 +1180,13 @@ function CruiseSurface({
                                 controls
                                 playsInline
                                 src={activeUrl}
+                                onError={() => invalidateMediaUrl(activeId)}
                                 style={{ width: "100%", maxHeight: 260, borderRadius: 10, background: "#000" }}
                               />
                             ) : (
                               <img
                                 src={activeUrl ?? avatarForKey(selectedProfileKey ?? selectedPublicProfile.userId)}
+                                onError={() => invalidateMediaUrl(activeId)}
                                 alt="Profile media"
                                 style={{ width: "100%", maxHeight: 260, objectFit: "cover", borderRadius: 10 }}
                               />
@@ -1187,7 +1218,13 @@ function CruiseSurface({
                                   {thumbIsVideo ? (
                                     <div style={{ display: "grid", placeItems: "center", width: "100%", height: "100%" }}>
                                       {thumb ? (
-                                        <video src={thumb} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                        <video
+                                          src={thumb}
+                                          muted
+                                          playsInline
+                                          onError={() => invalidateMediaUrl(mediaId)}
+                                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                        />
                                       ) : (
                                         "VIDEO"
                                       )}
@@ -1195,6 +1232,7 @@ function CruiseSurface({
                                   ) : (
                                     <img
                                       src={thumb ?? avatarForKey(selectedProfileKey ?? selectedPublicProfile.userId)}
+                                      onError={() => invalidateMediaUrl(mediaId)}
                                       alt="Media thumbnail"
                                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                     />
@@ -1345,6 +1383,7 @@ function CruiseChat({
   publicProfiles,
   favorites,
   mediaUrlById,
+  onAvatarLoadError,
   onUnreadCountChange
 }: Readonly<{
   api: Api;
@@ -1380,6 +1419,7 @@ function CruiseChat({
   }>;
   favorites: ReadonlySet<string>;
   mediaUrlById: Record<string, string>;
+  onAvatarLoadError?(mediaId: string): void;
   onUnreadCountChange?(count: number): void;
 }>): React.ReactElement {
   const [messagesByPeerKey, setMessagesByPeerKey] = useState<Record<string, ReadonlyArray<ChatMessage>>>({});
@@ -1467,6 +1507,7 @@ function CruiseChat({
             meters: online && selfCoords ? Math.round(distanceMeters(selfCoords, { lat: online.lat, lng: online.lng })) : null,
             isOnline: Boolean(online),
             hasPicture: typeof p.mainPhotoMediaId === "string" && p.mainPhotoMediaId.trim().length > 0,
+            mainPhotoMediaId: p.mainPhotoMediaId,
             avatarUrl: p.mainPhotoMediaId ? mediaUrlById[p.mainPhotoMediaId] : undefined
           };
         }),
@@ -2469,6 +2510,11 @@ function CruiseChat({
                   <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
                     <img
                       src={p.avatarUrl ?? avatarForKey(p.key)}
+                      onError={() => {
+                        if (typeof p.mainPhotoMediaId === "string" && p.mainPhotoMediaId.trim() && onAvatarLoadError) {
+                          onAvatarLoadError(p.mainPhotoMediaId);
+                        }
+                      }}
                       alt="User avatar"
                       style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
                     />
