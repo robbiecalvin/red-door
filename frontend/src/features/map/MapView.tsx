@@ -116,6 +116,7 @@ export function MapView({
   const mapRef = useRef<MlMap | null>(null);
   const markersRef = useRef<Array<MlMarker>>([]);
   const onMapClickRef = useRef<typeof onMapClick>(onMapClick);
+  const userAdjustedViewRef = useRef<boolean>(false);
 
   const [status, setStatus] = useState<MapStatus>({ kind: "ready" });
 
@@ -133,6 +134,8 @@ export function MapView({
     let resizeHandler: (() => void) | null = null;
     let rafId: number | null = null;
     let mapClickHandler: ((evt: unknown) => void) | null = null;
+    let onDragStart: (() => void) | null = null;
+    let onZoomStart: (() => void) | null = null;
 
     async function init(): Promise<void> {
       if (!containerRef.current) return;
@@ -188,6 +191,14 @@ export function MapView({
           handler({ lng: lng as number, lat: lat as number });
         };
         map.on("click", mapClickHandler);
+        onDragStart = () => {
+          userAdjustedViewRef.current = true;
+        };
+        onZoomStart = () => {
+          userAdjustedViewRef.current = true;
+        };
+        map.on("dragstart", onDragStart);
+        map.on("zoomstart", onZoomStart);
       } catch (e) {
         if (cancelled) return;
         setStatus({ kind: "error", message: e instanceof Error ? e.message : "Map error." });
@@ -206,6 +217,12 @@ export function MapView({
       if (mapClickHandler && mapRef.current) {
         mapRef.current.off("click", mapClickHandler);
       }
+      if (onDragStart && mapRef.current) {
+        mapRef.current.off("dragstart", onDragStart);
+      }
+      if (onZoomStart && mapRef.current) {
+        mapRef.current.off("zoomstart", onZoomStart);
+      }
       mapRef.current?.remove();
       mapRef.current = null;
     };
@@ -219,6 +236,7 @@ export function MapView({
     // Some mobile webviews need a post-layout tick before the map paints tiles.
     const t = window.setTimeout(() => {
       map.resize();
+      if (userAdjustedViewRef.current) return;
       map.setCenter([initialView.center.lng, initialView.center.lat]);
       map.setZoom(initialView.zoom);
     }, 80);

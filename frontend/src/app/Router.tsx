@@ -277,6 +277,24 @@ function chatMessagesEqual(a: ReadonlyArray<ChatMessage>, b: ReadonlyArray<ChatM
   return true;
 }
 
+function threadRowsEqual(
+  a: ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; avatarUrl?: string }>,
+  b: ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; avatarUrl?: string }>
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (x.key !== y.key) return false;
+    if (x.chatKind !== y.chatKind) return false;
+    if (x.displayName !== y.displayName) return false;
+    if (x.preview !== y.preview) return false;
+    if (x.at !== y.at) return false;
+    if ((x.avatarUrl ?? "") !== (y.avatarUrl ?? "")) return false;
+  }
+  return true;
+}
+
 function readTravelCenter(): { lat: number; lng: number } | null {
   try {
     const raw = localStorage.getItem("reddoor_travel_center");
@@ -2937,6 +2955,9 @@ function ThreadsPanel({
   const [thirdMemberKey, setThirdMemberKey] = useState<string | null>(null);
   const [pendingSentInvites, setPendingSentInvites] = useState<Record<string, { candidateKey: string }>>({});
   const [groupStatus, setGroupStatus] = useState<string | null>(null);
+  const avatarUrlByMediaIdRef = useRef<Record<string, string>>({});
+  const avatarFetchedAtByMediaIdRef = useRef<Record<string, number>>({});
+  const avatarUrlFreshForMs = 8 * 60_000;
 
   const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
   const [threadKindByPeerKey, setThreadKindByPeerKey] = useState<Record<string, "cruise" | "date">>({});
@@ -2958,12 +2979,24 @@ function ThreadsPanel({
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
+    async function safeListThreads(chatKind: "cruise" | "date"): Promise<ReadonlyArray<Readonly<{ otherKey: string; lastMessage: ChatMessage }>>> {
+      try {
+        const result = await api.listChatThreads(session.sessionToken, chatKind);
+        return Array.isArray(result.threads) ? result.threads : [];
+      } catch {
+        return [];
+      }
+    }
+
     async function refresh(): Promise<void> {
+      if (inFlight || cancelled) return;
+      inFlight = true;
       try {
         const [profilesRes, cruiseThreadsRes, dateThreadsRes] = await Promise.all([
           api.getPublicProfiles(),
-          api.listChatThreads(session.sessionToken, "cruise"),
-          api.listChatThreads(session.sessionToken, "date")
+          safeListThreads("cruise"),
+          safeListThreads("date")
         ]);
         const nameByKey: Record<string, string> = {};
         const photoMediaIdByKey: Record<string, string> = {};
@@ -2976,7 +3009,7 @@ function ThreadsPanel({
         const nextByKey = new Map<string, { key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; avatarUrl?: string }>();
         const kinds: Array<"cruise" | "date"> = ["cruise", "date"];
         for (const kind of kinds) {
-          const source = kind === "cruise" ? cruiseThreadsRes.threads : dateThreadsRes.threads;
+          const source = kind === "cruise" ? cruiseThreadsRes : dateThreadsRes;
           for (const thread of source ?? []) {
             const normalizedKey = normalizePeerKey(thread?.otherKey ?? "");
             if (!normalizedKey || normalizedKey === meKey || normalizedKey.startsWith("spot:")) continue;
@@ -3006,25 +3039,52 @@ function ThreadsPanel({
           }
         }
         const next = Array.from(nextByKey.values());
-        const mediaRows = await Promise.all(
-          next.map(async (row) => {
-            const mediaId = photoMediaIdByKey[row.key];
-            if (!mediaId) return null;
-            try {
-              const res = await api.getPublicMediaUrl(mediaId);
-              return { key: row.key, url: res.downloadUrl };
-            } catch {
-              return null;
-            }
-          })
-        );
-        const mediaByKey: Record<string, string> = {};
-        for (const media of mediaRows) {
-          if (!media) continue;
-          mediaByKey[media.key] = media.url;
-        }
+        const now = Date.now();
         for (const row of next) {
-          row.avatarUrl = mediaByKey[row.key];
+          const mediaId = photoMediaIdByKey[row.key];
+          if (!mediaId) continue;
+          const cachedUrl = avatarUrlByMediaIdRef.current[mediaId];
+          const cachedAt = avatarFetchedAtByMediaIdRef.current[mediaId] ?? 0;
+          if (cachedUrl && now - cachedAt < avatarUrlFreshForMs) {
+            row.avatarUrl = cachedUrl;
+          }
+        }
+        const missingMediaIds = Array.from(
+          new Set(
+            next
+              .map((row) => photoMediaIdByKey[row.key])
+              .filter(
+                (mediaId): mediaId is string =>
+                  typeof mediaId === "string" &&
+                  mediaId.length > 0 &&
+                  (!avatarUrlByMediaIdRef.current[mediaId] ||
+                    now - (avatarFetchedAtByMediaIdRef.current[mediaId] ?? 0) >= avatarUrlFreshForMs)
+              )
+          )
+        ).slice(0, 12);
+        if (missingMediaIds.length > 0) {
+          const mediaRows = await Promise.all(
+            missingMediaIds.map(async (mediaId) => {
+              try {
+                const res = await api.getPublicMediaUrl(mediaId);
+                return { mediaId, url: res.downloadUrl };
+              } catch {
+                return null;
+              }
+            })
+          );
+          const fetchedAt = Date.now();
+          for (const media of mediaRows) {
+            if (!media) continue;
+            avatarUrlByMediaIdRef.current[media.mediaId] = media.url;
+            avatarFetchedAtByMediaIdRef.current[media.mediaId] = fetchedAt;
+          }
+          for (const row of next) {
+            const mediaId = photoMediaIdByKey[row.key];
+            if (!mediaId) continue;
+            const cachedUrl = avatarUrlByMediaIdRef.current[mediaId];
+            if (cachedUrl) row.avatarUrl = cachedUrl;
+          }
         }
         const unreadCounts = await Promise.all(
           next.slice(0, 20).map(async (row) => {
@@ -3043,25 +3103,33 @@ function ThreadsPanel({
         );
         if (cancelled) return;
         next.sort((a, b) => b.at - a.at);
-        setRows(next);
-        setThreadKindByPeerKey(
-          next.reduce<Record<string, "cruise" | "date">>((acc, row) => {
-            acc[row.key] = row.chatKind;
-            return acc;
-          }, {})
-        );
+        setRows((prev) => (threadRowsEqual(prev, next) ? prev : next));
+        const nextKinds = next.reduce<Record<string, "cruise" | "date">>((acc, row) => {
+          acc[row.key] = row.chatKind;
+          return acc;
+        }, {});
+        setThreadKindByPeerKey((prev) => {
+          const prevKeys = Object.keys(prev);
+          const nextKeys = Object.keys(nextKinds);
+          if (prevKeys.length === nextKeys.length && prevKeys.every((key) => prev[key] === nextKinds[key])) {
+            return prev;
+          }
+          return nextKinds;
+        });
         if (typeof onUnreadCountChange === "function") {
           onUnreadCountChange(unreadCounts.reduce((sum, count) => sum + count, 0));
         }
       } catch (e) {
         if (!cancelled) setLastError(normalizeErrorMessage(e));
+      } finally {
+        inFlight = false;
       }
     }
 
     void refresh();
     const id = window.setInterval(() => {
       void refresh();
-    }, 1500);
+    }, 2500);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -3141,7 +3209,7 @@ function ThreadsPanel({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [api, selectedPeerKey, session.sessionToken, setLastError]);
+  }, [api, selectedChatKind, selectedPeerKey, session.sessionToken, setLastError]);
 
   function parseGroupInviteAccept(text: string): { inviteId: string; candidateKey: string } | null {
     if (!text.startsWith("GROUP_INVITE_ACCEPT|")) return null;
