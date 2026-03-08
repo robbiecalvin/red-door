@@ -904,4 +904,98 @@ describe("authService", () => {
     if (!login.ok) throw new Error("unreachable");
     expect(login.value.user.email).toBe("autoverify@example.com");
   });
+
+  it("Given an admin email in persisted state with stale non-admin role When login is called Then the user is auto-promoted to admin", () => {
+    const password = "StrongPass1!";
+    const salt = Buffer.from("fedcba9876543210");
+    const hash = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 }).toString("base64");
+    const svc = createAuthService({
+      jwtSecret: "test_secret",
+      adminEmails: ["promote@example.com"],
+      initialState: {
+        users: [
+          {
+            id: "u_promote",
+            email: "promote@example.com",
+            phoneE164: null,
+            userType: "registered",
+            tier: "free",
+            role: "user",
+            ageVerified: true,
+            emailVerified: true,
+            bannedAtMs: null,
+            bannedReason: null,
+            verificationCodeSaltB64: null,
+            verificationCodeHashB64: null,
+            verificationCodeExpiresAtMs: null,
+            passwordSaltB64: salt.toString("base64"),
+            passwordHashB64: hash,
+            createdAtMs: Date.now() - 1000
+          }
+        ],
+        sessions: []
+      }
+    });
+
+    const login = svc.login("promote@example.com", password);
+    expect(login.ok).toBe(true);
+    if (!login.ok) throw new Error("unreachable");
+    expect(login.value.user.role).toBe("admin");
+    expect(login.value.session.role).toBe("admin");
+  });
+
+  it("Given a persisted user store with malformed user entries When service loads Then malformed entries are ignored", () => {
+    const store = tempStorePath();
+    const password = "StrongPass1!";
+    const salt = Buffer.from("0011223344556677");
+    const hash = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 }).toString("base64");
+    fs.mkdirSync(path.dirname(store), { recursive: true });
+    fs.writeFileSync(
+      store,
+      JSON.stringify({
+        version: 1,
+        users: [
+          {
+            id: 123,
+            email: "bad@example.com",
+            userType: "registered",
+            tier: "free",
+            emailVerified: true,
+            passwordSaltB64: salt.toString("base64"),
+            passwordHashB64: hash,
+            createdAtMs: Date.now()
+          },
+          {
+            id: "u_valid_store",
+            email: "valid@example.com",
+            phoneE164: null,
+            userType: "registered",
+            tier: "free",
+            role: "user",
+            ageVerified: true,
+            emailVerified: true,
+            bannedAtMs: null,
+            bannedReason: null,
+            verificationCodeSaltB64: null,
+            verificationCodeHashB64: null,
+            verificationCodeExpiresAtMs: null,
+            passwordSaltB64: salt.toString("base64"),
+            passwordHashB64: hash,
+            createdAtMs: Date.now() - 1000
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const svc = createAuthService({ jwtSecret: "test_secret", userStoreFilePath: store });
+    const login = svc.login("valid@example.com", password);
+    expect(login.ok).toBe(true);
+    if (!login.ok) throw new Error("unreachable");
+
+    const badLogin = svc.login("bad@example.com", password);
+    expect(badLogin.ok).toBe(false);
+    if (badLogin.ok) throw new Error("unreachable");
+    expect(badLogin.error.code).toBe("UNAUTHORIZED_ACTION");
+  });
 });
