@@ -72,6 +72,14 @@ export async function ensurePostgresSchema(pool: Pool): Promise<void> {
 
   await pool.query("CREATE INDEX IF NOT EXISTS idx_media_records_user_id ON media_records(user_id)");
   await pool.query("CREATE INDEX IF NOT EXISTS idx_media_records_uploaded_at_ms ON media_records(uploaded_at_ms)");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS media_objects (
+      object_key TEXT PRIMARY KEY,
+      mime_type TEXT NOT NULL,
+      data BYTEA NOT NULL,
+      updated_at_ms BIGINT NOT NULL
+    )
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_users (

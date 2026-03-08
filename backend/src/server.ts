@@ -29,6 +29,7 @@ import { createPostgresMediaRepository } from "./repositories/postgresMediaRepos
 import { createPostgresProfileRepository } from "./repositories/postgresProfileRepository";
 import { createPostgresPool, ensurePostgresSchema, resolvePostgresSettingsFromEnv } from "./repositories/postgresCore";
 import { createLocalObjectStorage, type LocalObjectStorage } from "./services/storage/localObjectStorage";
+import { createPostgresObjectStorage, type PostgresObjectStorage } from "./services/storage/postgresObjectStorage";
 import { createS3ObjectStorage } from "./services/storage/s3ObjectStorage";
 
 type AnyServiceError =
@@ -423,6 +424,7 @@ async function main(): Promise<void> {
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
 
   const mediaRepo = postgresPool ? createPostgresMediaRepository(postgresPool) : createInMemoryMediaRepository();
+  const postgresObjectStorage = postgresPool ? createPostgresObjectStorage(postgresPool) : null;
   const mediaStorage =
     s3Bucket && s3Region && s3AccessKeyId && s3SecretAccessKey
       ? createS3ObjectStorage({
@@ -432,9 +434,10 @@ async function main(): Promise<void> {
           endpoint: typeof s3Endpoint === "string" && s3Endpoint.trim() ? s3Endpoint.trim() : undefined,
           forcePathStyle: s3ForcePathStyle
         })
-      : createLocalObjectStorage();
-  const mediaStorageMode: "s3" | "local" =
-    s3Bucket && s3Region && s3AccessKeyId && s3SecretAccessKey ? "s3" : "local";
+      : postgresObjectStorage
+        ? postgresObjectStorage
+        : createLocalObjectStorage();
+  const mediaStorageMode: "s3" | "postgres" | "local" = s3Bucket && s3Region && s3AccessKeyId && s3SecretAccessKey ? "s3" : postgresObjectStorage ? "postgres" : "local";
 
   const mediaService = createMediaService({
     repo: mediaRepo,
@@ -555,6 +558,61 @@ async function main(): Promise<void> {
   };
   app.get("/storage/local/download/:encodedKey", handleLocalStorageDownload);
   app.get("/api/storage/local/download/:encodedKey", handleLocalStorageDownload);
+
+  const handlePostgresStorageUpload = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (mediaStorageMode !== "postgres") {
+        return res.status(404).json({ code: "NOT_FOUND", message: "PostgreSQL storage endpoint is disabled." });
+      }
+      const pgStorage = mediaStorage as PostgresObjectStorage;
+      const encodedKey = (req.params as any)?.encodedKey;
+      if (typeof encodedKey !== "string" || encodedKey.trim() === "") {
+        return res.status(400).json({ code: "INVALID_INPUT", message: "Missing object key." });
+      }
+      const key = decodeURIComponent(encodedKey);
+      const mimeTypeRaw = (req.query as any)?.mimeType;
+      const mimeType = typeof mimeTypeRaw === "string" && mimeTypeRaw.trim() ? mimeTypeRaw.trim() : "application/octet-stream";
+      const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? "");
+      await pgStorage.putObject(key, body, mimeType);
+      return res.status(200).end();
+    } catch {
+      return res.status(502).json({ code: "STORAGE_ERROR", message: "Failed to store object." });
+    }
+  };
+  app.put("/storage/postgres/upload/:encodedKey", express.raw({ type: "*/*", limit: "120mb" }), (req, res) => {
+    void handlePostgresStorageUpload(req, res);
+  });
+  app.put("/api/storage/postgres/upload/:encodedKey", express.raw({ type: "*/*", limit: "120mb" }), (req, res) => {
+    void handlePostgresStorageUpload(req, res);
+  });
+
+  const handlePostgresStorageDownload = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (mediaStorageMode !== "postgres") {
+        return res.status(404).json({ code: "NOT_FOUND", message: "PostgreSQL storage endpoint is disabled." });
+      }
+      const pgStorage = mediaStorage as PostgresObjectStorage;
+      const encodedKey = (req.params as any)?.encodedKey;
+      if (typeof encodedKey !== "string" || encodedKey.trim() === "") {
+        return res.status(400).json({ code: "INVALID_INPUT", message: "Missing object key." });
+      }
+      const key = decodeURIComponent(encodedKey);
+      const stored = await pgStorage.getObject(key);
+      if (!stored) {
+        return res.status(404).json({ code: "NOT_FOUND", message: "Object not found." });
+      }
+      res.setHeader("content-type", stored.mimeType);
+      return res.status(200).send(stored.data);
+    } catch {
+      return res.status(502).json({ code: "STORAGE_ERROR", message: "Failed to load object." });
+    }
+  };
+  app.get("/storage/postgres/download/:encodedKey", (req, res) => {
+    void handlePostgresStorageDownload(req, res);
+  });
+  app.get("/api/storage/postgres/download/:encodedKey", (req, res) => {
+    void handlePostgresStorageDownload(req, res);
+  });
 
   function requireAdminSession(req: Request, res: Response): AuthSession | null {
     const token = getSessionToken(req);
