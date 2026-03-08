@@ -99,12 +99,16 @@ export function MapView({
   initialView,
   markers,
   interactive,
-  visible
+  visible,
+  onMapClick,
+  cursor
 }: Readonly<{
   initialView: MapViewOptions;
   markers: ReadonlyArray<MapMarker>;
   interactive?: boolean;
   visible?: boolean;
+  onMapClick?: (position: LngLat) => void;
+  cursor?: "default" | "crosshair";
 }>): React.ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<MapLibreRuntime | null>(null);
@@ -122,6 +126,7 @@ export function MapView({
     let ro: ResizeObserver | null = null;
     let resizeHandler: (() => void) | null = null;
     let rafId: number | null = null;
+    let mapClickHandler: ((evt: unknown) => void) | null = null;
 
     async function init(): Promise<void> {
       if (!containerRef.current) return;
@@ -167,6 +172,15 @@ export function MapView({
           if (cancelled) return;
           setStatus({ kind: "ready" });
         });
+
+        mapClickHandler = (evt: unknown) => {
+          if (typeof onMapClick !== "function") return;
+          const lng = (evt as { lngLat?: { lng?: unknown; lat?: unknown } }).lngLat?.lng;
+          const lat = (evt as { lngLat?: { lng?: unknown; lat?: unknown } }).lngLat?.lat;
+          if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+          onMapClick({ lng: lng as number, lat: lat as number });
+        };
+        map.on("click", mapClickHandler);
       } catch (e) {
         if (cancelled) return;
         setStatus({ kind: "error", message: e instanceof Error ? e.message : "Map error." });
@@ -182,10 +196,13 @@ export function MapView({
       ro?.disconnect();
       for (const marker of markersRef.current) marker.remove();
       markersRef.current = [];
+      if (mapClickHandler && mapRef.current) {
+        mapRef.current.off("click", mapClickHandler);
+      }
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, [isInteractive]);
+  }, [isInteractive, onMapClick]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -277,7 +294,8 @@ export function MapView({
         height: "100%",
         background: "#000000",
         borderRadius: 8,
-        overflow: "hidden"
+        overflow: "hidden",
+        cursor: cursor === "crosshair" ? "crosshair" : "default"
       }}
       aria-label="Cruise map"
     />

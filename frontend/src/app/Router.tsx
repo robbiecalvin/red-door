@@ -118,6 +118,9 @@ function fieldStyle(): React.CSSProperties {
     padding: "13px 14px",
     fontSize: 17,
     lineHeight: 1.25,
+    width: "100%",
+    boxSizing: "border-box",
+    minWidth: 0,
     boxShadow:
       "inset 0 1px 0 rgba(255,255,255,0.05), inset 0 -10px 18px rgba(0,0,0,0.2), 0 7px 14px rgba(0,0,0,0.22)"
   };
@@ -372,6 +375,7 @@ function CruiseSurface({
   const [cruisingSpots, setCruisingSpots] = useState<ReadonlyArray<CruisingSpot>>([]);
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
   const [travelCenter, setTravelCenter] = useState<{ lat: number; lng: number } | null>(() => readTravelCenter());
+  const [travelPickerArmed, setTravelPickerArmed] = useState<boolean>(false);
   const { state: presenceState, lastErrorMessage: realtimeError } = useCruisePresence({ wsUrl: wsProxyUrl(), sessionToken: session.sessionToken });
   const presence = useMemo(() => Array.from(presenceState.byKey.values()), [presenceState.byKey]);
 
@@ -834,6 +838,40 @@ function CruiseSurface({
     return () => window.removeEventListener("rd:location-updated", onLocationUpdated as EventListener);
   }, [api, session.sessionToken]);
 
+  async function handleTravelLocationSelected(coords: { lat: number; lng: number }): Promise<void> {
+    if (!travelPickerArmed) return;
+    setTravelPickerArmed(false);
+    const lat = Number(coords.lat.toFixed(6));
+    const lng = Number(coords.lng.toFixed(6));
+
+    try {
+      localStorage.setItem("reddoor_travel_center", JSON.stringify({ enabled: true, lat, lng }));
+    } catch {
+      // ignore storage restrictions
+    }
+    window.dispatchEvent(new CustomEvent("rd:location-updated", { detail: { lat, lng } }));
+    try {
+      await api.updatePresence(session.sessionToken, lat, lng, "online");
+    } catch {
+      // presence update is best effort
+    }
+
+    if (session.userType === "guest") return;
+    try {
+      const me = await api.getMyProfile(session.sessionToken);
+      await api.upsertMyProfile(session.sessionToken, {
+        displayName: me.profile.displayName,
+        age: me.profile.age,
+        bio: me.profile.bio,
+        stats: me.profile.stats,
+        discreetMode: me.profile.discreetMode,
+        travelMode: { enabled: true, lat, lng }
+      });
+    } catch {
+      // profile travel persistence is best effort
+    }
+  }
+
   const mapPresence = useMemo(() => {
     const hasSelf = mergedPresence.some((p) => p.key === meKey);
     if (hasSelf) return mergedPresence;
@@ -890,6 +928,9 @@ function CruiseSurface({
       defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
       height={isMobile ? "calc(100vh - 340px)" : "calc(100dvh - 62px)"}
       visible
+      travelPickerArmed={travelPickerArmed}
+      onToggleTravelPicker={() => setTravelPickerArmed((prev) => !prev)}
+      onTravelLocationSelected={(coords) => void handleTravelLocationSelected(coords)}
     />
   );
 
@@ -937,6 +978,9 @@ function CruiseSurface({
         defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
         height={"calc(100dvh - 220px)"}
         visible={mobileTab === "map"}
+        travelPickerArmed={travelPickerArmed}
+        onToggleTravelPicker={() => setTravelPickerArmed((prev) => !prev)}
+        onTravelLocationSelected={(coords) => void handleTravelLocationSelected(coords)}
       />
     </div>
   );
@@ -4424,6 +4468,55 @@ function parseOptionalNumber(v: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function StyledFilePicker({
+  label,
+  accept,
+  file,
+  inputRef,
+  disabled,
+  onSelect
+}: Readonly<{
+  label: string;
+  accept: string;
+  file: File | null;
+  inputRef: React.MutableRefObject<HTMLInputElement | null>;
+  disabled: boolean;
+  onSelect(file: File | null): void;
+}>): React.ReactElement {
+  return (
+    <label style={{ display: "grid", gap: 6 }}>
+      <span className="rd-label">{label}</span>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "auto 1fr",
+          gap: 10,
+          alignItems: "center",
+          border: "1px solid rgba(255,58,77,0.35)",
+          borderRadius: 12,
+          padding: 8,
+          background: "linear-gradient(180deg, rgba(8,8,12,0.96), rgba(4,4,8,0.98))"
+        }}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept={accept}
+          onChange={(e) => onSelect(e.target.files?.[0] ?? null)}
+          style={{ display: "none" }}
+          disabled={disabled}
+        />
+        <button type="button" style={buttonSecondary(disabled)} disabled={disabled} onClick={() => inputRef.current?.click()}>
+          CHOOSE FILE
+        </button>
+        <div style={{ color: "#ced3dc", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {file ? file.name : "No file selected"}
+        </div>
+      </div>
+    </label>
+  );
+}
+
 function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; session: Session; setLastError(value: string | null): void }>): React.ReactElement {
   const [draft, setDraft] = useState<ProfileDraft>(emptyProfileDraft());
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -4463,7 +4556,8 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
   useEffect(() => {
     const ids = [
       profile?.mainPhotoMediaId,
-      ...(profile?.galleryMediaIds ?? [])
+      ...(profile?.galleryMediaIds ?? []),
+      profile?.videoMediaId
     ].filter((id): id is string => typeof id === "string" && id.length > 0);
     if (ids.length === 0) return;
     const missing = ids.filter((id) => !mediaPreviewUrlById[id]);
@@ -4487,7 +4581,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         return next;
       });
     });
-  }, [api, mediaPreviewUrlById, profile?.galleryMediaIds, profile?.mainPhotoMediaId]);
+  }, [api, mediaPreviewUrlById, profile?.galleryMediaIds, profile?.mainPhotoMediaId, profile?.videoMediaId]);
 
   async function saveProfile(): Promise<void> {
     setSaving(true);
@@ -4495,8 +4589,6 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
     try {
       const ageNum = Number(draft.age);
       const mergedBio = buildProfileBio(draft.bio, draft.lookingForMore);
-      const travelLat = draft.travelLat.trim() ? Number(draft.travelLat) : undefined;
-      const travelLng = draft.travelLng.trim() ? Number(draft.travelLng) : undefined;
       const payload = {
         displayName: draft.displayName,
         age: Math.trunc(ageNum),
@@ -4510,11 +4602,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
           position: draft.position || undefined
         },
         discreetMode: draft.discreetMode,
-        travelMode: {
-          enabled: draft.travelEnabled,
-          lat: Number.isFinite(travelLat) ? travelLat : undefined,
-          lng: Number.isFinite(travelLng) ? travelLng : undefined
-        }
+        travelMode: profile?.travelMode
       };
 
       const res = await api.upsertMyProfile(session.sessionToken, payload);
@@ -4601,6 +4689,9 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
   const [mainFile, setMainFile] = useState<File | null>(null);
   const [galleryFile, setGalleryFile] = useState<File | null>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const mainFileInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryFileInputRef = useRef<HTMLInputElement | null>(null);
+  const videoFileInputRef = useRef<HTMLInputElement | null>(null);
 
   async function removeGalleryMedia(mediaId: string): Promise<void> {
     if (!profile) return;
@@ -4709,7 +4800,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
       <div style={cardStyle()}>
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 18, fontWeight: 700 }}>PROFILE DETAILS</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span className="rd-label">Height (in)</span>
               <input value={draft.heightInches} onChange={(e) => setDraft((d) => ({ ...d, heightInches: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
@@ -4749,23 +4840,8 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               <input type="checkbox" checked={draft.discreetMode} onChange={(e) => setDraft((d) => ({ ...d, discreetMode: e.target.checked }))} />
               <span className="rd-label" style={{ margin: 0 }}>Discreet Mode</span>
             </label>
-            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input type="checkbox" checked={draft.travelEnabled} onChange={(e) => setDraft((d) => ({ ...d, travelEnabled: e.target.checked }))} />
-              <span className="rd-label" style={{ margin: 0 }}>Travel Mode</span>
-            </label>
           </div>
-          {draft.travelEnabled ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span className="rd-label">Travel Lat</span>
-                <input value={draft.travelLat} onChange={(e) => setDraft((d) => ({ ...d, travelLat: e.target.value }))} style={fieldStyle()} />
-              </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span className="rd-label">Travel Lng</span>
-                <input value={draft.travelLng} onChange={(e) => setDraft((d) => ({ ...d, travelLng: e.target.value }))} style={fieldStyle()} />
-              </label>
-            </div>
-          ) : null}
+          <div style={{ color: "#b9bec9", fontSize: 13 }}>Travel mode is controlled from the Discover map via the ✈ picker.</div>
         </div>
       </div>
 
@@ -4775,28 +4851,40 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
           <div style={{ color: "#b9bec9", fontSize: 14 }}>Upload and manage your photos and video.</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
             <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span className="rd-label">Main Photo</span>
-                <input className="rd-input" type="file" accept="image/*" onChange={(e) => setMainFile(e.target.files?.[0] ?? null)} />
-              </label>
+              <StyledFilePicker
+                label="Main Photo"
+                accept="image/*"
+                file={mainFile}
+                inputRef={mainFileInputRef}
+                disabled={saving}
+                onSelect={setMainFile}
+              />
               <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("photo_main", mainFile)}>
                 UPLOAD MAIN PHOTO
               </button>
             </div>
             <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span className="rd-label">Gallery Photo</span>
-                <input className="rd-input" type="file" accept="image/*" onChange={(e) => setGalleryFile(e.target.files?.[0] ?? null)} />
-              </label>
+              <StyledFilePicker
+                label="Gallery Photo"
+                accept="image/*"
+                file={galleryFile}
+                inputRef={galleryFileInputRef}
+                disabled={saving}
+                onSelect={setGalleryFile}
+              />
               <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("photo_gallery", galleryFile)}>
                 UPLOAD GALLERY PHOTO
               </button>
             </div>
             <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span className="rd-label">Video</span>
-                <input className="rd-input" type="file" accept="video/*" onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)} />
-              </label>
+              <StyledFilePicker
+                label="Video"
+                accept="video/*"
+                file={videoFile}
+                inputRef={videoFileInputRef}
+                disabled={saving}
+                onSelect={setVideoFile}
+              />
               <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("video", videoFile)}>
                 UPLOAD VIDEO
               </button>
@@ -4830,6 +4918,33 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               ))}
             </div>
           )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+            <div style={{ border: "1px solid rgba(255,58,77,0.45)", borderRadius: 10, padding: 8, display: "grid", gap: 8 }}>
+              <div className="rd-label" style={{ margin: 0 }}>Main Photo Thumbnail</div>
+              <img
+                src={profile?.mainPhotoMediaId ? (mediaPreviewUrlById[profile.mainPhotoMediaId] ?? avatarForKey(profile.mainPhotoMediaId)) : avatarForKey("main-photo")}
+                alt="Main photo thumbnail"
+                style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 8, border: "1px solid rgba(255,58,77,0.4)" }}
+              />
+            </div>
+            <div style={{ border: "1px solid rgba(255,58,77,0.45)", borderRadius: 10, padding: 8, display: "grid", gap: 8 }}>
+              <div className="rd-label" style={{ margin: 0 }}>Video Thumbnail</div>
+              {profile?.videoMediaId ? (
+                <video
+                  src={mediaPreviewUrlById[profile.videoMediaId]}
+                  controls
+                  preload="metadata"
+                  style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 8, border: "1px solid rgba(255,58,77,0.4)" }}
+                />
+              ) : (
+                <img
+                  src={avatarForKey("video-media")}
+                  alt="Video thumbnail placeholder"
+                  style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 8, border: "1px solid rgba(255,58,77,0.4)" }}
+                />
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -4873,11 +4988,8 @@ function SettingsPanel({
   setLastError(value: string | null): void;
   onLogout?(): void;
 }>): React.ReactElement {
-  const [draft, setDraft] = useState<{ discreetMode: boolean; travelEnabled: boolean; travelLat: string; travelLng: string }>({
-    discreetMode: false,
-    travelEnabled: false,
-    travelLat: "",
-    travelLng: ""
+  const [draft, setDraft] = useState<{ discreetMode: boolean }>({
+    discreetMode: false
   });
   const [status, setStatus] = useState<string>("Loading settings...");
   const [blockedUsers, setBlockedUsers] = useState<ReadonlyArray<string>>([]);
@@ -4923,10 +5035,7 @@ function SettingsPanel({
     try {
       const profileRes = await api.getMyProfile(session.sessionToken);
       setDraft({
-        discreetMode: profileRes.profile.discreetMode === true,
-        travelEnabled: profileRes.profile.travelMode?.enabled === true,
-        travelLat: typeof profileRes.profile.travelMode?.lat === "number" ? String(profileRes.profile.travelMode.lat) : "",
-        travelLng: typeof profileRes.profile.travelMode?.lng === "number" ? String(profileRes.profile.travelMode.lng) : ""
+        discreetMode: profileRes.profile.discreetMode === true
       });
       setStatus("Settings loaded.");
       if (session.userType !== "guest") {
@@ -4960,58 +5069,15 @@ function SettingsPanel({
   async function savePrivacy(): Promise<void> {
     try {
       const base = await api.getMyProfile(session.sessionToken);
-      const travelLat = draft.travelLat.trim() ? Number(draft.travelLat) : undefined;
-      const travelLng = draft.travelLng.trim() ? Number(draft.travelLng) : undefined;
       await api.upsertMyProfile(session.sessionToken, {
         displayName: base.profile.displayName,
         age: base.profile.age,
         bio: base.profile.bio,
         stats: base.profile.stats,
         discreetMode: draft.discreetMode,
-        travelMode: {
-          enabled: draft.travelEnabled,
-          lat: Number.isFinite(travelLat) ? travelLat : undefined,
-          lng: Number.isFinite(travelLng) ? travelLng : undefined
-        }
+        travelMode: base.profile.travelMode
       });
       setStatus("Privacy settings saved.");
-    } catch (e) {
-      const msg = normalizeErrorMessage(e);
-      setStatus(msg);
-      setLastError(msg);
-    }
-  }
-
-  async function detectActualLocation(): Promise<void> {
-    if (!navigator.geolocation) {
-      const msg = "Geolocation is unavailable on this device.";
-      setStatus(msg);
-      setLastError(msg);
-      return;
-    }
-    try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 15_000,
-          maximumAge: 0
-        });
-      });
-      const lat = Number(pos.coords.latitude.toFixed(6));
-      const lng = Number(pos.coords.longitude.toFixed(6));
-      setDraft((prev) => ({ ...prev, travelEnabled: true, travelLat: String(lat), travelLng: String(lng) }));
-      try {
-        localStorage.setItem("reddoor_travel_center", JSON.stringify({ enabled: true, lat, lng }));
-      } catch {
-        // ignore storage limitations
-      }
-      try {
-        await api.updatePresence(session.sessionToken, lat, lng, "online");
-      } catch {
-        // presence update is best-effort
-      }
-      window.dispatchEvent(new CustomEvent("rd:location-updated", { detail: { lat, lng } }));
-      setStatus("Actual location detected. Save privacy settings to persist it.");
     } catch (e) {
       const msg = normalizeErrorMessage(e);
       setStatus(msg);
@@ -5127,19 +5193,9 @@ function SettingsPanel({
             <input type="checkbox" checked={draft.discreetMode} onChange={(e) => setDraft((d) => ({ ...d, discreetMode: e.target.checked }))} />
             <span className="rd-label" style={{ margin: 0 }}>Discreet Mode (hide your profile)</span>
           </label>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={draft.travelEnabled} onChange={(e) => setDraft((d) => ({ ...d, travelEnabled: e.target.checked }))} />
-            <span className="rd-label" style={{ margin: 0 }}>Travel Mode</span>
-          </label>
-          {draft.travelEnabled ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <input value={draft.travelLat} onChange={(e) => setDraft((d) => ({ ...d, travelLat: e.target.value }))} style={fieldStyle()} placeholder="Travel lat" />
-              <input value={draft.travelLng} onChange={(e) => setDraft((d) => ({ ...d, travelLng: e.target.value }))} style={fieldStyle()} placeholder="Travel lng" />
-            </div>
-          ) : null}
+          <div style={{ color: "#b9bec9", fontSize: 13 }}>Travel mode is controlled from the Discover map using the ✈ picker.</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" style={buttonPrimary(false)} onClick={() => void savePrivacy()}>SAVE PRIVACY</button>
-            <button type="button" style={buttonSecondary(false)} onClick={() => void detectActualLocation()}>DETECT ACTUAL LOCATION</button>
             <button type="button" style={buttonSecondary(false)} onClick={() => onLogout?.()}>LOGOUT</button>
           </div>
         </div>

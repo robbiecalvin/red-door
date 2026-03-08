@@ -56,7 +56,10 @@ export function CruiseMap({
   avatarByKey,
   additionalMarkers,
   height,
-  visible
+  visible,
+  travelPickerArmed,
+  onToggleTravelPicker,
+  onTravelLocationSelected
 }: Readonly<{
   wsUrl: string;
   sessionToken?: string;
@@ -72,6 +75,9 @@ export function CruiseMap({
   additionalMarkers?: ReadonlyArray<MapMarker>;
   height?: number | string;
   visible?: boolean;
+  travelPickerArmed?: boolean;
+  onToggleTravelPicker?: () => void;
+  onTravelLocationSelected?: (coords: LngLat) => void;
 }>): React.ReactElement {
   const live = useCruisePresence({ wsUrl, sessionToken, jwt, disabled: Array.isArray(presenceUpdates) });
   const state = presenceUpdates ? { byKey: new Map(presenceUpdates.map((p) => [p.key, p])) as ReadonlyMap<string, CruisePresenceUpdate> } : live.state;
@@ -170,9 +176,46 @@ export function CruiseMap({
         </div>
       ) : null}
 
-      <div style={{ background: "#111111", border: 0, borderRadius: 0, overflow: "hidden", height: typeof height === "number" || typeof height === "string" ? height : 520 }}>
-        <MapView initialView={view} markers={markers} visible={visible} />
+      <div style={{ background: "#111111", border: 0, borderRadius: 0, overflow: "hidden", height: typeof height === "number" || typeof height === "string" ? height : 520, position: "relative" }}>
+        <MapView
+          initialView={view}
+          markers={markers}
+          visible={visible}
+          onMapClick={onTravelLocationSelected}
+          cursor={travelPickerArmed ? "crosshair" : "default"}
+        />
+        {typeof onToggleTravelPicker === "function" ? (
+          <button
+            type="button"
+            onClick={onToggleTravelPicker}
+            aria-label={travelPickerArmed ? "Disable travel mode picker" : "Enable travel mode picker"}
+            title={travelPickerArmed ? "Travel picker enabled: click map to set location" : "Enable travel picker"}
+            style={{
+              position: "absolute",
+              left: 10,
+              top: 10,
+              width: 42,
+              height: 42,
+              borderRadius: 12,
+              border: travelPickerArmed ? "1px solid rgba(63,223,255,0.95)" : "1px solid rgba(255,95,110,0.45)",
+              background: travelPickerArmed
+                ? "linear-gradient(180deg, rgba(13,78,94,0.95), rgba(5,41,55,0.98))"
+                : "linear-gradient(180deg, rgba(25,8,12,0.9), rgba(8,5,8,0.95))",
+              color: travelPickerArmed ? "#9ef4ff" : "#ffd4d8",
+              fontSize: 20,
+              fontWeight: 700,
+              display: "grid",
+              placeItems: "center",
+              boxShadow: travelPickerArmed ? "0 0 0 2px rgba(63,223,255,0.2)" : "0 8px 18px rgba(0,0,0,0.3)",
+              zIndex: 3,
+              cursor: "pointer"
+            }}
+          >
+            ✈
+          </button>
+        ) : null}
       </div>
+      {travelPickerArmed ? <div style={{ color: "#9ef4ff", fontSize: 12 }}>Travel picker is active. Click a map point to set your location.</div> : null}
     </section>
   );
 }
