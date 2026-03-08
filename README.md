@@ -1,29 +1,27 @@
-# Red Door (Web + Mobile)
+# Red Door (Web)
 
 This repo includes:
 - A fully web-based build that runs as a static site (GitHub Pages compatible)
-- Capacitor native projects for Android and iOS
 - Optional backend services for networked/multi-user mode
+
+Mobile native folders were split out of this repo into:
+- `/Users/robertmitchell/Downloads/desktop/Projects/red-door-mobile`
 
 ## What is included
 
 - Static web app mode with browser-local storage (no server required)
 - GitHub Pages workflow (`.github/workflows/pages.yml`)
-- Web app wrapped with Capacitor (`android/`, `ios/`)
-- Mobile build/sync scripts in `package.json`
 - Optional PostgreSQL persistence mode for auth/chat/profile/media data (`DATABASE_URL`)
 - Frontend runtime endpoint config for API/WebSocket:
   - `DUALMODE_API_BASE_PATH`
   - `DUALMODE_WS_URL`
-- Backend CORS allowlist support for native webview origins:
+- Backend CORS allowlist support:
   - `CORS_ALLOWED_ORIGINS`
 
 ## Prerequisites
 
 - Node.js 20+
 - npm 10+
-- Android Studio (for Android builds)
-- Xcode 15+ (for iOS builds, macOS only)
 
 ## Install
 
@@ -35,7 +33,7 @@ npm install
 
 Copy and edit `.env.example`.
 
-Important for real mobile builds:
+Important for production web deploys:
 
 - Set `DUALMODE_API_BASE_PATH` to your deployed backend origin (example: `https://api.example.com`)
 - Set `DUALMODE_WS_URL` to your websocket endpoint (example: `wss://api.example.com/ws`) if needed
@@ -97,60 +95,7 @@ Keep source code and generated output separate:
 - Ignore/hide local-only files via `.gitignore`: `.env*` (except `.env.example`), logs, `node_modules/`, `dist/`, `coverage/`, editor/OS files.
 - Treat compiled assets in `assets/` as generated in GitHub UI via `.gitattributes`.
 
-## Mobile build/sync
-
-```bash
-npm run mobile:sync
-```
-
-## Open native projects
-
-Android:
-
-```bash
-npm run mobile:android
-```
-
-iOS:
-
-```bash
-npm run mobile:ios
-```
-
-## Run on device/emulator
-
-Android:
-
-```bash
-npm run mobile:run:android
-```
-
-iOS:
-
-```bash
-npm run mobile:run:ios
-```
-
-## One-command local testing
-
-These commands start the backend locally, inject platform-local API/WS URLs, sync assets, and run the app:
-
-Android emulator:
-
-```bash
-npm run mobile:local:android
-```
-
-iOS simulator:
-
-```bash
-npm run mobile:local:ios
-```
-
 ## Production launch checklist
 
 - Configure production backend URL/env variables
-- Verify auth, media upload, websocket chat, and location permissions on real devices
-- Set Android signing config and create release AAB in Android Studio
-- Set iOS signing/team and create release archive in Xcode
-- Upload artifacts to Google Play Console / App Store Connect
+- Verify auth, media upload, websocket chat, and location permissions in desktop + mobile browsers
