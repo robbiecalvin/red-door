@@ -458,7 +458,7 @@ function CruiseSurface({
       delete next[mediaId];
       return next;
     });
-    setMediaRetryAfterById((prev) => ({ ...prev, [mediaId]: 0 }));
+    setMediaRetryAfterById((prev) => ({ ...prev, [mediaId]: Date.now() + 30_000 }));
   }
 
   useEffect(() => {

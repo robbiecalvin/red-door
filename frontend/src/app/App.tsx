@@ -1,4 +1,4 @@
-import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiClient, type ServiceError, type Session } from "./api";
 import placeholderA from "../assets/reddoor-placeholder-1.svg";
@@ -248,6 +248,20 @@ function parseOptionalInt(value: string): number | undefined {
   return Math.trunc(n);
 }
 
+function normalizePeerKey(rawKey: string): string {
+  const key = rawKey.trim();
+  if (!key) return key;
+  if (key.startsWith("user:guest:")) {
+    const token = key.slice("user:guest:".length).trim();
+    return token ? `session:${token}` : key;
+  }
+  if (key.startsWith("guest:")) {
+    const token = key.slice("guest:".length).trim();
+    return token ? `session:${token}` : key;
+  }
+  return key;
+}
+
 function emptyProfileSetupDraft(): ProfileSetupDraft {
   return {
     displayName: "",
@@ -290,6 +304,7 @@ export function App(): React.ReactElement {
   const [topAvatarUrl, setTopAvatarUrl] = useState<string | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
+  const unreadSyncInFlightRef = useRef<boolean>(false);
 
   const persistSessionToken = useCallback((token: string): void => {
     safeLocalStorageSet(SESSION_TOKEN_KEY, token);
@@ -417,10 +432,89 @@ export function App(): React.ReactElement {
     };
   }, [api, session]);
 
+  useEffect(() => {
+    if (!session || session.ageVerified !== true) {
+      setUnreadChatCount(0);
+      return;
+    }
+    let cancelled = false;
+    const activeSession = session;
+    const meKey = activeSession.userId ? `user:${activeSession.userId}` : `session:${activeSession.sessionToken}`;
+
+    async function safeListThreads(chatKind: "cruise" | "date"): Promise<ReadonlyArray<Readonly<{ otherKey: string }>>> {
+      try {
+        const res = await api.listChatThreads(activeSession.sessionToken, chatKind);
+        return Array.isArray(res.threads) ? (res.threads as ReadonlyArray<Readonly<{ otherKey: string }>>) : [];
+      } catch {
+        return [];
+      }
+    }
+
+    async function refreshUnreadCount(): Promise<void> {
+      if (cancelled || unreadSyncInFlightRef.current || document.hidden) return;
+      unreadSyncInFlightRef.current = true;
+      try {
+        const [cruiseThreads, dateThreads] = await Promise.all([safeListThreads("cruise"), safeListThreads("date")]);
+        const pairs = new Map<string, { chatKind: "cruise" | "date"; otherKey: string }>();
+        for (const row of cruiseThreads) {
+          const otherKey = normalizePeerKey(String(row?.otherKey ?? ""));
+          if (!otherKey || otherKey === meKey || otherKey.startsWith("spot:")) continue;
+          pairs.set(`cruise:${otherKey}`, { chatKind: "cruise", otherKey });
+        }
+        for (const row of dateThreads) {
+          const otherKey = normalizePeerKey(String(row?.otherKey ?? ""));
+          if (!otherKey || otherKey === meKey || otherKey.startsWith("spot:")) continue;
+          pairs.set(`date:${otherKey}`, { chatKind: "date", otherKey });
+        }
+
+        let unreadTotal = 0;
+        for (const pair of pairs.values()) {
+          if (cancelled) break;
+          try {
+            const res = await api.listChat(activeSession.sessionToken, pair.chatKind, pair.otherKey);
+            const messages = ((res as { messages?: ReadonlyArray<{ fromKey?: string; toKey?: string; readAtMs?: number }> }).messages ?? []) as ReadonlyArray<{
+              fromKey?: string;
+              toKey?: string;
+              readAtMs?: number;
+            }>;
+            for (const message of messages) {
+              if (message.fromKey === pair.otherKey && message.toKey === meKey && typeof message.readAtMs !== "number") {
+                unreadTotal += 1;
+              }
+            }
+          } catch {
+            // Ignore per-thread errors and continue.
+          }
+        }
+        if (!cancelled) {
+          setUnreadChatCount((prev) => (prev === unreadTotal ? prev : unreadTotal));
+        }
+      } finally {
+        unreadSyncInFlightRef.current = false;
+      }
+    }
+
+    void refreshUnreadCount();
+    const onVisibilityChange = (): void => {
+      if (!document.hidden) void refreshUnreadCount();
+    };
+    const id = window.setInterval(() => {
+      void refreshUnreadCount();
+    }, 2500);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      unreadSyncInFlightRef.current = false;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [api, session]);
+
   function onLogout(): void {
     clearPersistedSessionToken();
     setSessionToken(null);
     setSession(null);
+    setUnreadChatCount(0);
     setLastError(null);
     setAuthInfo("");
     setAuthView("guest");
@@ -1144,7 +1238,7 @@ export function App(): React.ReactElement {
                 busy={busy}
                 setBusy={setBusy}
                 setLastError={setLastError}
-                onUnreadCountChange={setUnreadChatCount}
+                onUnreadCountChange={(count) => setUnreadChatCount((prev) => (count > prev ? count : prev))}
                 onLogout={onLogout}
               />
             </Suspense>
