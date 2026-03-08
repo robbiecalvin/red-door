@@ -1426,7 +1426,7 @@ function createLocalApiClient(): Readonly<{
       }>
     ): Promise<{ posting: PublicPosting }> {
       const state = readState();
-      const session = requireUserSession(state, sessionToken);
+      const session = requireSession(state, sessionToken);
       const photoMediaId = typeof payload.photoMediaId === "string" && payload.photoMediaId.trim().length > 0 ? payload.photoMediaId.trim() : undefined;
       const title = payload.title.trim();
       const body = payload.body.trim();
@@ -1441,6 +1441,17 @@ function createLocalApiClient(): Readonly<{
           ? payload.locationInstructions.trim()
           : undefined;
       const groupDetails = typeof payload.groupDetails === "string" && payload.groupDetails.trim().length > 0 ? payload.groupDetails.trim() : undefined;
+      if (payload.type !== "ad" && payload.type !== "event") {
+        throw { code: "POSTING_TYPE_NOT_ALLOWED", message: "Invalid posting type." } as ServiceError;
+      }
+      if (!title) throw { code: "INVALID_INPUT", message: "Title is required." } as ServiceError;
+      if (!body) throw { code: "INVALID_INPUT", message: "Body is required." } as ServiceError;
+      if (payload.type === "event" && session.userType === "guest") {
+        throw { code: "ANONYMOUS_FORBIDDEN", message: "Anonymous users cannot create public postings." } as ServiceError;
+      }
+      if (payload.type === "event" && session.ageVerified !== true) {
+        throw { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Red Door.", context: { minimumAge: 18 } } as ServiceError;
+      }
       if (payload.type === "event" && !eventStartAtMs) throw { code: "INVALID_INPUT", message: "Event date and time are required." } as ServiceError;
       if (payload.type === "event" && !locationInstructions) throw { code: "INVALID_INPUT", message: "Location instructions are required for groups." } as ServiceError;
       if (payload.type === "event" && !groupDetails) throw { code: "INVALID_INPUT", message: "Group details are required." } as ServiceError;
@@ -1463,11 +1474,11 @@ function createLocalApiClient(): Readonly<{
         ...(payload.type === "event" && eventStartAtMs ? { eventStartAtMs } : {}),
         ...(payload.type === "event" && locationInstructions ? { locationInstructions } : {}),
         ...(payload.type === "event" && groupDetails ? { groupDetails } : {}),
-        authorUserId: session.userId as string,
+        authorUserId: payload.type === "event" ? (session.userId as string) : session.userId ?? `guest:${session.sessionToken}`,
         createdAtMs: nowMs(),
-        invitedUserIds: [],
-        acceptedUserIds: [],
-        joinRequestUserIds: []
+        invitedUserIds: payload.type === "event" ? [] : undefined,
+        acceptedUserIds: payload.type === "event" ? [] : undefined,
+        joinRequestUserIds: payload.type === "event" ? [] : undefined
       };
       writeState({
         ...state,

@@ -3678,6 +3678,14 @@ function PublicPostings({
     }
     const title = type === "ad" ? adTitle : eventTitle;
     const body = type === "ad" ? adBody : eventBody;
+    if (title.trim().length === 0) {
+      setLastError("Title is required.");
+      return;
+    }
+    if (body.trim().length === 0) {
+      setLastError("Body is required.");
+      return;
+    }
     const photoMediaId = type === "ad" ? adPhotoMediaId : eventPhotoMediaId;
     const eventStartAtMs = type === "event" ? combineEventDateTimeToEpochMs(eventDate, eventTime) : null;
     if (type === "event" && eventStartAtMs === null) {
@@ -3787,6 +3795,18 @@ function PublicPostings({
   }
 
   async function createSpot(): Promise<void> {
+    if (spotName.trim().length === 0) {
+      setLastError("Spot name is required.");
+      return;
+    }
+    if (spotAddress.trim().length === 0) {
+      setLastError("Spot address is required.");
+      return;
+    }
+    if (spotDescription.trim().length === 0) {
+      setLastError("Spot description is required.");
+      return;
+    }
     try {
       const created = await api.createCruisingSpot(session.sessionToken, {
         name: spotName,
