@@ -1131,9 +1131,13 @@ function CruiseSurface({
 
   async function handleTravelLocationSelected(coords: { lat: number; lng: number }): Promise<void> {
     if (!travelPickerArmed) return;
-    setTravelPickerArmed(false);
     const lat = Number(coords.lat.toFixed(6));
     const lng = Number(coords.lng.toFixed(6));
+    const confirmed = window.confirm(
+      `Temporarily relocate to this location?\n\nLatitude: ${lat}\nLongitude: ${lng}`
+    );
+    if (!confirmed) return;
+    setTravelPickerArmed(false);
 
     try {
       localStorage.setItem("reddoor_travel_center", JSON.stringify({ enabled: true, lat, lng }));
