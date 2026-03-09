@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   apiClient,
@@ -55,6 +55,7 @@ const GROUP_INVITE_STATUS_PREFIX = "GROUP_INVITE_STATUS|";
 const PROFILE_MEDIA_UPDATED_EVENT = "rd:profile-media-updated";
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
 declare const __DUALMODE_WS_URL__: string | undefined;
+type RouterErrorScope = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted";
 
 type ProfileDraft = Readonly<{
   displayName: string;
@@ -6769,7 +6770,6 @@ export function Router({
   busy,
   setBusy,
   setLastError,
-  lastError,
   onUnreadCountChange,
   hideModeCard,
   onLogout
@@ -6786,7 +6786,6 @@ export function Router({
   busy: boolean;
   setBusy(value: boolean): void;
   setLastError(value: string | null): void;
-  lastError?: string | null;
   onUnreadCountChange?(count: number): void;
   hideModeCard?: boolean;
   onLogout?(): void;
@@ -6794,16 +6793,56 @@ export function Router({
   const isMobile = useIsMobile();
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
   const [mobileInboxTab, setMobileInboxTab] = useState<MobileInboxTab>("threads");
+  const [scopedErrors, setScopedErrors] = useState<Partial<Record<RouterErrorScope, string>>>({});
   const isMobileInboxOpen = isMobile && activeTab === "threads";
   const isMobileAdsOpen = isMobile && activeTab === "ads";
+  const currentErrorScope: RouterErrorScope = isMobileAdsOpen
+    ? "ads"
+    : isMobileInboxOpen
+      ? mobileInboxTab === "chat-grid"
+        ? "discover"
+        : mobileInboxTab === "spots"
+          ? "cruise"
+          : mobileInboxTab === "groups"
+            ? "groups"
+            : "threads"
+      : activeTab;
+
+  const makeScopedSetLastError = useCallback(
+    (scope: RouterErrorScope) => (value: string | null): void => {
+      const normalized = typeof value === "string" ? value.trim() : "";
+      setScopedErrors((prev) => {
+        if (!normalized) {
+          if (!(scope in prev)) return prev;
+          const next = { ...prev };
+          delete next[scope];
+          return next;
+        }
+        if (prev[scope] === normalized) return prev;
+        return { ...prev, [scope]: normalized };
+      });
+      setLastError(value);
+    },
+    [setLastError]
+  );
+
+  const setDiscoverError = useMemo(() => makeScopedSetLastError("discover"), [makeScopedSetLastError]);
+  const setThreadsError = useMemo(() => makeScopedSetLastError("threads"), [makeScopedSetLastError]);
+  const setAdsError = useMemo(() => makeScopedSetLastError("ads"), [makeScopedSetLastError]);
+  const setGroupsError = useMemo(() => makeScopedSetLastError("groups"), [makeScopedSetLastError]);
+  const setCruiseError = useMemo(() => makeScopedSetLastError("cruise"), [makeScopedSetLastError]);
+  const setProfileError = useMemo(() => makeScopedSetLastError("profile"), [makeScopedSetLastError]);
+  const setSettingsError = useMemo(() => makeScopedSetLastError("settings"), [makeScopedSetLastError]);
+  const setSubmissionsError = useMemo(() => makeScopedSetLastError("submissions"), [makeScopedSetLastError]);
+  const setPromotedError = useMemo(() => makeScopedSetLastError("promoted"), [makeScopedSetLastError]);
 
   const unifiedSettingsSurface = (
     <div style={{ display: "grid", gap: 12 }}>
-      <SettingsProfile api={api} session={session} setLastError={setLastError} />
-      <SettingsPanel api={api} session={session} setLastError={setLastError} onLogout={onLogout} />
+      <SettingsProfile api={api} session={session} setLastError={setProfileError} />
+      <SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} />
     </div>
   );
-  const scopedError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError : null;
+  const scopedError = scopedErrors[currentErrorScope] ?? null;
   const inlineErrorBanner = scopedError ? (
     <div
       role="alert"
@@ -6825,7 +6864,7 @@ export function Router({
   return (
     <div style={{ display: "grid", gap: 12 }}>
       {!hideModeCard ? null : null}
-      {!isMobileInboxOpen && !isMobileAdsOpen && inlineErrorBanner}
+      {!isMobileInboxOpen && !isMobileAdsOpen && activeTab !== "discover" && inlineErrorBanner}
 
       <div style={{ display: activeTab === "discover" || isMobileInboxOpen || isMobileAdsOpen ? "block" : "none" }}>
         <CruiseSurface
@@ -6835,7 +6874,7 @@ export function Router({
           discoverFilter={discoverFilter}
           busy={busy}
           setBusy={setBusy}
-          setLastError={setLastError}
+          setLastError={setDiscoverError}
           isMobile={isMobile}
           discoverScreen={discoverScreen}
           onDiscoverScreenChange={onDiscoverScreenChange}
@@ -6850,7 +6889,7 @@ export function Router({
         <ThreadsPanel
           api={api}
           session={session}
-          setLastError={setLastError}
+          setLastError={setThreadsError}
           openThreadRequest={externalOpenThreadRequest}
           onThreadRequestConsumed={() => setExternalOpenThreadRequest(null)}
           isMobile={isMobile}
@@ -6919,7 +6958,7 @@ export function Router({
                 discoverFilter={discoverFilter}
                 busy={busy}
                 setBusy={setBusy}
-                setLastError={setLastError}
+                setLastError={setDiscoverError}
                 isMobile={isMobile}
                 discoverScreen={"chat"}
                 onDiscoverScreenChange={() => {}}
@@ -6934,7 +6973,7 @@ export function Router({
               <ThreadsPanel
                 api={api}
                 session={session}
-                setLastError={setLastError}
+                setLastError={setThreadsError}
                 openThreadRequest={externalOpenThreadRequest}
                 onThreadRequestConsumed={() => setExternalOpenThreadRequest(null)}
                 isMobile={isMobile}
@@ -6946,7 +6985,7 @@ export function Router({
               <ThreadsPanel
                 api={api}
                 session={session}
-                setLastError={setLastError}
+                setLastError={setThreadsError}
                 openThreadRequest={externalOpenThreadRequest}
                 onThreadRequestConsumed={() => setExternalOpenThreadRequest(null)}
                 isMobile={isMobile}
@@ -6955,8 +6994,8 @@ export function Router({
                 compact={true}
               />
             ) : null}
-            {mobileInboxTab === "spots" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setLastError} compact={true} /> : null}
-            {mobileInboxTab === "groups" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setLastError} compact={true} /> : null}
+            {mobileInboxTab === "spots" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} compact={true} /> : null}
+            {mobileInboxTab === "groups" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setGroupsError} compact={true} /> : null}
           </div>
         </div>
       ) : null}
@@ -6987,7 +7026,7 @@ export function Router({
               session={session}
               isMobile={isMobile}
               screen="ads"
-              setLastError={setLastError}
+              setLastError={setAdsError}
               compact={true}
               onOpenThreadRequested={(key) => {
                 setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
@@ -6997,12 +7036,12 @@ export function Router({
           </div>
         </div>
       ) : null}
-      {activeTab === "ads" && !isMobile ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setLastError} /> : null}
-      {activeTab === "groups" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setLastError} /> : null}
-      {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setLastError} /> : null}
+      {activeTab === "ads" && !isMobile ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setAdsError} /> : null}
+      {activeTab === "groups" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setGroupsError} /> : null}
+      {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
-      {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setLastError} /> : null}
-      {activeTab === "promoted" ? <PromotedProfilesPanel api={api} session={session} isMobile={isMobile} setLastError={setLastError} /> : null}
+      {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setSubmissionsError} /> : null}
+      {activeTab === "promoted" ? <PromotedProfilesPanel api={api} session={session} isMobile={isMobile} setLastError={setPromotedError} /> : null}
     </div>
   );
 }

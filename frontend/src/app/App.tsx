@@ -1299,7 +1299,6 @@ export function App(): React.ReactElement {
                 busy={busy}
                 setBusy={setBusy}
                 setLastError={setLastError}
-                lastError={lastError}
                 onUnreadCountChange={(count) => setUnreadChatCount(Math.max(0, Number.isFinite(count) ? count : 0))}
                 onLogout={onLogout}
               />
