@@ -922,7 +922,7 @@ export function App(): React.ReactElement {
 
   const topAvatar = topAvatarUrl ?? avatarForSeed(session?.userId ?? session?.sessionToken ?? "guest");
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
-  const showBottomNav = Boolean(isMobile && session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking);
+  const showBottomNav = Boolean(session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking);
 
   const desktopWideSession = Boolean(session && session.ageVerified === true && !isMobile);
 
