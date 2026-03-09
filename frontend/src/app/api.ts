@@ -1399,9 +1399,15 @@ function createLocalApiClient(): Readonly<{
         }
       }
       const now = nowMs();
-      const postings = (type ? state.publicPostings.filter((p) => p.type === type) : state.publicPostings).filter(
-        (p) => p.type !== "event" || typeof p.eventStartAtMs !== "number" || p.eventStartAtMs > now
-      );
+      const postings = (type ? state.publicPostings.filter((p) => p.type === type) : state.publicPostings).filter((p) => {
+        if (p.type === "event") {
+          return typeof p.eventStartAtMs !== "number" || p.eventStartAtMs > now;
+        }
+        if (p.type === "ad") {
+          return now - p.createdAtMs < 12 * 60 * 60 * 1000;
+        }
+        return true;
+      });
       const normalized = postings.map((p) => {
         if (p.type !== "event" || !p.locationInstructions) return p;
         const canSeeLocation =

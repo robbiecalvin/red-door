@@ -84,7 +84,8 @@ textarea {
 }
 
 .rd-shell {
-  height: 100dvh;
+  height: 100svh;
+  min-height: 100svh;
   display: grid;
   grid-template-columns: 1fr;
   grid-template-rows: auto 1fr;
@@ -191,7 +192,7 @@ textarea {
   right: 10px;
   z-index: 30;
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
@@ -753,7 +754,7 @@ textarea {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
   gap: 8px;
-  padding: 10px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
   background: linear-gradient(180deg, rgba(66, 3, 10, 0.98), rgba(28, 1, 5, 0.98));
   border-top: 1px solid rgba(0, 0, 0, 0.55);
   box-shadow:
@@ -813,7 +814,7 @@ textarea {
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  border: 1px solid rgba(180, 236, 255, 0.85);
+  border: 1px solid rgba(255, 171, 179, 0.9);
   background: linear-gradient(180deg, #ff7b88 0%, #e24f60 58%, #b31f31 100%);
   color: #fff;
   font-size: 10px;
@@ -822,8 +823,8 @@ textarea {
   text-align: center;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.38),
-    0 0 0 1px rgba(0, 14, 25, 0.35),
-    0 5px 14px rgba(4, 127, 184, 0.42);
+    0 0 0 1px rgba(40, 6, 11, 0.45),
+    0 5px 14px rgba(179, 35, 51, 0.42);
 }
 
 @media (max-width: 900px) {
@@ -875,7 +876,7 @@ textarea {
     right: 10px;
     min-width: 0;
     display: inline-flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     justify-content: flex-start;
     gap: 10px;
     max-width: calc(100vw - 20px);

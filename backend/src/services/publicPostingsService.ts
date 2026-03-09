@@ -233,10 +233,16 @@ export function createPublicPostingsService(
     return posting.type === "event" && typeof posting.eventStartAtMs === "number" && posting.eventStartAtMs <= nowMs();
   }
 
+  function isAdExpired(posting: Posting): boolean {
+    if (posting.type !== "ad") return false;
+    const maxAgeMs = 12 * 60 * 60 * 1000;
+    return nowMs() - posting.createdAtMs >= maxAgeMs;
+  }
+
   function pruneExpiredEvents(): void {
     const before = posts.length;
     for (let i = posts.length - 1; i >= 0; i -= 1) {
-      if (isEventExpired(posts[i])) posts.splice(i, 1);
+      if (isEventExpired(posts[i]) || isAdExpired(posts[i])) posts.splice(i, 1);
     }
     if (posts.length !== before) persistState();
   }

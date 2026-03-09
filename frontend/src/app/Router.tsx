@@ -104,7 +104,7 @@ function buttonSecondary(disabled: boolean): React.CSSProperties {
   return {
     background: "linear-gradient(180deg, rgba(20, 8, 12, 0.88), rgba(8, 5, 8, 0.9))",
     border: "1px solid rgba(255,95,110,0.36)",
-    color: "#3fdfff",
+    color: "#ff8e99",
     padding: "12px 18px",
     borderRadius: 12,
     fontSize: 16,
@@ -1709,10 +1709,7 @@ function CruiseChat({
     onlineStatusFilter,
     conversationMetaByPeerKey
   ]);
-  const unreadCandidateKeys = useMemo(
-    () => Array.from(new Set(gridCards.map((c) => c.key).filter((k) => k.trim().length > 0))).slice(0, 8),
-    [gridCards]
-  );
+  const unreadCandidateKeys = useMemo(() => Array.from(new Set(gridCards.map((c) => c.key).filter((k) => k.trim().length > 0))), [gridCards]);
   const unreadCandidateSignature = unreadCandidateKeys.join("|");
   const conversationKeys = useMemo(() => {
     const keys = new Set<string>(Object.keys(conversationMetaByPeerKey));
@@ -2672,7 +2669,7 @@ function CruiseChat({
                   onClick={() => onOpenProfile(p.key)}
                   style={{
                     background: "rgba(0,0,0,0.5)",
-                    border: "1px solid rgba(255,58,77,0.35)",
+                    border: (unreadByPeerKey[p.key] ?? 0) > 0 ? "2px solid rgba(255,48,71,0.98)" : "1px solid rgba(255,58,77,0.1)",
                     borderRadius: 0,
                     padding: 0,
                     display: "grid",
@@ -2692,7 +2689,21 @@ function CruiseChat({
                       alt="User avatar"
                       style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #ff7f8c" }}
                     />
-                    {p.isOnline ? <span style={{ position: "absolute", top: 4, left: 4, width: 10, height: 10, borderRadius: "50%", background: "#ff7a88", border: "2px solid #000" }} /> : null}
+                    {p.isOnline ? (
+                      <span
+                        style={{
+                          position: "absolute",
+                          left: 6,
+                          bottom: 6,
+                          width: 12,
+                          height: 12,
+                          borderRadius: "50%",
+                          background: "#ff213a",
+                          border: "2px solid #120307",
+                          boxShadow: "0 0 10px rgba(255,33,58,0.8)"
+                        }}
+                      />
+                    ) : null}
                   </div>
                 </button>
               ))
@@ -3603,15 +3614,15 @@ function ThreadsPanel({
 
   return (
     <div style={{ display: "grid", gap: 0, marginInline: 0, marginBlock: 0 }}>
-      <div style={{ position: compact ? "sticky" : "static", top: 0, zIndex: 3, background: "rgba(6,9,20,0.94)", borderBottom: "1px solid rgba(255,122,136,0.24)", padding: "8px 10px" }}>
-        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <button type="button" style={unreadOnly ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setUnreadOnly((prev) => !prev)}>
+      <div style={{ position: compact ? "sticky" : "static", top: 0, zIndex: 3, background: "rgba(16,6,10,0.94)", borderBottom: "1px solid rgba(255,122,136,0.24)", padding: "8px 10px" }}>
+        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "nowrap" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap" }}>
+            <button type="button" style={{ ...(unreadOnly ? buttonPrimary(false) : buttonSecondary(false)), whiteSpace: "nowrap" }} onClick={() => setUnreadOnly((prev) => !prev)}>
               Unread
             </button>
             <button
               type="button"
-              style={selectMode ? buttonPrimary(false) : buttonSecondary(false)}
+              style={{ ...(selectMode ? buttonPrimary(false) : buttonSecondary(false)), whiteSpace: "nowrap" }}
               onClick={() => {
                 setSelectMode((prev) => !prev);
                 setSelectedKeys(new Set());
@@ -3621,7 +3632,7 @@ function ThreadsPanel({
             </button>
           </div>
           {selectMode ? (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap" }}>
               <button type="button" style={buttonSecondary(selectedKeys.size === 0)} disabled={selectedKeys.size === 0} onClick={deleteSelectedThreads}>
                 Delete Selected
               </button>
@@ -3658,7 +3669,7 @@ function ThreadsPanel({
               borderBottom: "1px solid rgba(255,58,77,0.24)",
               borderRadius: 0,
               padding: "10px 12px",
-              background: selectMode && selectedKeys.has(row.key) ? "rgba(14,58,111,0.55)" : "rgba(0,0,0,0.2)",
+              background: selectMode && selectedKeys.has(row.key) ? "rgba(108,20,30,0.5)" : "rgba(0,0,0,0.2)",
               textAlign: "left",
               color: "#fff",
               cursor: "pointer",
