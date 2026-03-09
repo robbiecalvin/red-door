@@ -630,6 +630,14 @@ function CruiseSurface({
   }, []);
 
   const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const visiblePublicProfiles = useMemo(
+    () => publicProfiles.filter((profile) => !blockedKeys.has(chatKeyFromProfileUserId(profile.userId))),
+    [blockedKeys, publicProfiles]
+  );
+  const visibleProfileKeys = useMemo(
+    () => new Set(visiblePublicProfiles.map((profile) => chatKeyFromProfileUserId(profile.userId))),
+    [visiblePublicProfiles]
+  );
   const mergedPresence = useMemo(() => {
     const byKey = new Map<string, CruisePresenceUpdate>();
     for (const p of snapshotPresence) byKey.set(p.key, p);
@@ -639,7 +647,16 @@ function CruiseSurface({
     }
     return Array.from(byKey.values());
   }, [presence, snapshotPresence]);
-  const onlinePeers = useMemo(() => mergedPresence.filter((p) => p.key !== meKey), [meKey, mergedPresence]);
+  const onlinePeers = useMemo(
+    () =>
+      mergedPresence.filter((p) => {
+        if (p.key === meKey) return false;
+        if (blockedKeys.has(p.key)) return false;
+        if (p.key.startsWith("user:")) return visibleProfileKeys.has(p.key);
+        return true;
+      }),
+    [blockedKeys, meKey, mergedPresence, visibleProfileKeys]
+  );
   const sortedPeers = useMemo(() => {
     if (!selfCoords) return onlinePeers;
     return [...onlinePeers].sort((a, b) => distanceMeters(selfCoords, { lat: a.lat, lng: a.lng }) - distanceMeters(selfCoords, { lat: b.lat, lng: b.lng }));
@@ -700,6 +717,20 @@ function CruiseSurface({
     if (selectedPeerKey) return;
     if (sortedPeers.length > 0) setSelectedPeerKey(sortedPeers[0].key);
   }, [selectedPeerKey, sortedPeers]);
+
+  useEffect(() => {
+    if (selectedPeerKey && !sortedPeers.some((peer) => peer.key === selectedPeerKey)) {
+      setSelectedPeerKey(null);
+    }
+  }, [selectedPeerKey, sortedPeers]);
+
+  useEffect(() => {
+    if (!selectedProfileKey || selectedProfileKey === meKey) return;
+    if (blockedKeys.has(selectedProfileKey) || (selectedProfileKey.startsWith("user:") && !visibleProfileKeys.has(selectedProfileKey))) {
+      setSelectedProfileKey(null);
+      setSelectedPublicProfile(null);
+    }
+  }, [blockedKeys, meKey, selectedProfileKey, visibleProfileKeys]);
 
   useEffect(() => {
     const missing = sortedPeers
@@ -1022,14 +1053,20 @@ function CruiseSurface({
       setLastError("Anonymous users cannot block users.");
       return;
     }
+    const wasBlocked = blockedKeys.has(profileChatKey);
     try {
-      if (blockedKeys.has(profileChatKey)) {
+      if (wasBlocked) {
         await api.unblock(session.sessionToken, profileChatKey);
       } else {
         await api.block(session.sessionToken, profileChatKey);
       }
       const refreshed = await api.listBlocked(session.sessionToken);
       setBlockedKeys(new Set(refreshed.blocked));
+      if (!wasBlocked) {
+        setSelectedPeerKey((prev) => (prev === profileChatKey ? null : prev));
+        setSelectedProfileKey((prev) => (prev === profileChatKey ? null : prev));
+        setSelectedPublicProfile((prev) => (prev && chatKeyFromProfileUserId(prev.userId) === profileChatKey ? null : prev));
+      }
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -1127,7 +1164,13 @@ function CruiseSurface({
 
   const mapPresence = useMemo(() => {
     const hasSelf = mergedPresence.some((p) => p.key === meKey);
-    const filteredPresence = mapVisibility.people ? mergedPresence : mergedPresence.filter((row) => row.key === meKey);
+    const peoplePresence = mergedPresence.filter((row) => {
+      if (row.key === meKey) return true;
+      if (blockedKeys.has(row.key)) return false;
+      if (row.key.startsWith("user:")) return visibleProfileKeys.has(row.key);
+      return true;
+    });
+    const filteredPresence = mapVisibility.people ? peoplePresence : peoplePresence.filter((row) => row.key === meKey);
     if (hasSelf) return filteredPresence;
     const fallbackCenter = selfCoords ?? travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng };
     const syntheticSelf: CruisePresenceUpdate = {
@@ -1139,18 +1182,18 @@ function CruiseSurface({
       updatedAtMs: Date.now()
     };
     return [syntheticSelf, ...filteredPresence];
-  }, [mapVisibility.people, meKey, mergedPresence, selfCoords, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter]);
+  }, [blockedKeys, mapVisibility.people, meKey, mergedPresence, selfCoords, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter, visibleProfileKeys]);
 
   const avatarUrlByKey = useMemo(() => {
     const next: Record<string, string> = {};
-    for (const p of publicProfiles) {
+    for (const p of visiblePublicProfiles) {
       if (!p.mainPhotoMediaId) continue;
       const url = mediaUrlById[p.mainPhotoMediaId];
       if (!url) continue;
       next[chatKeyFromProfileUserId(p.userId)] = url;
     }
     return next;
-  }, [mediaUrlById, publicProfiles]);
+  }, [mediaUrlById, visiblePublicProfiles]);
   const spotMarkers = useMemo(
     () =>
       cruisingSpots.map((spot) => ({
@@ -1245,7 +1288,7 @@ function CruiseSurface({
       selfCoords={selfCoords}
       peerProfileByKey={peerProfileByKey}
       discoverFilter={discoverFilter}
-      publicProfiles={publicProfiles}
+      publicProfiles={visiblePublicProfiles}
       favorites={favorites}
       mediaUrlById={mediaUrlById}
       onAvatarLoadError={invalidateMediaUrl}
@@ -3943,7 +3986,8 @@ function PublicPostings({
   const [eventTitle, setEventTitle] = useState<string>("");
   const [eventBody, setEventBody] = useState<string>("");
   const [eventDate, setEventDate] = useState<string>("");
-  const [eventTime, setEventTime] = useState<string>("");
+  const [eventStartTime, setEventStartTime] = useState<string>("");
+  const [eventEndTime, setEventEndTime] = useState<string>("");
   const [eventGroupDetails, setEventGroupDetails] = useState<string>("");
   const [eventLocationInstructions, setEventLocationInstructions] = useState<string>("");
   const [spots, setSpots] = useState<ReadonlyArray<CruisingSpot>>([]);
@@ -4190,9 +4234,18 @@ function PublicPostings({
       return;
     }
     const photoMediaId = type === "ad" ? adPhotoMediaId : eventPhotoMediaId;
-    const groupEndAtMs = type === "event" ? combineEventDateTimeToEpochMs(eventDate, eventTime) : null;
+    const groupStartAtMs = type === "event" ? combineEventDateTimeToEpochMs(eventDate, eventStartTime) : null;
+    const groupEndAtMs = type === "event" ? combineEventDateTimeToEpochMs(eventDate, eventEndTime) : null;
+    if (type === "event" && groupStartAtMs === null) {
+      setLastError("Group start date and time are required.");
+      return;
+    }
     if (type === "event" && groupEndAtMs === null) {
       setLastError("Group end date and time are required.");
+      return;
+    }
+    if (type === "event" && typeof groupStartAtMs === "number" && typeof groupEndAtMs === "number" && groupEndAtMs <= groupStartAtMs) {
+      setLastError("Group end time must be after the start time.");
       return;
     }
     if (type === "event" && typeof groupEndAtMs === "number" && groupEndAtMs <= Date.now()) {
@@ -4237,7 +4290,8 @@ function PublicPostings({
         setEventTitle("");
         setEventBody("");
         setEventDate("");
-        setEventTime("");
+        setEventStartTime("");
+        setEventEndTime("");
         setEventGroupDetails("");
         setEventLocationInstructions("");
         setEventPhotoFile(null);
@@ -4624,23 +4678,40 @@ function PublicPostings({
               <textarea value={draftBody} onChange={(e) => setBody(e.target.value)} placeholder={`Write ${title.toLowerCase()} details`} style={{ ...fieldStyle(), minHeight: 86, resize: "vertical" }} aria-label={`${title} details`} disabled={!canPostThis} />
               {kind === "groups" ? (
                 <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <label className="rd-label" style={{ margin: 0 }}>Date</label>
                     <input
                       value={eventDate}
                       onChange={(e) => setEventDate(e.target.value)}
                       type="date"
                       style={fieldStyle()}
-                      aria-label="Group end date"
+                      aria-label="Group date"
                       disabled={!canPostThis}
                     />
-                    <input
-                      value={eventTime}
-                      onChange={(e) => setEventTime(e.target.value)}
-                      type="time"
-                      style={fieldStyle()}
-                      aria-label="Group end time"
-                      disabled={!canPostThis}
-                    />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: isMobile ? "wrap" : "nowrap" }}>
+                    <label style={{ display: "grid", gap: 6, flex: 1, minWidth: isMobile ? "100%" : 0 }}>
+                      <span className="rd-label" style={{ margin: 0 }}>Start Time</span>
+                      <input
+                        value={eventStartTime}
+                        onChange={(e) => setEventStartTime(e.target.value)}
+                        type="time"
+                        style={fieldStyle()}
+                        aria-label="Group start time"
+                        disabled={!canPostThis}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, flex: 1, minWidth: isMobile ? "100%" : 0 }}>
+                      <span className="rd-label" style={{ margin: 0 }}>End Time</span>
+                      <input
+                        value={eventEndTime}
+                        onChange={(e) => setEventEndTime(e.target.value)}
+                        type="time"
+                        style={fieldStyle()}
+                        aria-label="Group end time"
+                        disabled={!canPostThis}
+                      />
+                    </label>
                   </div>
                   <textarea
                     value={eventGroupDetails}
@@ -6322,13 +6393,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               </button>
             </div>
           </div>
-          <div style={{ color: "#b9bec9", fontSize: 13 }}>
-            Main photo media id: {profile?.mainPhotoMediaId ?? "-"}
-            <br />
-            Gallery count: {galleryIds.length}
-            <br />
-            Video media id: {profile?.videoMediaId ?? "-"}
-          </div>
+          <div style={{ color: "#b9bec9", fontSize: 13 }}>Gallery count: {galleryIds.length}</div>
           {!galleryIds.length ? (
             <div style={{ color: "#b9bec9", fontSize: 13 }}>No gallery photos uploaded yet.</div>
           ) : (
@@ -6420,9 +6485,6 @@ function SettingsPanel({
   setLastError(value: string | null): void;
   onLogout?(): void;
 }>): React.ReactElement {
-  const [draft, setDraft] = useState<{ discreetMode: boolean }>({
-    discreetMode: false
-  });
   const [status, setStatus] = useState<string>("Loading settings...");
   const [blockedUsers, setBlockedUsers] = useState<ReadonlyArray<string>>([]);
   const [adminStatus, setAdminStatus] = useState<string>("");
@@ -6465,10 +6527,7 @@ function SettingsPanel({
 
   async function refresh(): Promise<void> {
     try {
-      const profileRes = await api.getMyProfile(session.sessionToken);
-      setDraft({
-        discreetMode: profileRes.profile.discreetMode === true
-      });
+      await api.getMyProfile(session.sessionToken);
       setStatus("Settings loaded.");
       if (session.userType !== "guest") {
         try {
@@ -6497,25 +6556,6 @@ function SettingsPanel({
   useEffect(() => {
     void refresh();
   }, [session.sessionToken, session.userType]);
-
-  async function savePrivacy(): Promise<void> {
-    try {
-      const base = await api.getMyProfile(session.sessionToken);
-      await api.upsertMyProfile(session.sessionToken, {
-        displayName: base.profile.displayName,
-        age: base.profile.age,
-        bio: base.profile.bio,
-        stats: base.profile.stats,
-        discreetMode: draft.discreetMode,
-        travelMode: base.profile.travelMode
-      });
-      setStatus("Privacy settings saved.");
-    } catch (e) {
-      const msg = normalizeErrorMessage(e);
-      setStatus(msg);
-      setLastError(msg);
-    }
-  }
 
   async function unblockUser(targetKey: string): Promise<void> {
     try {
@@ -6621,13 +6661,8 @@ function SettingsPanel({
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>SETTINGS</div>
           <div style={{ color: "#b9bec9", fontSize: 14 }}>{status}</div>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={draft.discreetMode} onChange={(e) => setDraft((d) => ({ ...d, discreetMode: e.target.checked }))} />
-            <span className="rd-label" style={{ margin: 0 }}>Discreet Mode (hide your profile)</span>
-          </label>
-          <div style={{ color: "#b9bec9", fontSize: 13 }}>Travel mode is controlled from the Discover map using the ✈ picker.</div>
+          <div style={{ color: "#b9bec9", fontSize: 13 }}>Profile privacy controls are in Edit Profile.</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" style={buttonPrimary(false)} onClick={() => void savePrivacy()}>SAVE PRIVACY</button>
             <button type="button" style={buttonSecondary(false)} onClick={() => onLogout?.()}>LOGOUT</button>
           </div>
         </div>

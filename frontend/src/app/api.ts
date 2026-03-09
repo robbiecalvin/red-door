@@ -993,7 +993,20 @@ function createLocalApiClient(): Readonly<{
     },
     async listActivePresence(): Promise<{ presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
       const state = readState();
-      return { presence: clone(Object.values(state.presenceByKey)) };
+      const bannedUserIds = new Set(
+        Object.values(state.usersById)
+          .filter((user) => typeof (user as { bannedAtMs?: unknown }).bannedAtMs === "number")
+          .map((user) => user.id)
+      );
+      return {
+        presence: clone(
+          Object.values(state.presenceByKey).filter((presence) => {
+            if (!presence.key.startsWith("user:")) return true;
+            const userId = presence.key.slice("user:".length).trim();
+            return !bannedUserIds.has(userId);
+          })
+        )
+      };
     },
     async getDatingFeed(sessionToken: string): Promise<FeedResponse> {
       const state = readState();
@@ -1225,10 +1238,16 @@ function createLocalApiClient(): Readonly<{
     },
     async getPublicProfiles(): Promise<{ profiles: ReadonlyArray<PublicProfile> }> {
       const state = readState();
+      const bannedUserIds = new Set(
+        Object.values(state.usersById)
+          .filter((user) => typeof (user as { bannedAtMs?: unknown }).bannedAtMs === "number")
+          .map((user) => user.id)
+      );
       return {
         profiles: clone(
           Object.values(state.profilesByUserId)
             .filter((profile) => !profile.userId.startsWith("guest:"))
+            .filter((profile) => !bannedUserIds.has(profile.userId))
             .map(toPublicProfile)
         )
       };
@@ -1236,6 +1255,10 @@ function createLocalApiClient(): Readonly<{
     async getPublicProfile(userId: string): Promise<{ profile: PublicProfile }> {
       const state = readState();
       if (userId.startsWith("guest:")) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
+      const banned = state.usersById[userId];
+      if (banned && typeof (banned as { bannedAtMs?: unknown }).bannedAtMs === "number") {
+        throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
+      }
       const profile = state.profilesByUserId[userId];
       if (!profile) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
       return { profile: clone(toPublicProfile(profile)) };

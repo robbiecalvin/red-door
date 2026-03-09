@@ -419,6 +419,8 @@ async function main(): Promise<void> {
 
   const profileRepo = postgresPool ? createPostgresProfileRepository(postgresPool) : createInMemoryProfileRepository();
   const profileService = createProfileService({ repo: profileRepo });
+  const bannedUserIds = (): ReadonlySet<string> =>
+    new Set(authService.listUsers().filter((user) => typeof user.bannedAtMs === "number").map((user) => user.id));
 
   const s3Bucket = process.env.S3_BUCKET ?? "";
   const s3Region = process.env.S3_REGION ?? "";
@@ -690,7 +692,11 @@ async function main(): Promise<void> {
   });
 
   app.get("/profile/public/:userId", async (req, res) => {
-    const result = await profileService.getPublicByUserId((req.params as any)?.userId);
+    const userId = String((req.params as any)?.userId ?? "").trim();
+    if (bannedUserIds().has(userId)) {
+      return sendError(res, { code: "PROFILE_NOT_FOUND", message: "Profile not found." });
+    }
+    const result = await profileService.getPublicByUserId(userId);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ profile: result.value });
   });
@@ -698,7 +704,8 @@ async function main(): Promise<void> {
   app.get("/profile/public", async (_req, res) => {
     const result = await profileService.listPublicProfiles();
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ profiles: result.value });
+    const banned = bannedUserIds();
+    return res.status(200).json({ profiles: result.value.filter((profile) => !banned.has(profile.userId)) });
   });
 
   app.put("/profile/me", async (req, res) => {
@@ -1233,7 +1240,12 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const active = presenceService.listActivePresence();
+    const banned = bannedUserIds();
+    const active = presenceService.listActivePresence().filter((row) => {
+      if (!row.key.startsWith("user:")) return true;
+      const userId = row.key.slice("user:".length).trim();
+      return !banned.has(userId);
+    });
     return res.status(200).json({ presence: active });
   });
 
