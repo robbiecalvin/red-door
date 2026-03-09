@@ -159,6 +159,18 @@ function formatEventTime(eventStartAtMs?: number): string {
   });
 }
 
+function formatRelativeTime(timestampMs: number): string {
+  const deltaMs = Math.max(0, Date.now() - timestampMs);
+  const sec = Math.floor(deltaMs / 1000);
+  if (sec < 10) return "a few seconds ago";
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 function wsProxyUrl(): string {
   const configured = typeof __DUALMODE_WS_URL__ === "string" ? __DUALMODE_WS_URL__.trim() : "";
   if (configured === "__disabled__") return "";
@@ -3654,7 +3666,8 @@ function PublicPostings({
   isMobile,
   screen,
   setLastError,
-  compact = false
+  compact = false,
+  onOpenThreadRequested
 }: Readonly<{
   api: Api;
   session: Session;
@@ -3662,6 +3675,7 @@ function PublicPostings({
   screen: "ads" | "groups" | "cruise";
   setLastError(value: string | null): void;
   compact?: boolean;
+  onOpenThreadRequested?(key: string): void;
 }>): React.ReactElement {
   const [ads, setAds] = useState<ReadonlyArray<PublicPosting>>([]);
   const [events, setEvents] = useState<ReadonlyArray<PublicPosting>>([]);
@@ -3698,6 +3712,10 @@ function PublicPostings({
   const [spotThreadMessages, setSpotThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [spotThreadLoading, setSpotThreadLoading] = useState<boolean>(false);
   const [createPanelOpen, setCreatePanelOpen] = useState<boolean>(!compact);
+  const [boardInput, setBoardInput] = useState<string>("");
+  const [boardPosting, setBoardPosting] = useState<boolean>(false);
+  const [boardProfileUserId, setBoardProfileUserId] = useState<string | null>(null);
+  const [presenceByKey, setPresenceByKey] = useState<Record<string, { lat: number; lng: number }>>({});
   const refreshSeqRef = useRef<number>(0);
 
   const canPostAds = true;
@@ -3711,6 +3729,8 @@ function PublicPostings({
   const selectedAdThreadKey = selectedAd?.authorUserId ? `user:${selectedAd.authorUserId}` : "";
   const selectedGroupThreadKey = selectedGroup ? `event:${selectedGroup.postingId}` : "";
   const selectedSpotThreadKey = selectedSpotId ? `spot:${selectedSpotId}` : "";
+  const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const selfCoords = presenceByKey[meKey] ?? null;
 
   useEffect(() => {
     if (!compact) return;
@@ -3845,6 +3865,34 @@ function PublicPostings({
       window.removeEventListener(PROFILE_MEDIA_UPDATED_EVENT, onProfileMediaUpdated as EventListener);
     };
   }, [api, session.sessionToken, session.userType]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pollPresence = async (): Promise<void> => {
+      try {
+        const res = await api.listActivePresence(session.sessionToken);
+        if (cancelled) return;
+        const next: Record<string, { lat: number; lng: number }> = {};
+        for (const row of res.presence ?? []) {
+          if (!row || typeof row.key !== "string") continue;
+          if (typeof row.lat !== "number" || typeof row.lng !== "number") continue;
+          if (!Number.isFinite(row.lat) || !Number.isFinite(row.lng)) continue;
+          next[row.key] = { lat: row.lat, lng: row.lng };
+        }
+        setPresenceByKey(next);
+      } catch {
+        if (!cancelled) setPresenceByKey({});
+      }
+    };
+    void pollPresence();
+    const id = window.setInterval(() => {
+      void pollPresence();
+    }, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [api, session.sessionToken]);
 
   useEffect(() => {
     if (isMobile || screen !== "ads") return;
@@ -4067,6 +4115,61 @@ function PublicPostings({
       setLastError(normalizeErrorMessage(e));
     } finally {
       setUploadingKind(null);
+    }
+  }
+
+  const adBoardRows = useMemo(() => {
+    const maxAgeMs = 12 * 60 * 60 * 1000;
+    const now = Date.now();
+    const recentAds = ads
+      .filter((row) => now - row.createdAtMs <= maxAgeMs)
+      .sort((a, b) => a.createdAtMs - b.createdAtMs);
+    const grouped = new Map<
+      string,
+      {
+        authorUserId: string;
+        latestAtMs: number;
+        bubbles: Array<{ postingId: string; text: string; atMs: number }>;
+      }
+    >();
+    for (const row of recentAds) {
+      const existing = grouped.get(row.authorUserId);
+      const bubble = { postingId: row.postingId, text: row.body, atMs: row.createdAtMs };
+      if (!existing) {
+        grouped.set(row.authorUserId, {
+          authorUserId: row.authorUserId,
+          latestAtMs: row.createdAtMs,
+          bubbles: [bubble]
+        });
+        continue;
+      }
+      existing.bubbles.push(bubble);
+      existing.latestAtMs = Math.max(existing.latestAtMs, row.createdAtMs);
+    }
+    return Array.from(grouped.values()).sort((a, b) => a.latestAtMs - b.latestAtMs);
+  }, [ads]);
+
+  async function submitBoardAd(): Promise<void> {
+    const message = boardInput.trim();
+    if (!message) {
+      setLastError("Ad message is required.");
+      return;
+    }
+    setBoardPosting(true);
+    try {
+      await api.createPublicPosting(session.sessionToken, {
+        type: "ad",
+        title: "Cruising Update",
+        body: message,
+        lat: selfCoords?.lat,
+        lng: selfCoords?.lng
+      });
+      setBoardInput("");
+      await refresh();
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    } finally {
+      setBoardPosting(false);
     }
   }
 
@@ -4578,6 +4681,139 @@ function PublicPostings({
       </div>
     </div>
   );
+
+  if (compact && isMobile && screen === "ads") {
+    const profileForBoardUser = boardProfileUserId ? publicProfilesByUserId[boardProfileUserId] ?? null : null;
+    const boardUserKey = boardProfileUserId ? chatKeyFromProfileUserId(boardProfileUserId) : "";
+    const boardUserPresence = boardUserKey ? presenceByKey[boardUserKey] : null;
+    const boardDistance =
+      selfCoords && boardUserPresence
+        ? formatDistanceLabel(distanceMeters(selfCoords, boardUserPresence))
+        : "-";
+
+    return (
+      <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ border: "1px solid rgba(109,149,255,0.45)", background: "rgba(3,10,26,0.78)", borderRadius: 14, overflow: "hidden" }}>
+          <div style={{ padding: "10px 12px", borderBottom: "1px solid rgba(109,149,255,0.28)", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+            Public Ads Board
+          </div>
+          <div style={{ maxHeight: "calc(100dvh - 340px)", overflowY: "auto", padding: 10, display: "grid", gap: 12 }}>
+            {adBoardRows.length === 0 ? (
+              <div style={{ color: "#9eb0c9", fontSize: 14 }}>No ads in the last 12 hours.</div>
+            ) : (
+              adBoardRows.map((row) => {
+                const profile = publicProfilesByUserId[row.authorUserId];
+                const actorKey = chatKeyFromProfileUserId(row.authorUserId);
+                const actorPresence = presenceByKey[actorKey];
+                const actorDistance = selfCoords && actorPresence ? formatDistanceLabel(distanceMeters(selfCoords, actorPresence)) : "-";
+                const metaStats = profile
+                  ? `${profile.age}y, ${profile.stats?.heightInches ?? "-"}in, ${profile.stats?.weightLbs ?? "-"}lb, ${profile.stats?.position ?? "-"}`
+                  : row.authorUserId;
+                return (
+                  <div key={row.authorUserId} style={{ display: "grid", gridTemplateColumns: "48px 1fr", gap: 10, alignItems: "start" }}>
+                    <button
+                      type="button"
+                      onClick={() => setBoardProfileUserId(row.authorUserId)}
+                      style={{ border: 0, background: "transparent", padding: 0, width: 48, height: 48, borderRadius: "50%", overflow: "hidden", cursor: "pointer" }}
+                      aria-label="Open poster profile"
+                    >
+                      <img
+                        src={profile?.mainPhotoMediaId ? (mediaUrlById[profile.mainPhotoMediaId] ?? avatarForKey(actorKey)) : avatarForKey(actorKey)}
+                        alt="Poster profile"
+                        style={{ width: "100%", height: "100%", objectFit: "cover", border: "2px solid rgba(108,150,255,0.8)", borderRadius: "50%" }}
+                      />
+                    </button>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#b9cae6", fontSize: 12 }}>
+                        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{metaStats}</span>
+                        <span style={{ whiteSpace: "nowrap", fontStyle: "italic" }}>
+                          {formatRelativeTime(row.latestAtMs)}, {actorDistance}
+                        </span>
+                      </div>
+                      {row.bubbles.map((bubble) => (
+                        <div
+                          key={bubble.postingId}
+                          style={{
+                            background: "linear-gradient(180deg, rgba(20,36,73,0.95), rgba(12,23,46,0.95))",
+                            border: "1px solid rgba(100,146,255,0.45)",
+                            borderRadius: 14,
+                            padding: "10px 12px",
+                            color: "#e7efff",
+                            lineHeight: 1.35
+                          }}
+                        >
+                          {bubble.text}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <div style={{ borderTop: "1px solid rgba(109,149,255,0.28)", padding: 10, display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+            <input
+              value={boardInput}
+              onChange={(event) => setBoardInput(event.target.value)}
+              placeholder="Post a cruising update..."
+              style={fieldStyle()}
+              maxLength={220}
+            />
+            <button type="button" style={buttonPrimary(boardPosting)} disabled={boardPosting} onClick={() => void submitBoardAd()}>
+              {boardPosting ? "..." : "Send"}
+            </button>
+          </div>
+        </div>
+        {boardProfileUserId ? (
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={() => setBoardProfileUserId(null)}
+            style={{ position: "fixed", inset: 0, zIndex: 75, background: "rgba(0,0,0,0.74)", display: "grid", placeItems: "center", padding: 14 }}
+          >
+            <div onClick={(event) => event.stopPropagation()} style={{ ...cardStyle(), width: "min(560px, 100%)", display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "74px 1fr", gap: 10, alignItems: "center" }}>
+                <img
+                  src={profileForBoardUser?.mainPhotoMediaId ? (mediaUrlById[profileForBoardUser.mainPhotoMediaId] ?? avatarForKey(boardUserKey)) : avatarForKey(boardUserKey)}
+                  alt="Profile"
+                  style={{ width: 74, height: 74, borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(109,149,255,0.75)" }}
+                />
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div style={{ fontSize: 22, fontWeight: 700 }}>{profileForBoardUser?.displayName ?? boardProfileUserId}</div>
+                  <div style={{ color: "#9bc2ff", fontSize: 13 }}>Distance: {boardDistance}</div>
+                </div>
+              </div>
+              <div style={{ color: "#d9e7ff", fontSize: 14, lineHeight: 1.45 }}>
+                <div>Age: {profileForBoardUser?.age ?? "-"}</div>
+                <div>Race: {profileForBoardUser?.stats?.race ?? "-"}</div>
+                <div>Height: {profileForBoardUser?.stats?.heightInches ?? "-"}</div>
+                <div>Weight: {profileForBoardUser?.stats?.weightLbs ?? "-"}</div>
+                <div>Position: {profileForBoardUser?.stats?.position ?? "-"}</div>
+                <div style={{ marginTop: 6 }}>Bio: {profileForBoardUser?.bio ?? "-"}</div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  style={buttonPrimary(false)}
+                  onClick={() => {
+                    if (boardUserKey && typeof onOpenThreadRequested === "function") {
+                      onOpenThreadRequested(boardUserKey);
+                    }
+                    setBoardProfileUserId(null);
+                  }}
+                >
+                  Chat
+                </button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => setBoardProfileUserId(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   if (!isMobile) {
     const shellStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "1.05fr 1.25fr", gap: 10, alignItems: "start" };
@@ -6247,6 +6483,7 @@ export function Router({
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
   const [mobileInboxTab, setMobileInboxTab] = useState<MobileInboxTab>("threads");
   const isMobileInboxOpen = isMobile && activeTab === "threads";
+  const isMobileAdsOpen = isMobile && activeTab === "ads";
 
   const unifiedSettingsSurface = (
     <div style={{ display: "grid", gap: 12 }}>
@@ -6259,7 +6496,7 @@ export function Router({
     <div style={{ display: "grid", gap: 12 }}>
       {!hideModeCard ? null : null}
 
-      <div style={{ display: activeTab === "discover" || isMobileInboxOpen ? "block" : "none" }}>
+      <div style={{ display: activeTab === "discover" || isMobileInboxOpen || isMobileAdsOpen ? "block" : "none" }}>
         <CruiseSurface
           api={api}
           session={session}
@@ -6376,7 +6613,42 @@ export function Router({
           </div>
         </div>
       ) : null}
-      {activeTab === "ads" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setLastError} /> : null}
+      {isMobileAdsOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            left: 0,
+            right: 0,
+            bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
+            zIndex: 51,
+            maxHeight: "calc(100dvh - 130px)",
+            borderTop: "1px solid rgba(114,153,255,0.48)",
+            background: "linear-gradient(180deg, rgba(5,12,30,0.98), rgba(2,6,19,0.98))",
+            boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",
+            display: "grid",
+            gridTemplateRows: "auto minmax(0, 1fr)"
+          }}
+        >
+          <div style={{ paddingTop: 6, borderBottom: "1px solid rgba(114,153,255,0.28)" }}>
+            <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(118,160,255,0.7)" }} />
+          </div>
+          <div style={{ overflowY: "auto", minHeight: 0, padding: 8 }}>
+            <PublicPostings
+              api={api}
+              session={session}
+              isMobile={isMobile}
+              screen="ads"
+              setLastError={setLastError}
+              compact={true}
+              onOpenThreadRequested={(key) => {
+                setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
+                setActiveTab("threads");
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+      {activeTab === "ads" && !isMobile ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setLastError} /> : null}
       {activeTab === "groups" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setLastError} /> : null}
       {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setLastError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}

@@ -1294,6 +1294,22 @@ export function App(): React.ReactElement {
             <span>Inbox</span>
             {unreadChatCount > 0 ? <span className="rd-mobile-nav-badge">{unreadChatCount > 99 ? "99+" : unreadChatCount}</span> : null}
           </button>
+          <div className="rd-mobile-nav-spacer" aria-hidden="true" />
+          <button
+            type="button"
+            className={`rd-mobile-nav-btn ${activeTab === "ads" ? "is-active" : ""}`}
+            onClick={() => {
+              if (activeTab === "ads") {
+                setTabAndRoute("discover", "map");
+                return;
+              }
+              setTabAndRoute("ads");
+            }}
+            aria-label="Public ads board"
+          >
+            <span className="rd-board-icon" aria-hidden="true">!</span>
+            <span>Board</span>
+          </button>
         </nav>
       ) : null}
     </div>
