@@ -4693,11 +4693,11 @@ function PublicPostings({
 
     return (
       <div style={{ display: "grid", gap: 10 }}>
-        <div style={{ border: "1px solid rgba(109,149,255,0.45)", background: "rgba(3,10,26,0.78)", borderRadius: 14, overflow: "hidden" }}>
-          <div style={{ padding: "10px 12px", borderBottom: "1px solid rgba(109,149,255,0.28)", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+        <div style={{ border: "1px solid rgba(255,122,131,0.45)", background: "rgba(17,6,10,0.84)", borderRadius: 14, overflow: "hidden" }}>
+          <div style={{ padding: "8px 10px", borderBottom: "1px solid rgba(255,122,131,0.28)", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", fontSize: 13 }}>
             Public Ads Board
           </div>
-          <div style={{ maxHeight: "calc(100dvh - 340px)", overflowY: "auto", padding: 10, display: "grid", gap: 12 }}>
+          <div style={{ maxHeight: "calc(100dvh - 260px)", overflowY: "auto", padding: 8, display: "grid", gap: 10 }}>
             {adBoardRows.length === 0 ? (
               <div style={{ color: "#9eb0c9", fontSize: 14 }}>No ads in the last 12 hours.</div>
             ) : (
@@ -4724,9 +4724,9 @@ function PublicPostings({
                       />
                     </button>
                     <div style={{ display: "grid", gap: 6 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#b9cae6", fontSize: 12 }}>
-                        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{metaStats}</span>
-                        <span style={{ whiteSpace: "nowrap", fontStyle: "italic" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#c9b7bf", fontSize: 11, minWidth: 0 }}>
+                        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{metaStats}</span>
+                        <span style={{ whiteSpace: "nowrap", fontStyle: "italic", flexShrink: 0 }}>
                           {formatRelativeTime(row.latestAtMs)}, {actorDistance}
                         </span>
                       </div>
@@ -4734,11 +4734,12 @@ function PublicPostings({
                         <div
                           key={bubble.postingId}
                           style={{
-                            background: "linear-gradient(180deg, rgba(20,36,73,0.95), rgba(12,23,46,0.95))",
-                            border: "1px solid rgba(100,146,255,0.45)",
+                            background: "linear-gradient(180deg, rgba(49,17,24,0.95), rgba(26,9,14,0.95))",
+                            border: "1px solid rgba(255,122,131,0.45)",
                             borderRadius: 14,
-                            padding: "10px 12px",
-                            color: "#e7efff",
+                            padding: "8px 10px",
+                            color: "#ffeef2",
+                            fontSize: 14,
                             lineHeight: 1.35
                           }}
                         >
@@ -4751,7 +4752,7 @@ function PublicPostings({
               })
             )}
           </div>
-          <div style={{ borderTop: "1px solid rgba(109,149,255,0.28)", padding: 10, display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+          <div style={{ borderTop: "1px solid rgba(255,122,131,0.28)", padding: 8, display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
             <input
               value={boardInput}
               onChange={(event) => setBoardInput(event.target.value)}
@@ -6532,19 +6533,19 @@ export function Router({
             position: "fixed",
             left: 0,
             right: 0,
+            top: 0,
             bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
             zIndex: 51,
-            maxHeight: "calc(100dvh - 130px)",
-            borderTop: "1px solid rgba(114,153,255,0.48)",
-            background: "linear-gradient(180deg, rgba(5,12,30,0.98), rgba(2,6,19,0.98))",
+            borderTop: "1px solid rgba(255, 95, 104, 0.48)",
+            background: "linear-gradient(180deg, rgba(24, 3, 8, 0.98), rgba(7, 2, 5, 0.98))",
             boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",
             display: "grid",
             gridTemplateRows: "auto minmax(0, 1fr)"
           }}
         >
-          <div style={{ paddingTop: 6, borderBottom: "1px solid rgba(114,153,255,0.28)" }}>
-            <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(118,160,255,0.7)" }} />
-            <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "0 10px 8px" }}>
+          <div style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 6px)", borderBottom: "1px solid rgba(255, 95, 104, 0.28)" }}>
+            <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(255, 129, 138, 0.7)" }} />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, overflowX: "hidden", padding: "0 10px 8px" }}>
               {[
                 { id: "chat-grid" as const, label: "Chat Grid" },
                 { id: "threads" as const, label: "Inbox Threads" },
@@ -6555,7 +6556,22 @@ export function Router({
                 <button
                   key={tab.id}
                   type="button"
-                  style={mobileInboxTab === tab.id ? buttonPrimary(false) : buttonSecondary(false)}
+                  style={{
+                    border: "1px solid rgba(255, 122, 131, 0.45)",
+                    background:
+                      mobileInboxTab === tab.id
+                        ? "linear-gradient(180deg, rgba(255, 84, 102, 0.6), rgba(175, 17, 34, 0.58))"
+                        : "linear-gradient(180deg, rgba(33, 10, 14, 0.95), rgba(12, 5, 8, 0.95))",
+                    color: "#fff",
+                    borderRadius: 10,
+                    padding: "7px 8px",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: "0.03em",
+                    cursor: "pointer",
+                    flex: "1 1 calc(50% - 6px)",
+                    minWidth: 0
+                  }}
                   onClick={() => setMobileInboxTab(tab.id)}
                 >
                   {tab.label}
@@ -6619,18 +6635,18 @@ export function Router({
             position: "fixed",
             left: 0,
             right: 0,
+            top: 0,
             bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
             zIndex: 51,
-            maxHeight: "calc(100dvh - 130px)",
-            borderTop: "1px solid rgba(114,153,255,0.48)",
-            background: "linear-gradient(180deg, rgba(5,12,30,0.98), rgba(2,6,19,0.98))",
+            borderTop: "1px solid rgba(255, 95, 104, 0.48)",
+            background: "linear-gradient(180deg, rgba(24, 3, 8, 0.98), rgba(7, 2, 5, 0.98))",
             boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",
             display: "grid",
             gridTemplateRows: "auto minmax(0, 1fr)"
           }}
         >
-          <div style={{ paddingTop: 6, borderBottom: "1px solid rgba(114,153,255,0.28)" }}>
-            <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(118,160,255,0.7)" }} />
+          <div style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 6px)", borderBottom: "1px solid rgba(255, 95, 104, 0.28)" }}>
+            <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(255, 129, 138, 0.7)" }} />
           </div>
           <div style={{ overflowY: "auto", minHeight: 0, padding: 8 }}>
             <PublicPostings
