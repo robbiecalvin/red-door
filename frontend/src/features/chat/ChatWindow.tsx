@@ -85,9 +85,13 @@ export function ChatWindow({
   const [sending, setSending] = useState<boolean>(false);
   const [mediaUrlsByKey, setMediaUrlsByKey] = useState<Record<string, string>>({});
   const [recording, setRecording] = useState<boolean>(false);
+  const [videoRecording, setVideoRecording] = useState<boolean>(false);
   const [actionsOpen, setActionsOpen] = useState<boolean>(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordChunksRef = useRef<Blob[]>([]);
+  const videoRecorderRef = useRef<MediaRecorder | null>(null);
+  const videoChunksRef = useRef<Blob[]>([]);
+  const videoStreamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
@@ -215,6 +219,85 @@ export function ChatWindow({
     }
   }
 
+  async function capturePhoto(): Promise<void> {
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      photoInputRef.current?.click();
+      return;
+    }
+    setSending(true);
+    setLastError(null);
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      await video.play();
+      const width = Math.max(320, video.videoWidth || 720);
+      const height = Math.max(320, video.videoHeight || 960);
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Unable to access camera frame.");
+      ctx.drawImage(video, 0, 0, width, height);
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Photo capture failed."))), "image/jpeg", 0.9);
+      });
+      const file = new File([blob], `photo-${Date.now()}.jpg`, { type: "image/jpeg" });
+      await sendSelectedFile(file);
+    } catch (e) {
+      const err = e as ServiceError;
+      setLastError(typeof err?.message === "string" ? err.message : "Unable to access camera.");
+    } finally {
+      if (stream) {
+        for (const track of stream.getTracks()) track.stop();
+      }
+      setSending(false);
+    }
+  }
+
+  async function toggleVideoRecording(): Promise<void> {
+    if (videoRecording) {
+      videoRecorderRef.current?.stop();
+      return;
+    }
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      videoInputRef.current?.click();
+      return;
+    }
+    setLastError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
+      const recorder = new MediaRecorder(stream);
+      videoStreamRef.current = stream;
+      videoChunksRef.current = [];
+      videoRecorderRef.current = recorder;
+      recorder.ondataavailable = (evt: BlobEvent) => {
+        if (evt.data.size > 0) videoChunksRef.current.push(evt.data);
+      };
+      recorder.onstop = () => {
+        const mimeType = recorder.mimeType || "video/webm";
+        const blob = new Blob(videoChunksRef.current, { type: mimeType });
+        const file = new File([blob], `video-${Date.now()}.webm`, { type: mimeType });
+        void sendSelectedFile(file);
+        if (videoStreamRef.current) {
+          for (const track of videoStreamRef.current.getTracks()) track.stop();
+        }
+        videoStreamRef.current = null;
+        videoRecorderRef.current = null;
+        setVideoRecording(false);
+      };
+      recorder.start();
+      setVideoRecording(true);
+    } catch (e) {
+      const err = e as ServiceError;
+      setLastError(typeof err?.message === "string" ? err.message : "Unable to record video.");
+      setVideoRecording(false);
+    }
+  }
+
   async function sendLocation(): Promise<void> {
     if (!navigator.geolocation) {
       setLastError("Geolocation is not available in this browser.");
@@ -237,6 +320,18 @@ export function ChatWindow({
       setSending(false);
     }
   }
+
+  useEffect(
+    () => () => {
+      if (videoRecorderRef.current && videoRecorderRef.current.state !== "inactive") {
+        videoRecorderRef.current.stop();
+      }
+      if (videoStreamRef.current) {
+        for (const track of videoStreamRef.current.getTracks()) track.stop();
+      }
+    },
+    []
+  );
 
   return (
     <section
@@ -270,7 +365,7 @@ export function ChatWindow({
                 alignItems: "center",
                 justifyContent: "center",
                 gap: 8,
-                color: "#b7d8e0",
+                color: "#e8b8bf",
                 fontSize: 13
               }}
             >
@@ -279,7 +374,7 @@ export function ChatWindow({
                 <img
                   src={peerSummary.avatarUrl}
                   alt={`${peerSummary.displayName} avatar`}
-                  style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", border: "1px solid rgba(38,213,255,0.8)" }}
+                  style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", border: "1px solid rgba(255,138,150,0.8)" }}
                 />
               ) : (
                 <span
@@ -288,7 +383,7 @@ export function ChatWindow({
                     width: 24,
                     height: 24,
                     borderRadius: "50%",
-                    border: "1px solid rgba(38,213,255,0.8)",
+                    border: "1px solid rgba(255,138,150,0.8)",
                     background: "rgba(255,255,255,0.08)"
                   }}
                 />
@@ -372,7 +467,7 @@ export function ChatWindow({
                         maxWidth: boardMode ? "100%" : "80%"
                       }}
                     >
-                      <div style={{ fontSize: 12, color: "#d8ecff" }}>Shared location</div>
+                      <div style={{ fontSize: 12, color: "#ffd5dc" }}>Shared location</div>
                       <iframe
                         title="Google Maps location preview"
                         src={`https://www.google.com/maps?q=${location.lat},${location.lng}&z=14&output=embed`}
@@ -380,7 +475,7 @@ export function ChatWindow({
                         loading="lazy"
                         referrerPolicy="no-referrer-when-downgrade"
                       />
-                      <div style={{ fontSize: 12, color: "#3fdfff" }}>Open in Google Maps</div>
+                      <div style={{ fontSize: 12, color: "#ff8e99" }}>Open in Google Maps</div>
                     </a>
                   );
                 })()}
@@ -426,7 +521,7 @@ export function ChatWindow({
                 </div>
                 {!boardMode ? <div style={{ fontSize: 10, color: "#AAAAAA" }}>{formatTime(m.createdAtMs)}</div> : null}
                 {mine && !boardMode ? (
-                  <div style={{ fontSize: 10, color: "#6fdcff" }}>
+                  <div style={{ fontSize: 10, color: "#ff99a3" }}>
                     {typeof m.readAtMs === "number" ? "Read" : typeof m.deliveredAtMs === "number" ? "Delivered" : ""}
                   </div>
                 ) : null}
@@ -517,7 +612,7 @@ export function ChatWindow({
               display: "grid",
               placeItems: "center",
               cursor: sending ? "not-allowed" : "pointer",
-              color: "#3fdfff",
+              color: "#ff8e99",
               fontWeight: 700,
               height: 44,
               minWidth: 44
@@ -530,11 +625,16 @@ export function ChatWindow({
             <div
               style={{
                 position: "absolute",
-                right: 0,
+                right: fixedComposer ? 12 : 0,
+                left: fixedComposer ? 12 : undefined,
                 top: fixedComposer ? undefined : 48,
-                bottom: fixedComposer ? 48 : undefined,
-                zIndex: 5,
+                bottom: fixedComposer ? "calc(env(safe-area-inset-bottom, 0px) + 126px)" : undefined,
+                zIndex: 55,
                 minWidth: 220,
+                maxWidth: "min(360px, calc(100vw - 24px))",
+                maxHeight: "min(62vh, 420px)",
+                overflowY: "auto",
+                overflowX: "hidden",
                 display: "grid",
                 gap: 8,
                 padding: 10,
@@ -548,11 +648,11 @@ export function ChatWindow({
                 disabled={sending}
                 onClick={() => {
                   setActionsOpen(false);
-                  photoInputRef.current?.click();
+                  void capturePhoto();
                 }}
                 style={{
                   background: "rgba(0,0,0,0.6)",
-                  color: "#3fdfff",
+                  color: "#ff8e99",
                   border: "1px solid rgba(255,255,255,0.18)",
                   borderRadius: 8,
                   padding: "8px 10px",
@@ -566,12 +666,11 @@ export function ChatWindow({
                 type="button"
                 disabled={sending}
                 onClick={() => {
-                  setActionsOpen(false);
-                  videoInputRef.current?.click();
+                  void toggleVideoRecording();
                 }}
                 style={{
-                  background: "rgba(0,0,0,0.6)",
-                  color: "#3fdfff",
+                  background: videoRecording ? "#ff2136" : "rgba(0,0,0,0.6)",
+                  color: "#fff",
                   border: "1px solid rgba(255,255,255,0.18)",
                   borderRadius: 8,
                   padding: "8px 10px",
@@ -579,7 +678,7 @@ export function ChatWindow({
                   fontWeight: 700
                 }}
               >
-                Record Video
+                {videoRecording ? "Stop Video" : "Record Video"}
               </button>
               <button
                 type="button"
@@ -590,7 +689,7 @@ export function ChatWindow({
                 }}
                 style={{
                   background: "rgba(0,0,0,0.6)",
-                  color: "#3fdfff",
+                  color: "#ff8e99",
                   border: "1px solid rgba(255,255,255,0.18)",
                   borderRadius: 8,
                   padding: "8px 10px",
@@ -628,7 +727,7 @@ export function ChatWindow({
                 }}
                 style={{
                   background: "rgba(0,0,0,0.6)",
-                  color: "#3fdfff",
+                  color: "#ff8e99",
                   border: "1px solid rgba(255,255,255,0.18)",
                   borderRadius: 8,
                   padding: "8px 10px",
@@ -649,7 +748,9 @@ export function ChatWindow({
                       color: "#fff",
                       border: "1px solid rgba(255,58,77,0.62)",
                       borderRadius: 10,
-                      padding: "8px 10px"
+                      padding: "8px 10px",
+                      width: "100%",
+                      textOverflow: "ellipsis"
                     }}
                     aria-label="Add previous contact to group"
                   >
@@ -669,7 +770,7 @@ export function ChatWindow({
                     disabled={thirdParty.disabled || thirdParty.candidates.length === 0 || !thirdParty.selectedKey}
                     style={{
                       background: "rgba(0,0,0,0.6)",
-                      color: "#3fdfff",
+                      color: "#ff8e99",
                       border: "1px solid rgba(255,58,77,0.62)",
                       borderRadius: 10,
                       padding: "8px 10px",
