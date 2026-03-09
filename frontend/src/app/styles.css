@@ -151,6 +151,20 @@ textarea {
   font-size: 11px;
 }
 
+.rd-icon-only-btn {
+  min-width: 40px;
+  padding: 6px !important;
+  display: grid;
+  place-items: center;
+}
+
+.rd-ui-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
+}
+
 .rd-top-collapse {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 58px);
@@ -754,17 +768,9 @@ textarea {
   line-height: 1;
 }
 
-.rd-board-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 168, 176, 0.85);
-  display: inline-grid;
-  place-items: center;
-  font-size: 12px;
-  font-weight: 800;
-  color: #ffe9ec;
-  background: linear-gradient(180deg, rgba(113, 25, 36, 0.95), rgba(55, 11, 17, 0.95));
+.rd-mobile-nav-image {
+  width: 24px;
+  height: 24px;
 }
 
 .rd-mobile-nav-btn.is-active {
@@ -843,7 +849,7 @@ textarea {
     left: 10px;
     right: 10px;
     min-width: 0;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .rd-main.mobile {

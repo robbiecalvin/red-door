@@ -28,6 +28,11 @@ import placeholderB from "../assets/reddoor-placeholder-2.svg";
 import placeholderC from "../assets/reddoor-placeholder-3.svg";
 import mapSpotIcon from "../assets/map-spot-icon.svg";
 import mapGroupIcon from "../assets/map-group-icon.svg";
+import iconChatGrid from "../../../assets/icons/chatgrid.png";
+import iconInbox from "../../../assets/icons/inbox.png";
+import iconFavorites from "../../../assets/icons/favorites.png";
+import iconSpots from "../../../assets/icons/cruisingspots.png";
+import iconGroups from "../../../assets/icons/groups.png";
 
 type Api = ReturnType<typeof apiClient>;
 
@@ -6584,15 +6589,16 @@ export function Router({
             <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(255, 129, 138, 0.7)" }} />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, overflowX: "hidden", padding: "0 10px 8px" }}>
               {[
-                { id: "chat-grid" as const, label: "Chat Grid" },
-                { id: "threads" as const, label: "Inbox Threads" },
-                { id: "pinned" as const, label: "Pinned Chats" },
-                { id: "spots" as const, label: "Cruising Spots" },
-                { id: "groups" as const, label: "Groups" }
+                { id: "chat-grid" as const, label: "Chat Grid", icon: iconChatGrid },
+                { id: "threads" as const, label: "Inbox Threads", icon: iconInbox },
+                { id: "pinned" as const, label: "Pinned Chats", icon: iconFavorites },
+                { id: "spots" as const, label: "Cruising Spots", icon: iconSpots },
+                { id: "groups" as const, label: "Groups", icon: iconGroups }
               ].map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
+                  aria-label={tab.label}
                   style={{
                     border: "1px solid rgba(255, 122, 131, 0.45)",
                     background:
@@ -6611,7 +6617,7 @@ export function Router({
                   }}
                   onClick={() => setMobileInboxTab(tab.id)}
                 >
-                  {tab.label}
+                  <img src={tab.icon} alt="" className="rd-ui-icon" />
                 </button>
               ))}
             </div>
