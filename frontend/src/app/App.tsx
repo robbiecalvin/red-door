@@ -1266,7 +1266,7 @@ export function App(): React.ReactElement {
                 setBusy={setBusy}
                 setLastError={setLastError}
                 lastError={lastError}
-                onUnreadCountChange={(count) => setUnreadChatCount((prev) => (count > prev ? count : prev))}
+                onUnreadCountChange={(count) => setUnreadChatCount(Math.max(0, Number.isFinite(count) ? count : 0))}
                 onLogout={onLogout}
               />
             </Suspense>

@@ -361,9 +361,13 @@ async function main(): Promise<void> {
   const blockService = createBlockService();
   const reportService = createReportService();
   const favoritesService = createFavoritesService();
-  const publicPostingsService = createPublicPostingsService();
+  const publicPostingsService = createPublicPostingsService({
+    persistenceFilePath: path.resolve(process.cwd(), "backend/.data/public-postings.json")
+  });
   const submissionsService = createSubmissionsService();
-  const cruisingSpotsService = createCruisingSpotsService();
+  const cruisingSpotsService = createCruisingSpotsService({
+    persistenceFilePath: path.resolve(process.cwd(), "backend/.data/cruise-spots.json")
+  });
   const promotedProfilesService = createPromotedProfilesService();
 
   const postgresSettings = resolvePostgresSettingsFromEnv();
@@ -800,6 +804,8 @@ async function main(): Promise<void> {
       title: (req.body as any)?.title,
       body: (req.body as any)?.body,
       photoMediaId: (req.body as any)?.photoMediaId,
+      lat: (req.body as any)?.lat,
+      lng: (req.body as any)?.lng,
       eventStartAtMs: (req.body as any)?.eventStartAtMs,
       locationInstructions: (req.body as any)?.locationInstructions,
       groupDetails: (req.body as any)?.groupDetails

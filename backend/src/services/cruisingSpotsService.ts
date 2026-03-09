@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { containsDisallowedKidVariation } from "./contentPolicy";
 
 export type ErrorCode = "ANONYMOUS_FORBIDDEN" | "AGE_GATE_REQUIRED" | "INVALID_INPUT" | "SPOT_NOT_FOUND";
@@ -46,6 +49,12 @@ export type SpotCheckIn = Readonly<{
   checkedInAtMs: number;
 }>;
 
+export type CruisingSpotsState = Readonly<{
+  spots: ReadonlyArray<CruisingSpot>;
+  checkIns: ReadonlyArray<Readonly<{ spotId: string; rows: ReadonlyArray<SpotCheckIn> }>>;
+  actions: ReadonlyArray<Readonly<{ spotId: string; rows: ReadonlyArray<{ spotId: string; actorKey: string; markedAtMs: number }> }>>;
+}>;
+
 function ok<T>(value: T): ResultOk<T> {
   return { ok: true, value };
 }
@@ -81,7 +90,13 @@ function requireAge(session: SessionLike): Result<void> {
 }
 
 export function createCruisingSpotsService(
-  deps?: Readonly<{ nowMs?: () => number; idFactory?: () => string }>
+  deps?: Readonly<{
+    nowMs?: () => number;
+    idFactory?: () => string;
+    persistenceFilePath?: string;
+    initialState?: CruisingSpotsState;
+    onStateChanged?: (state: CruisingSpotsState) => void;
+  }>
 ): Readonly<{
   list(viewer?: SessionLike): Result<ReadonlyArray<CruisingSpot>>;
   listAll(): Result<ReadonlyArray<CruisingSpot>>;
@@ -98,6 +113,8 @@ export function createCruisingSpotsService(
 }> {
   const nowMs = deps?.nowMs ?? (() => Date.now());
   const idFactory = deps?.idFactory ?? (() => `spot_${Math.random().toString(16).slice(2)}_${Date.now()}`);
+  const persistenceFilePath = deps?.persistenceFilePath;
+  const onStateChanged = deps?.onStateChanged;
   const spots: CruisingSpot[] = [];
   const checkInsBySpot = new Map<string, Map<string, SpotCheckIn>>();
   const actionBySpot = new Map<string, Map<string, { spotId: string; actorKey: string; markedAtMs: number }>>();
@@ -109,6 +126,93 @@ export function createCruisingSpotsService(
     const actionCount = (actionBySpot.get(spotId) ?? new Map()).size;
     spots[idx] = { ...spots[idx], checkInCount, actionCount };
   }
+
+  function snapshotStateInternal(): CruisingSpotsState {
+    return {
+      spots: [...spots],
+      checkIns: Array.from(checkInsBySpot.entries()).map(([spotId, rows]) => ({
+        spotId,
+        rows: Array.from(rows.values())
+      })),
+      actions: Array.from(actionBySpot.entries()).map(([spotId, rows]) => ({
+        spotId,
+        rows: Array.from(rows.values())
+      }))
+    };
+  }
+
+  function notifyStateChanged(): void {
+    if (!onStateChanged) return;
+    try {
+      onStateChanged(snapshotStateInternal());
+    } catch {
+      // hooks are best effort
+    }
+  }
+
+  function persistState(): void {
+    if (!persistenceFilePath) {
+      notifyStateChanged();
+      return;
+    }
+    const dir = path.dirname(persistenceFilePath);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      persistenceFilePath,
+      JSON.stringify({ version: 1, ...snapshotStateInternal() }),
+      "utf8"
+    );
+    notifyStateChanged();
+  }
+
+  function hydrateSpotCounts(): void {
+    for (const spot of spots) updateSpotCounts(spot.spotId);
+  }
+
+  function loadState(): void {
+    const initial = deps?.initialState;
+    const applyState = (state: CruisingSpotsState): void => {
+      spots.splice(0, spots.length, ...(state.spots ?? []));
+      checkInsBySpot.clear();
+      actionBySpot.clear();
+      for (const group of state.checkIns ?? []) {
+        if (!group || typeof group.spotId !== "string") continue;
+        const map = new Map<string, SpotCheckIn>();
+        for (const row of group.rows ?? []) {
+          if (!row || typeof row.actorKey !== "string") continue;
+          map.set(row.actorKey, row);
+        }
+        checkInsBySpot.set(group.spotId, map);
+      }
+      for (const group of state.actions ?? []) {
+        if (!group || typeof group.spotId !== "string") continue;
+        const map = new Map<string, { spotId: string; actorKey: string; markedAtMs: number }>();
+        for (const row of group.rows ?? []) {
+          if (!row || typeof row.actorKey !== "string") continue;
+          map.set(row.actorKey, row);
+        }
+        actionBySpot.set(group.spotId, map);
+      }
+      hydrateSpotCounts();
+    };
+    if (initial) {
+      applyState(initial);
+      return;
+    }
+    if (!persistenceFilePath) return;
+    if (!fs.existsSync(persistenceFilePath)) return;
+    const raw = fs.readFileSync(persistenceFilePath, "utf8");
+    if (!raw.trim()) return;
+    const parsed = JSON.parse(raw) as { version?: unknown; spots?: unknown; checkIns?: unknown; actions?: unknown };
+    if (parsed.version !== 1) return;
+    applyState({
+      spots: Array.isArray(parsed.spots) ? (parsed.spots as ReadonlyArray<CruisingSpot>) : [],
+      checkIns: Array.isArray(parsed.checkIns) ? (parsed.checkIns as CruisingSpotsState["checkIns"]) : [],
+      actions: Array.isArray(parsed.actions) ? (parsed.actions as CruisingSpotsState["actions"]) : []
+    });
+  }
+
+  loadState();
 
   return {
     list(viewer?: SessionLike): Result<ReadonlyArray<CruisingSpot>> {
@@ -166,6 +270,7 @@ export function createCruisingSpotsService(
         moderatedByUserId: "system:auto"
       };
       spots.push(spot);
+      persistState();
       return ok(spot);
     },
 
@@ -181,6 +286,7 @@ export function createCruisingSpotsService(
       map.set(key, record);
       checkInsBySpot.set(id, map);
       updateSpotCounts(id);
+      persistState();
       return ok(record);
     },
 
@@ -196,6 +302,7 @@ export function createCruisingSpotsService(
       map.set(actor, row);
       actionBySpot.set(id, map);
       updateSpotCounts(id);
+      persistState();
       return ok(row);
     },
 
@@ -221,6 +328,7 @@ export function createCruisingSpotsService(
         moderatedByUserId: adminUserId,
         ...(reasonText ? { moderationReason: reasonText } : {})
       };
+      persistState();
       return ok(spots[idx]);
     },
 
@@ -238,6 +346,7 @@ export function createCruisingSpotsService(
         moderatedByUserId: adminUserId,
         ...(reasonText ? { moderationReason: reasonText } : {})
       };
+      persistState();
       return ok(spots[idx]);
     },
 
@@ -249,6 +358,7 @@ export function createCruisingSpotsService(
       spots.splice(idx, 1);
       checkInsBySpot.delete(id);
       actionBySpot.delete(id);
+      persistState();
       return ok({ spotId: id });
     }
   };

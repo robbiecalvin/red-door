@@ -252,6 +252,16 @@ function normalizePeerKey(rawKey: string): string {
   return key;
 }
 
+function displayNameForPeerKey(key: string): string {
+  const normalized = normalizePeerKey(key);
+  if (!normalized) return "anon";
+  if (normalized.startsWith("session:")) return "anon";
+  if (normalized.startsWith("guest:")) return "anon";
+  if (normalized.startsWith("user:guest:")) return "anon";
+  if (normalized.startsWith("user:")) return normalized.slice("user:".length).trim() || "anon";
+  return normalized;
+}
+
 function isFireSignalText(text: string): boolean {
   return text.trim() === FIRE_SIGNAL_TEXT;
 }
@@ -1066,17 +1076,11 @@ function CruiseSurface({
     [cruisingSpots]
   );
   const groupMarkers = useMemo(() => {
-    const presenceByUserId = new Map<string, { lat: number; lng: number }>();
-    for (const row of mergedPresence) {
-      const userId = userIdFromPresenceKey(row.key);
-      if (!userId) continue;
-      presenceByUserId.set(userId, { lat: row.lat, lng: row.lng });
-    }
     return groupPostings
       .filter((posting) => posting.type === "event")
       .map((posting) => {
-        const lat = typeof posting.lat === "number" && Number.isFinite(posting.lat) ? posting.lat : presenceByUserId.get(posting.authorUserId)?.lat;
-        const lng = typeof posting.lng === "number" && Number.isFinite(posting.lng) ? posting.lng : presenceByUserId.get(posting.authorUserId)?.lng;
+        const lat = typeof posting.lat === "number" && Number.isFinite(posting.lat) ? posting.lat : undefined;
+        const lng = typeof posting.lng === "number" && Number.isFinite(posting.lng) ? posting.lng : undefined;
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
         return {
           id: `group:${posting.postingId}`,
@@ -1091,7 +1095,7 @@ function CruiseSurface({
         };
       })
       .filter((marker): marker is NonNullable<typeof marker> => marker !== null);
-  }, [groupPostings, mergedPresence]);
+  }, [groupPostings]);
   const mapOverlayMarkers = useMemo(() => {
     const next: Array<(typeof spotMarkers)[number] | (typeof groupMarkers)[number]> = [];
     if (mapVisibility.spots) next.push(...spotMarkers);
@@ -1720,7 +1724,7 @@ function CruiseChat({
     [unreadByPeerKey]
   );
   const activePeerLabel = useMemo(
-    () => (peerKey ? displayNameByKey[peerKey] ?? peerProfileByKey[peerKey]?.displayName ?? peerKey : ""),
+    () => (peerKey ? displayNameByKey[peerKey] ?? peerProfileByKey[peerKey]?.displayName ?? displayNameForPeerKey(peerKey) : ""),
     [displayNameByKey, peerKey, peerProfileByKey]
   );
   const activePeerAvatarUrl = useMemo(() => {
@@ -1734,7 +1738,7 @@ function CruiseChat({
         .filter((key) => key !== peerKey && key !== me && Boolean(conversationMetaByPeerKey[key]))
         .map((key) => ({
           key,
-          label: displayNameByKey[key] ?? peerProfileByKey[key]?.displayName ?? key
+          label: displayNameByKey[key] ?? peerProfileByKey[key]?.displayName ?? displayNameForPeerKey(key)
         })),
     [conversationKeys, conversationMetaByPeerKey, displayNameByKey, me, peerKey, peerProfileByKey]
   );
@@ -1849,7 +1853,7 @@ function CruiseChat({
   }
 
   function notifyIncoming(message: ChatMessage, otherKey: string): void {
-    const peerLabel = displayNameByKey[otherKey] ?? peerProfileByKey[otherKey]?.displayName ?? otherKey;
+    const peerLabel = displayNameByKey[otherKey] ?? peerProfileByKey[otherKey]?.displayName ?? displayNameForPeerKey(otherKey);
     const body = messagePreview(message) || "New activity";
     if (!("Notification" in window)) return;
     if (Notification.permission === "granted") {
@@ -1914,7 +1918,7 @@ function CruiseChat({
       const pending = pendingSentInvites[accept.inviteId];
       if (pending) {
         setThirdMemberKey(normalizePeerKey(accept.candidateKey));
-        setGroupStatus(`Invite accepted by ${displayNameByKey[accept.candidateKey] ?? accept.candidateKey}.`);
+        setGroupStatus(`Invite accepted by ${displayNameByKey[accept.candidateKey] ?? displayNameForPeerKey(accept.candidateKey)}.`);
         setPendingSentInvites((prev) => {
           const next = { ...prev };
           delete next[accept.inviteId];
@@ -2358,7 +2362,7 @@ function CruiseChat({
         `GROUP_INVITE_REQUEST|${inviteId}|${me}|${peerKey.trim()}`
       );
       setPendingSentInvites((prev) => ({ ...prev, [inviteId]: { candidateKey: normalizedThird, primaryPeerKey: peerKey.trim() } }));
-      setGroupStatus(`Invite sent to ${displayNameByKey[normalizedThird] ?? normalizedThird}. Waiting for acceptance.`);
+      setGroupStatus(`Invite sent to ${displayNameByKey[normalizedThird] ?? displayNameForPeerKey(normalizedThird)}. Waiting for acceptance.`);
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -2462,7 +2466,7 @@ function CruiseChat({
   }, []);
 
   if (view === "thread" && peerKey.trim()) {
-    const peerLabel = displayNameByKey[peerKey] ?? peerProfileByKey[peerKey]?.displayName ?? peerKey;
+    const peerLabel = displayNameByKey[peerKey] ?? peerProfileByKey[peerKey]?.displayName ?? displayNameForPeerKey(peerKey);
     return (
       <div style={{ display: "grid", gap: 0, marginInline: 0 }}>
         {pendingInviteNotifs.length > 0 ? (
@@ -2471,7 +2475,7 @@ function CruiseChat({
             {pendingInviteNotifs.map((invite) => (
               <div key={invite.inviteId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
                 <div style={{ color: "#ced3dc", fontSize: 13 }}>
-                  {displayNameByKey[invite.inviterKey] ?? invite.inviterKey} invited you to join a conversation.
+                  {displayNameByKey[invite.inviterKey] ?? displayNameForPeerKey(invite.inviterKey)} invited you to join a conversation.
                 </div>
                 <button type="button" style={buttonPrimary(false)} onClick={() => void acceptInvite(invite.inviteId, invite.inviterKey, invite.primaryPeerKey)}>
                   ACCEPT
@@ -2544,7 +2548,7 @@ function CruiseChat({
           {pendingInviteNotifs.map((invite) => (
             <div key={invite.inviteId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
               <div style={{ color: "#ced3dc", fontSize: 13 }}>
-                {displayNameByKey[invite.inviterKey] ?? invite.inviterKey} invited you to join a conversation.
+                {displayNameByKey[invite.inviterKey] ?? displayNameForPeerKey(invite.inviterKey)} invited you to join a conversation.
               </div>
               <button type="button" style={buttonPrimary(false)} onClick={() => void acceptInvite(invite.inviteId, invite.inviterKey, invite.primaryPeerKey)}>
                 ACCEPT
@@ -3192,7 +3196,7 @@ function ThreadsPanel({
               nextByKey.set(normalizedKey, {
                 key: normalizedKey,
                 chatKind: kind,
-                displayName: nameByKey[normalizedKey] ?? normalizedKey,
+                displayName: nameByKey[normalizedKey] ?? displayNameForPeerKey(normalizedKey),
                 preview,
                 at: last.createdAtMs
               });
@@ -3510,7 +3514,7 @@ function ThreadsPanel({
   }
 
   if (selectedPeerKey) {
-    const peerLabel = activeRow?.displayName ?? selectedPeerKey;
+    const peerLabel = activeRow?.displayName ?? (selectedPeerKey ? displayNameForPeerKey(selectedPeerKey) : "anon");
     return (
       <div
         style={{
@@ -3812,7 +3816,7 @@ function PublicPostings({
       return displayNameForUserId(key.slice("user:".length).trim());
     }
     if (key.startsWith("session:")) {
-      return "Guest";
+      return "anon";
     }
     return key;
   }
@@ -3871,8 +3875,13 @@ function PublicPostings({
       ]);
       if (requestSeq !== refreshSeqRef.current) return;
       // Public postings should render oldest -> newest so new posts land at the bottom.
+      const now = Date.now();
       setAds([...adsRes.postings].sort((a, b) => a.createdAtMs - b.createdAtMs));
-      setEvents([...eventsRes.postings].sort((a, b) => a.createdAtMs - b.createdAtMs));
+      setEvents(
+        [...eventsRes.postings]
+          .filter((row) => typeof row.eventStartAtMs !== "number" || row.eventStartAtMs > now)
+          .sort((a, b) => a.createdAtMs - b.createdAtMs)
+      );
       setSpots(spotsRes.spots);
       setEventInvites(invitesRes.postings);
       setPublicProfilesByUserId(
@@ -3979,9 +3988,17 @@ function PublicPostings({
       return;
     }
     const photoMediaId = type === "ad" ? adPhotoMediaId : eventPhotoMediaId;
-    const eventStartAtMs = type === "event" ? combineEventDateTimeToEpochMs(eventDate, eventTime) : null;
-    if (type === "event" && eventStartAtMs === null) {
-      setLastError("Group date and time are required.");
+    const groupEndAtMs = type === "event" ? combineEventDateTimeToEpochMs(eventDate, eventTime) : null;
+    if (type === "event" && groupEndAtMs === null) {
+      setLastError("Group end date and time are required.");
+      return;
+    }
+    if (type === "event" && typeof groupEndAtMs === "number" && groupEndAtMs <= Date.now()) {
+      setLastError("Group end time must be in the future.");
+      return;
+    }
+    if (type === "event" && !selfCoords) {
+      setLastError("Current location is required to place the group.");
       return;
     }
     if (type === "event" && eventLocationInstructions.trim().length === 0) {
@@ -3998,7 +4015,9 @@ function PublicPostings({
         title,
         body,
         photoMediaId: photoMediaId || undefined,
-        eventStartAtMs: eventStartAtMs ?? undefined,
+        lat: type === "event" ? selfCoords?.lat : undefined,
+        lng: type === "event" ? selfCoords?.lng : undefined,
+        eventStartAtMs: groupEndAtMs ?? undefined,
         locationInstructions: type === "event" ? eventLocationInstructions.trim() : undefined,
         groupDetails: type === "event" ? eventGroupDetails.trim() : undefined
       });
@@ -4409,7 +4428,7 @@ function PublicPostings({
                       onChange={(e) => setEventDate(e.target.value)}
                       type="date"
                       style={fieldStyle()}
-                      aria-label="Group date"
+                      aria-label="Group end date"
                       disabled={!canPostThis}
                     />
                     <input
@@ -4417,7 +4436,7 @@ function PublicPostings({
                       onChange={(e) => setEventTime(e.target.value)}
                       type="time"
                       style={fieldStyle()}
-                      aria-label="Group time"
+                      aria-label="Group end time"
                       disabled={!canPostThis}
                     />
                   </div>
@@ -4432,7 +4451,7 @@ function PublicPostings({
                   <textarea
                     value={eventLocationInstructions}
                     onChange={(e) => setEventLocationInstructions(e.target.value)}
-                    placeholder="Location instructions (shown only to attendees)"
+                    placeholder="Location instructions (shown only to attendees). Group stays fixed at creation location."
                     style={{ ...fieldStyle(), minHeight: 68, resize: "vertical" }}
                     aria-label="Location instructions"
                     disabled={!canPostThis}
@@ -4506,7 +4525,7 @@ function PublicPostings({
                           <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
                           {kind === "groups" ? (
                             <div style={{ color: "#9fb6bf", fontSize: 12 }}>
-                              {formatEventDate(p.eventStartAtMs)} at {formatEventTime(p.eventStartAtMs)}
+                              Ends {formatEventDate(p.eventStartAtMs)} at {formatEventTime(p.eventStartAtMs)}
                             </div>
                           ) : null}
                           <div style={{ color: "#9fb6bf", fontSize: 12 }}>Host: {displayNameForUserId(p.authorUserId)}</div>
@@ -4949,7 +4968,7 @@ function PublicPostings({
                 </div>
                 <div style={{ padding: 8, display: "grid", gap: 4 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
-                  <div style={{ fontSize: 11, color: "#b9bec9" }}>{formatEventDate(p.eventStartAtMs)}</div>
+                  <div style={{ fontSize: 11, color: "#b9bec9" }}>Ends {formatEventDate(p.eventStartAtMs)}</div>
                 </div>
               </button>
             ))}
@@ -4960,7 +4979,7 @@ function PublicPostings({
               <div style={{ ...cardStyle(), display: "grid", gap: 10 }}>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedGroup.title}</div>
                 <div style={{ color: "#9fb6bf", fontSize: 13 }}>
-                  {formatEventDate(selectedGroup.eventStartAtMs)} at {formatEventTime(selectedGroup.eventStartAtMs)}
+                  Ends {formatEventDate(selectedGroup.eventStartAtMs)} at {formatEventTime(selectedGroup.eventStartAtMs)}
                 </div>
                 <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", fontSize: 14 }}>{selectedGroup.groupDetails ?? selectedGroup.body}</div>
                 {groupThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13 }}>Loading board...</div> : null}
@@ -5019,7 +5038,7 @@ function PublicPostings({
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ fontSize: 20, fontWeight: 700 }}>{selectedGroup.title}</div>
             <div style={{ color: "#9fb6bf", fontSize: 13 }}>
-              {formatEventDate(selectedGroup.eventStartAtMs)} at {formatEventTime(selectedGroup.eventStartAtMs)}
+              Ends {formatEventDate(selectedGroup.eventStartAtMs)} at {formatEventTime(selectedGroup.eventStartAtMs)}
             </div>
             <div style={{ color: "#9fb6bf", fontSize: 13 }}>Host: {displayNameForUserId(selectedGroup.authorUserId)}</div>
           </div>

@@ -1398,7 +1398,10 @@ function createLocalApiClient(): Readonly<{
           viewerUserId = null;
         }
       }
-      const postings = type ? state.publicPostings.filter((p) => p.type === type) : state.publicPostings;
+      const now = nowMs();
+      const postings = (type ? state.publicPostings.filter((p) => p.type === type) : state.publicPostings).filter(
+        (p) => p.type !== "event" || typeof p.eventStartAtMs !== "number" || p.eventStartAtMs > now
+      );
       const normalized = postings.map((p) => {
         if (p.type !== "event" || !p.locationInstructions) return p;
         const canSeeLocation =
@@ -1452,7 +1455,10 @@ function createLocalApiClient(): Readonly<{
       if (payload.type === "event" && session.ageVerified !== true) {
         throw { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Red Door.", context: { minimumAge: 18 } } as ServiceError;
       }
-      if (payload.type === "event" && !eventStartAtMs) throw { code: "INVALID_INPUT", message: "Event date and time are required." } as ServiceError;
+      if (payload.type === "event" && !eventStartAtMs) throw { code: "INVALID_INPUT", message: "Group end date and time are required." } as ServiceError;
+      if (payload.type === "event" && (typeof lat !== "number" || typeof lng !== "number")) {
+        throw { code: "INVALID_INPUT", message: "Group coordinates are required." } as ServiceError;
+      }
       if (payload.type === "event" && !locationInstructions) throw { code: "INVALID_INPUT", message: "Location instructions are required for groups." } as ServiceError;
       if (payload.type === "event" && !groupDetails) throw { code: "INVALID_INPUT", message: "Group details are required." } as ServiceError;
       if (containsDisallowedKidVariation(title)) throw { code: "INVALID_INPUT", message: "Title contains disallowed language." } as ServiceError;

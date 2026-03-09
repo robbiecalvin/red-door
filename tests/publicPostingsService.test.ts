@@ -19,7 +19,7 @@ describe("publicPostingsService", () => {
     const svc = createPublicPostingsService();
     const res = svc.create(
       { userType: "guest", sessionToken: "s_1", ageVerified: true },
-      { type: "event", title: "t", body: "b", eventStartAtMs: 2000, locationInstructions: "Back door", groupDetails: "Details" }
+      { type: "event", title: "t", body: "b", lat: 1, lng: 2, eventStartAtMs: 2000, locationInstructions: "Back door", groupDetails: "Details" }
     );
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
@@ -38,7 +38,7 @@ describe("publicPostingsService", () => {
     const svc = createPublicPostingsService({ nowMs: () => 1000, idFactory: () => "p1" });
     const res = svc.create(
       { userType: "registered", userId: "u_1", ageVerified: true },
-      { type: "event", title: "Launch", body: "Tonight", eventStartAtMs: 2000, locationInstructions: "Back lot", groupDetails: "Members only." }
+      { type: "event", title: "Launch", body: "Tonight", lat: 37.7749, lng: -122.4194, eventStartAtMs: 2000, locationInstructions: "Back lot", groupDetails: "Members only." }
     );
     expect(res.ok).toBe(true);
     if (!res.ok) throw new Error("unreachable");
@@ -47,6 +47,8 @@ describe("publicPostingsService", () => {
       type: "event",
       title: "Launch",
       body: "Tonight",
+      lat: 37.7749,
+      lng: -122.4194,
       eventStartAtMs: 2000,
       locationInstructions: "Back lot",
       groupDetails: "Members only.",
@@ -65,7 +67,7 @@ describe("publicPostingsService", () => {
     const svc = createPublicPostingsService({ nowMs: () => 1000, idFactory: () => "event_1" });
     const created = svc.create(
       { userType: "registered", userId: "host_1", ageVerified: true },
-      { type: "event", title: "Private Event", body: "Members only.", eventStartAtMs: 2000, locationInstructions: "Use side gate", groupDetails: "Bring ID." }
+      { type: "event", title: "Private Event", body: "Members only.", lat: 40.7128, lng: -74.006, eventStartAtMs: 2000, locationInstructions: "Use side gate", groupDetails: "Bring ID." }
     );
     expect(created.ok).toBe(true);
 
@@ -91,7 +93,7 @@ describe("publicPostingsService", () => {
     const svc = createPublicPostingsService({ nowMs: () => 1000, idFactory: () => "event_2" });
     const created = svc.create(
       { userType: "registered", userId: "host_2", ageVerified: true },
-      { type: "event", title: "Group", body: "Body", eventStartAtMs: 5000, locationInstructions: "Text host on arrival", groupDetails: "More details" }
+      { type: "event", title: "Group", body: "Body", lat: 34.0522, lng: -118.2437, eventStartAtMs: 5000, locationInstructions: "Text host on arrival", groupDetails: "More details" }
     );
     expect(created.ok).toBe(true);
 
@@ -145,5 +147,21 @@ describe("publicPostingsService", () => {
     if (!listed.ok) throw new Error("unreachable");
     expect(listed.value).toHaveLength(1);
     expect(listed.value[0].moderationStatus).toBe("approved");
+  });
+
+  it("Given an event end time in the past When listing postings Then the event is pruned", () => {
+    let now = 5_000;
+    const svc = createPublicPostingsService({ nowMs: () => now, idFactory: () => "event_expired_1" });
+    const created = svc.create(
+      { userType: "registered", userId: "host_3", ageVerified: true },
+      { type: "event", title: "Short Group", body: "Body", lat: 1, lng: 2, eventStartAtMs: 5_100, locationInstructions: "Door", groupDetails: "Details" }
+    );
+    expect(created.ok).toBe(true);
+
+    now = 5_200;
+    const listed = svc.list("event");
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw new Error("unreachable");
+    expect(listed.value).toHaveLength(0);
   });
 });
