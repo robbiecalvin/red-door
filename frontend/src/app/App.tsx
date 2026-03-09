@@ -587,6 +587,28 @@ export function App(): React.ReactElement {
     }
   }
 
+  async function autoVerifyAgeForRegisteredSession(nextSession: Session, preferredAge?: number): Promise<Session> {
+    if (nextSession.userType === "guest" || nextSession.ageVerified === true) return nextSession;
+    let ageCandidate = Number.isFinite(preferredAge) ? Number(preferredAge) : NaN;
+    if (!Number.isFinite(ageCandidate) || !Number.isInteger(ageCandidate) || ageCandidate < 18 || ageCandidate > 120) {
+      try {
+        const me = await api.getMyProfile(nextSession.sessionToken);
+        ageCandidate = Number(me.profile.age);
+      } catch {
+        return nextSession;
+      }
+    }
+    if (!Number.isFinite(ageCandidate) || !Number.isInteger(ageCandidate) || ageCandidate < 18 || ageCandidate > 120) {
+      return nextSession;
+    }
+    try {
+      const verified = await api.verifyAge(nextSession.sessionToken, ageCandidate);
+      return verified.session;
+    } catch {
+      return nextSession;
+    }
+  }
+
   async function submitRegister(): Promise<void> {
     const normalizedDisplayName = registerDisplayName.trim();
     const registerAgeNumber = Number(registerAge);
@@ -610,9 +632,10 @@ export function App(): React.ReactElement {
       }));
       try {
         const loginRes = await api.login(email, password);
+        const nextSession = await autoVerifyAgeForRegisteredSession(loginRes.session, registerAgeNumber);
         persistSessionToken(loginRes.session.sessionToken);
         setSessionToken(loginRes.session.sessionToken);
-        setSession(loginRes.session);
+        setSession(nextSession);
         setPendingVerificationEmail("");
         setVerificationCode("");
         setAuthInfo("");
@@ -644,9 +667,12 @@ export function App(): React.ReactElement {
     try {
       const targetEmail = pendingVerificationEmail || email;
       const res = await api.verifyEmail(targetEmail, verificationCode.trim());
+      const ageFromRegister = Number(registerAge);
+      const preferredAge = Number.isFinite(ageFromRegister) ? ageFromRegister : undefined;
+      const nextSession = await autoVerifyAgeForRegisteredSession(res.session, preferredAge);
       persistSessionToken(res.session.sessionToken);
       setSessionToken(res.session.sessionToken);
-      setSession(res.session);
+      setSession(nextSession);
     } catch (e) {
       setLastError(normalizeUiError(e, "Email verification failed."));
     } finally {
@@ -681,9 +707,10 @@ export function App(): React.ReactElement {
     setAuthInfo("");
     try {
       const res = await api.login(email, password);
+      const nextSession = await autoVerifyAgeForRegisteredSession(res.session);
       persistSessionToken(res.session.sessionToken);
       setSessionToken(res.session.sessionToken);
-      setSession(res.session);
+      setSession(nextSession);
     } catch (e) {
       const err = e as ServiceError;
       const msg = normalizeUiError(e, "Login failed.");
@@ -1156,7 +1183,7 @@ export function App(): React.ReactElement {
             </>
           ) : null}
 
-          {session && session.ageVerified !== true ? (
+          {session && session.userType === "guest" && session.ageVerified !== true ? (
             <section className="rd-card" aria-label="Age gate">
               <div className="rd-card-head">
                 <div className="rd-card-title">Age Gate</div>
