@@ -624,15 +624,15 @@ export function ChatWindow({
           {actionsOpen ? (
             <div
               style={{
-                position: "absolute",
-                right: fixedComposer ? 12 : 0,
-                left: fixedComposer ? 12 : undefined,
-                top: fixedComposer ? undefined : 48,
+                position: "fixed",
+                left: "50%",
+                transform: "translateX(-50%)",
+                top: fixedComposer ? undefined : 92,
                 bottom: fixedComposer ? "calc(env(safe-area-inset-bottom, 0px) + 126px)" : undefined,
                 zIndex: 55,
-                minWidth: 220,
-                maxWidth: "min(360px, calc(100vw - 24px))",
-                maxHeight: "min(62vh, 420px)",
+                width: "min(360px, calc(100vw - 24px))",
+                maxWidth: "calc(100vw - 24px)",
+                maxHeight: "min(62vh, calc(100svh - 220px))",
                 overflowY: "auto",
                 overflowX: "hidden",
                 display: "grid",
