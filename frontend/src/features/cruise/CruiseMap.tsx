@@ -214,8 +214,27 @@ export function CruiseMap({
             ✈
           </button>
         ) : null}
+        {travelPickerArmed ? (
+          <div
+            style={{
+              position: "absolute",
+              left: 10,
+              right: 10,
+              bottom: 10,
+              zIndex: 3,
+              color: "#9ef4ff",
+              fontSize: 12,
+              lineHeight: 1.35,
+              background: "rgba(0,0,0,0.66)",
+              border: "1px solid rgba(63,223,255,0.45)",
+              borderRadius: 10,
+              padding: "6px 10px"
+            }}
+          >
+            Travel picker is active. Click a map point to set your location.
+          </div>
+        ) : null}
       </div>
-      {travelPickerArmed ? <div style={{ color: "#9ef4ff", fontSize: 12 }}>Travel picker is active. Click a map point to set your location.</div> : null}
     </section>
   );
 }
