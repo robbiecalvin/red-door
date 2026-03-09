@@ -308,6 +308,8 @@ export function App(): React.ReactElement {
   const [topAvatarUrl, setTopAvatarUrl] = useState<string | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
+  const [topMenuOpen, setTopMenuOpen] = useState<boolean>(false);
+  const [filterPanelOpen, setFilterPanelOpen] = useState<boolean>(false);
   const unreadSyncInFlightRef = useRef<boolean>(false);
 
   const persistSessionToken = useCallback((token: string): void => {
@@ -814,6 +816,21 @@ export function App(): React.ReactElement {
     }
   }, [activeTab]);
 
+  const openSelfProfilePreview = useCallback((): void => {
+    setTabAndRoute("discover", "chat");
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("rd:open-self-profile"));
+    }, 0);
+  }, [setTabAndRoute]);
+
+  const toggleTopFilterPanel = useCallback((): void => {
+    const next = !filterPanelOpen;
+    setFilterPanelOpen(next);
+    if (topMenuOpen) setTopMenuOpen(false);
+    setTabAndRoute("discover", "chat");
+    window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: next ? "open_filters" : "close_filters" } }));
+  }, [filterPanelOpen, setTabAndRoute, topMenuOpen]);
+
   useEffect(() => {
     if (FULL_PAGE_TAB_NAV) {
       setActiveTab(tabFromLocation());
@@ -828,6 +845,11 @@ export function App(): React.ReactElement {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  useEffect(() => {
+    setTopMenuOpen(false);
+    setFilterPanelOpen(false);
+  }, [activeTab]);
+
   const topAvatar = topAvatarUrl ?? avatarForSeed(session?.userId ?? session?.sessionToken ?? "guest");
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
   const showBottomNav = Boolean(isMobile && session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking);
@@ -839,65 +861,41 @@ export function App(): React.ReactElement {
       {session ? (
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
-            {isMobile ? (
-              <div style={{ display: "grid", gap: 10, width: "100%" }}>
-                <div className="rd-mobile-titlebar">
-                  <div className="rd-mobile-title-spacer" aria-hidden="true" />
-                  <div className="rd-mobile-avatar-wrap">
-                    <button
-                      type="button"
-                      className="rd-mobile-avatar"
-                      aria-label="Open my profile"
-                      onClick={() => setTabAndRoute("profile")}
-                    >
-                      <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
-                      <span className="rd-mobile-avatar-dot" />
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    className="rd-btn rd-mobile-corner-settings"
-                    onClick={() => setTabAndRoute("settings")}
-                    aria-label="Open settings"
-                  >
-                    Settings
+            {session.ageVerified === true ? (
+              <div className="rd-topbar-session">
+                <div className="rd-brand" aria-label="Red Door">
+                  <div className="rd-name">Red Door</div>
+                </div>
+                <button
+                  type="button"
+                  className="rd-top-avatar"
+                  aria-label="Open my profile preview"
+                  onClick={openSelfProfilePreview}
+                >
+                  <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
+                  <span className="rd-mobile-avatar-dot" />
+                </button>
+                <div className="rd-top-actions">
+                  <button type="button" className="rd-btn" onClick={toggleTopFilterPanel} aria-label="Open filter controls">
+                    Filter
+                  </button>
+                  <button type="button" className="rd-btn" onClick={() => setTopMenuOpen((prev) => !prev)} aria-label="Open account functions">
+                    Account
                   </button>
                 </div>
-                {session.ageVerified === true ? (
-                  <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("promoted")} aria-label="Promoted profiles">Promoted</button>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("submissions")} aria-label="Submissions">Submissions</button>
-                    <div className="rd-chip" aria-label="Online status">
-                      <span className="rd-dot on" aria-hidden="true" />
-                      <span>Online status: {onlineCount}</span>
-                    </div>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("settings")} aria-label="Settings">Settings</button>
-                  </div>
-                ) : null}
               </div>
-            ) : (
-              <>
-                {session.ageVerified === true ? (
-                  <>
-                    <div className="rd-brand" aria-label="Red Door">
-                      <div className="rd-name">Red Door</div>
-                    </div>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("promoted")} aria-label="Promoted profiles">Promoted</button>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("submissions")} aria-label="Submissions">Submissions</button>
-                    <div className="rd-chip" aria-label="Online status">
-                      <span className="rd-dot on" aria-hidden="true" />
-                      <span>
-                        Online status: {onlineCount}
-                      </span>
-                    </div>
-                    <button type="button" className="rd-btn" onClick={() => setTabAndRoute("settings")} aria-label="Settings">Settings</button>
-                    <div className="rd-spacer" />
-                  </>
-                ) : null}
-              </>
-            )}
+            ) : null}
           </div>
         </header>
+      ) : null}
+      {session && session.ageVerified === true && topMenuOpen ? (
+        <div className="rd-top-collapse" role="dialog" aria-label="Account functions">
+          <button type="button" className="rd-btn" onClick={() => { setTopMenuOpen(false); openSelfProfilePreview(); }}>Profile Preview</button>
+          <button type="button" className="rd-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("settings"); }}>Settings</button>
+          <button type="button" className="rd-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("submissions"); }}>Submissions</button>
+          <button type="button" className="rd-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("promoted"); }}>Promoted</button>
+          <button type="button" className="rd-btn" onClick={() => { setTopMenuOpen(false); void onLogout(); }}>Logout</button>
+        </div>
       ) : null}
 
       <main

@@ -436,6 +436,11 @@ function CruiseSurface({
   const [cruisingSpots, setCruisingSpots] = useState<ReadonlyArray<CruisingSpot>>([]);
   const [groupPostings, setGroupPostings] = useState<ReadonlyArray<PublicPosting>>([]);
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
+  const [mapVisibility, setMapVisibility] = useState<{ people: boolean; spots: boolean; groups: boolean }>({
+    people: true,
+    spots: true,
+    groups: true
+  });
   const [travelCenter, setTravelCenter] = useState<{ lat: number; lng: number } | null>(() => readTravelCenter());
   const [travelPickerArmed, setTravelPickerArmed] = useState<boolean>(false);
   const { state: presenceState, lastErrorMessage: realtimeError } = useCruisePresence({ wsUrl: wsProxyUrl(), sessionToken: session.sessionToken });
@@ -543,6 +548,27 @@ function CruiseSurface({
     if (!target) return null;
     return formatDistanceLabel(distanceMeters(selfCoords, { lat: target.lat, lng: target.lng }));
   }, [meKey, mergedPresence, selectedProfileKey, selfCoords]);
+
+  useEffect(() => {
+    const onMapLayerFilter = (evt: Event): void => {
+      const custom = evt as CustomEvent<{ people?: boolean; spots?: boolean; groups?: boolean }>;
+      setMapVisibility({
+        people: custom.detail?.people !== false,
+        spots: custom.detail?.spots !== false,
+        groups: custom.detail?.groups !== false
+      });
+    };
+    window.addEventListener("rd:map-layer-filter", onMapLayerFilter as EventListener);
+    return () => window.removeEventListener("rd:map-layer-filter", onMapLayerFilter as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const onOpenSelfProfile = (): void => {
+      void openProfileByKey(meKey);
+    };
+    window.addEventListener("rd:open-self-profile", onOpenSelfProfile as EventListener);
+    return () => window.removeEventListener("rd:open-self-profile", onOpenSelfProfile as EventListener);
+  }, [meKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -986,7 +1012,8 @@ function CruiseSurface({
 
   const mapPresence = useMemo(() => {
     const hasSelf = mergedPresence.some((p) => p.key === meKey);
-    if (hasSelf) return mergedPresence;
+    const filteredPresence = mapVisibility.people ? mergedPresence : mergedPresence.filter((row) => row.key === meKey);
+    if (hasSelf) return filteredPresence;
     const fallbackCenter = selfCoords ?? travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng };
     const syntheticSelf: CruisePresenceUpdate = {
       key: meKey,
@@ -996,8 +1023,8 @@ function CruiseSurface({
       status: "online",
       updatedAtMs: Date.now()
     };
-    return [syntheticSelf, ...mergedPresence];
-  }, [meKey, mergedPresence, selfCoords, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter]);
+    return [syntheticSelf, ...filteredPresence];
+  }, [mapVisibility.people, meKey, mergedPresence, selfCoords, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter]);
 
   const avatarUrlByKey = useMemo(() => {
     const next: Record<string, string> = {};
@@ -1049,12 +1076,12 @@ function CruiseSurface({
       })
       .filter((marker): marker is NonNullable<typeof marker> => marker !== null);
   }, [groupPostings, mergedPresence]);
-  const mapOverlayMarkers = useMemo(() => [...spotMarkers, ...groupMarkers], [groupMarkers, spotMarkers]);
-
-  const setDiscoverTab = (next: MobileCruiseTab): void => {
-    setMobileTab(next);
-    onDiscoverScreenChange(next);
-  };
+  const mapOverlayMarkers = useMemo(() => {
+    const next: Array<(typeof spotMarkers)[number] | (typeof groupMarkers)[number]> = [];
+    if (mapVisibility.spots) next.push(...spotMarkers);
+    if (mapVisibility.groups) next.push(...groupMarkers);
+    return next;
+  }, [groupMarkers, mapVisibility.groups, mapVisibility.spots, spotMarkers]);
 
   const mapPanel = (
     <CruiseMap
@@ -1076,37 +1103,6 @@ function CruiseSurface({
 
   const mobileMapPanel = (
     <div style={{ background: "#000", marginInline: -10 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, padding: "8px 10px", borderBottom: "1px solid rgba(255,58,77,0.25)" }}>
-        <button
-          type="button"
-          style={buttonSecondary(false)}
-          onClick={() => {
-            window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "reset" } }));
-          }}
-        >
-          GUYS
-        </button>
-        <button
-          type="button"
-          style={buttonSecondary(false)}
-          onClick={() => {
-            window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "toggle_favorites" } }));
-          }}
-          aria-label="Toggle favorites only"
-        >
-          ★
-        </button>
-        <button
-          type="button"
-          style={buttonSecondary(false)}
-          onClick={() => {
-            window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "open_filters" } }));
-            setDiscoverTab("chat");
-          }}
-        >
-          FILTER
-        </button>
-      </div>
       <CruiseMap
         wsUrl={wsProxyUrl()}
         sessionToken={session.sessionToken}
@@ -1573,7 +1569,11 @@ function CruiseChat({
   const [onlineStatusFilter, setOnlineStatusFilter] = useState<"all" | "online" | "offline">(
     discoverFilter === "online" ? "online" : "all"
   );
+  const [hasChatHistoryOnly, setHasChatHistoryOnly] = useState<boolean>(false);
   const [hasPicturesOnly, setHasPicturesOnly] = useState<boolean>(false);
+  const [mapShowPeople, setMapShowPeople] = useState<boolean>(true);
+  const [mapShowSpots, setMapShowSpots] = useState<boolean>(true);
+  const [mapShowGroups, setMapShowGroups] = useState<boolean>(true);
   const [filterMinAge, setFilterMinAge] = useState<string>("");
   const [filterMaxAge, setFilterMaxAge] = useState<string>("");
   const [filterRace, setFilterRace] = useState<string>("");
@@ -1643,6 +1643,7 @@ function CruiseChat({
       if (favoritesOnly && !favorites.has(p.userId)) return false;
       if (onlineStatusFilter === "online" && !p.isOnline) return false;
       if (onlineStatusFilter === "offline" && p.isOnline) return false;
+      if (hasChatHistoryOnly && !conversationMetaByPeerKey[p.key]) return false;
       if (hasPicturesOnly && !p.hasPicture) return false;
       if (Number.isFinite(minAge) && (typeof p.age !== "number" || p.age < (minAge as number))) return false;
       if (Number.isFinite(maxAge) && (typeof p.age !== "number" || p.age > (maxAge as number))) return false;
@@ -1683,8 +1684,10 @@ function CruiseChat({
     filterMinWeight,
     filterPosition,
     filterRace,
+    hasChatHistoryOnly,
     hasPicturesOnly,
-    onlineStatusFilter
+    onlineStatusFilter,
+    conversationMetaByPeerKey
   ]);
   const unreadCandidateKeys = useMemo(
     () => Array.from(new Set(gridCards.map((c) => c.key).filter((k) => k.trim().length > 0))).slice(0, 8),
@@ -1757,6 +1760,14 @@ function CruiseChat({
     }
     setThirdCandidateKey((prev) => (prev && spokenThirdCandidates.some((p) => p.key === prev) ? prev : spokenThirdCandidates[0].key));
   }, [spokenThirdCandidates]);
+
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("rd:map-layer-filter", {
+        detail: { people: mapShowPeople, spots: mapShowSpots, groups: mapShowGroups }
+      })
+    );
+  }, [mapShowGroups, mapShowPeople, mapShowSpots]);
 
   const client: ChatApiClient = useMemo(
     () => ({
@@ -2368,7 +2379,11 @@ function CruiseChat({
   function clearGridFilters(): void {
     setFavoritesOnly(false);
     setOnlineStatusFilter("all");
+    setHasChatHistoryOnly(false);
     setHasPicturesOnly(false);
+    setMapShowPeople(true);
+    setMapShowSpots(true);
+    setMapShowGroups(true);
     setFilterMinAge("");
     setFilterMaxAge("");
     setFilterRace("");
@@ -2400,6 +2415,10 @@ function CruiseChat({
       if (action === "open_filters") {
         setFiltersOpen(true);
         setView("grid");
+        return;
+      }
+      if (action === "close_filters") {
+        setFiltersOpen(false);
       }
     };
     window.addEventListener("rd:discover-control", onDiscoverControl as EventListener);
@@ -2522,44 +2541,45 @@ function CruiseChat({
         </div>
       ) : null}
       {groupStatus ? <div style={{ color: "#26d5ff", fontSize: 12 }}>{groupStatus}</div> : null}
-      <div style={{ padding: 10, borderBottom: "1px solid rgba(255,58,77,0.28)" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8 }}>
-          <button type="button" style={buttonSecondary(false)} onClick={clearGridFilters}>
-            GUYS
-          </button>
-          <button
-            type="button"
-            style={favoritesOnly ? buttonPrimary(false) : buttonSecondary(false)}
-            onClick={() => setFavoritesOnly((v) => !v)}
-            aria-label="Toggle favorites only"
-          >
-            ★
-          </button>
-          <button type="button" style={buttonSecondary(false)} onClick={() => setFiltersOpen(true)}>
-            FILTER
-          </button>
-        </div>
-      </div>
       {filtersOpen ? (
         <div
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 40,
+            zIndex: 82,
             background: "rgba(0,0,0,0.72)",
             display: "grid",
-            placeItems: "center",
-            padding: 14
+            alignItems: "start",
+            justifyItems: "center",
+            padding: "calc(env(safe-area-inset-top, 0px) + 62px) 10px 10px"
           }}
           role="dialog"
           aria-modal="true"
           aria-label="Discover filters"
           onClick={() => setFiltersOpen(false)}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle(), width: "min(760px, 100%)", maxHeight: "86vh", overflow: "auto" }}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              ...cardStyle(),
+              width: "min(860px, 100%)",
+              maxHeight: "calc(100dvh - 90px)",
+              overflow: "auto",
+              border: "1px solid rgba(255,95,110,0.56)",
+              background: "linear-gradient(180deg, rgba(20,6,11,0.98), rgba(8,3,5,0.98))"
+            }}
+          >
             <div style={{ display: "grid", gap: 10 }}>
               <div style={{ fontSize: 20, fontWeight: 700 }}>FILTER USERS</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} />
+                  Favorites only
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={hasChatHistoryOnly} onChange={(e) => setHasChatHistoryOnly(e.target.checked)} />
+                  Has chat history
+                </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={hasPicturesOnly} onChange={(e) => setHasPicturesOnly(e.target.checked)} />
                   Has pictures
@@ -2572,6 +2592,23 @@ function CruiseChat({
                     <option value="offline">Offline</option>
                   </select>
                 </label>
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div className="rd-label">Map Layers</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input type="checkbox" checked={mapShowPeople} onChange={(e) => setMapShowPeople(e.target.checked)} />
+                    People
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input type="checkbox" checked={mapShowSpots} onChange={(e) => setMapShowSpots(e.target.checked)} />
+                    Places
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input type="checkbox" checked={mapShowGroups} onChange={(e) => setMapShowGroups(e.target.checked)} />
+                    Groups
+                  </label>
+                </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
                 <input style={fieldStyle()} placeholder="Min age" value={filterMinAge} onChange={(e) => setFilterMinAge(e.target.value)} />
