@@ -28,11 +28,11 @@ import placeholderB from "../assets/reddoor-placeholder-2.svg";
 import placeholderC from "../assets/reddoor-placeholder-3.svg";
 import mapSpotIcon from "../assets/map-spot-icon.svg";
 import mapGroupIcon from "../assets/map-group-icon.svg";
-import iconChatGrid from "../../../assets/icons/chatgrid.png";
-import iconInbox from "../../../assets/icons/inbox.png";
-import iconFavorites from "../../../assets/icons/favorites.png";
-import iconSpots from "../../../assets/icons/cruisingspots.png";
-import iconGroups from "../../../assets/icons/groups.png";
+import iconChatGrid from "../assets/icons/chatgrid.png";
+import iconInbox from "../assets/icons/inbox.png";
+import iconFavorites from "../assets/icons/favorites.png";
+import iconSpots from "../assets/icons/cruisingspots.png";
+import iconGroups from "../assets/icons/groups.png";
 
 type Api = ReturnType<typeof apiClient>;
 
