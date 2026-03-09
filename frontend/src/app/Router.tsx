@@ -6502,6 +6502,7 @@ export function Router({
   busy,
   setBusy,
   setLastError,
+  lastError,
   onUnreadCountChange,
   hideModeCard,
   onLogout
@@ -6518,6 +6519,7 @@ export function Router({
   busy: boolean;
   setBusy(value: boolean): void;
   setLastError(value: string | null): void;
+  lastError?: string | null;
   onUnreadCountChange?(count: number): void;
   hideModeCard?: boolean;
   onLogout?(): void;
@@ -6534,10 +6536,29 @@ export function Router({
       <SettingsPanel api={api} session={session} setLastError={setLastError} onLogout={onLogout} />
     </div>
   );
+  const scopedError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError : null;
+  const inlineErrorBanner = scopedError ? (
+    <div
+      role="alert"
+      aria-live="polite"
+      style={{
+        color: "#ffd8dc",
+        background: "rgba(130, 10, 22, 0.38)",
+        border: "1px solid rgba(255, 90, 104, 0.46)",
+        borderRadius: 10,
+        padding: "9px 11px",
+        fontSize: 14,
+        lineHeight: 1.35
+      }}
+    >
+      {scopedError}
+    </div>
+  ) : null;
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
       {!hideModeCard ? null : null}
+      {!isMobileInboxOpen && !isMobileAdsOpen && inlineErrorBanner}
 
       <div style={{ display: activeTab === "discover" || isMobileInboxOpen || isMobileAdsOpen ? "block" : "none" }}>
         <CruiseSurface
@@ -6621,6 +6642,7 @@ export function Router({
             </div>
           </div>
           <div style={{ overflowY: "auto", minHeight: 0, padding: 8 }}>
+            {inlineErrorBanner}
             {mobileInboxTab === "chat-grid" ? (
               <CruiseSurface
                 api={api}
@@ -6690,6 +6712,7 @@ export function Router({
             <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(255, 129, 138, 0.7)" }} />
           </div>
           <div style={{ overflowY: "auto", minHeight: 0, padding: 8 }}>
+            {inlineErrorBanner}
             <PublicPostings
               api={api}
               session={session}

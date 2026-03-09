@@ -1130,6 +1130,11 @@ export function App(): React.ReactElement {
               </div>
               <div className="rd-card-body">
                 <div style={{ color: "var(--muted)", marginBottom: 12 }}>The backend blocks Cruise/Date/Hybrid actions until age is verified.</div>
+                {lastError ? (
+                  <div className="rd-error" role="alert" aria-live="polite" style={{ marginBottom: 12, marginTop: 0 }}>
+                    {lastError}
+                  </div>
+                ) : null}
                 <label className="rd-field">
                   <span className="rd-label">Age (Years)</span>
                   <input className="rd-input" value={ageYears} onChange={(e) => setAgeYears(e.target.value)} aria-label="Age in years" />
@@ -1143,26 +1148,6 @@ export function App(): React.ReactElement {
             </section>
           ) : null}
 
-          {session && lastError ? (
-            <section className="rd-card" aria-label="Last action error">
-              <div className="rd-card-body">
-                <div
-                  role="alert"
-                  aria-live="polite"
-                  style={{
-                    color: "#ff848f",
-                    background: "rgba(120, 8, 18, 0.35)",
-                    border: "1px solid rgba(255, 90, 100, 0.5)",
-                    borderRadius: 8,
-                    padding: "10px 12px"
-                  }}
-                >
-                  {lastError}
-                </div>
-              </div>
-            </section>
-          ) : null}
-
           {session && session.ageVerified === true ? (
             session.userType !== "guest" && (profileSetupChecking || profileSetupRequired) ? (
               <section className="rd-card" aria-label="Complete your profile">
@@ -1171,6 +1156,11 @@ export function App(): React.ReactElement {
                   <div className="rd-card-sub">Display name and age are required</div>
                 </div>
                 <div className="rd-card-body">
+                  {lastError ? (
+                    <div className="rd-error" role="alert" aria-live="polite" style={{ marginBottom: 12, marginTop: 0 }}>
+                      {lastError}
+                    </div>
+                  ) : null}
                   {profileSetupChecking ? (
                     <div style={{ color: "var(--muted)", marginBottom: 12 }}>Checking profile status...</div>
                   ) : (
@@ -1275,6 +1265,7 @@ export function App(): React.ReactElement {
                 busy={busy}
                 setBusy={setBusy}
                 setLastError={setLastError}
+                lastError={lastError}
                 onUnreadCountChange={(count) => setUnreadChatCount((prev) => (count > prev ? count : prev))}
                 onLogout={onLogout}
               />
