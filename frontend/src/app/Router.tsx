@@ -6600,24 +6600,22 @@ export function Router({
                   type="button"
                   aria-label={tab.label}
                   style={{
-                    border: "1px solid rgba(255, 122, 131, 0.45)",
-                    background:
-                      mobileInboxTab === tab.id
-                        ? "linear-gradient(180deg, rgba(255, 84, 102, 0.6), rgba(175, 17, 34, 0.58))"
-                        : "linear-gradient(180deg, rgba(33, 10, 14, 0.95), rgba(12, 5, 8, 0.95))",
-                    color: "#fff",
-                    borderRadius: 10,
-                    padding: "7px 8px",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    letterSpacing: "0.03em",
+                    border: 0,
+                    background: "transparent",
+                    borderRadius: 0,
+                    padding: "6px 4px",
                     cursor: "pointer",
                     flex: "1 1 calc(50% - 6px)",
-                    minWidth: 0
+                    minWidth: 0,
+                    minHeight: 44,
+                    display: "grid",
+                    placeItems: "center",
+                    filter: mobileInboxTab === tab.id ? "drop-shadow(0 0 8px rgba(255, 118, 129, 0.65))" : "none",
+                    opacity: mobileInboxTab === tab.id ? 1 : 0.9
                   }}
                   onClick={() => setMobileInboxTab(tab.id)}
                 >
-                  <img src={tab.icon} alt="" className="rd-ui-icon" />
+                  <img src={tab.icon} alt="" className="rd-ui-icon" style={{ width: 34, height: 34 }} />
                 </button>
               ))}
             </div>
