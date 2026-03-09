@@ -40,6 +40,7 @@ type TopTab = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" |
 type DiscoverFilter = "all" | "online" | "favorites";
 type MobileCruiseTab = "map" | "chat";
 type DiscoverScreen = MobileCruiseTab;
+type MobileInboxTab = "chat-grid" | "threads" | "pinned" | "spots" | "groups";
 type MessageChannel = "instant" | "direct";
 const FIRE_SIGNAL_TEXT = "FIRE_SIGNAL|1";
 const PROFILE_MEDIA_UPDATED_EVENT = "rd:profile-media-updated";
@@ -280,8 +281,8 @@ function chatMessagesEqual(a: ReadonlyArray<ChatMessage>, b: ReadonlyArray<ChatM
 }
 
 function threadRowsEqual(
-  a: ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; avatarUrl?: string }>,
-  b: ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; avatarUrl?: string }>
+  a: ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; unreadCount: number; avatarUrl?: string }>,
+  b: ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; unreadCount: number; avatarUrl?: string }>
 ): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
@@ -292,6 +293,7 @@ function threadRowsEqual(
     if (x.displayName !== y.displayName) return false;
     if (x.preview !== y.preview) return false;
     if (x.at !== y.at) return false;
+    if (x.unreadCount !== y.unreadCount) return false;
     if ((x.avatarUrl ?? "") !== (y.avatarUrl ?? "")) return false;
   }
   return true;
@@ -309,6 +311,22 @@ function readTravelCenter(): { lat: number; lng: number } | null {
     return null;
   } catch {
     return null;
+  }
+}
+
+function safeLocalStorageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalStorageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // no-op for strict privacy mode
   }
 }
 
@@ -2973,7 +2991,9 @@ function ThreadsPanel({
   openThreadRequest,
   onThreadRequestConsumed,
   isMobile,
-  onUnreadCountChange
+  onUnreadCountChange,
+  mode = "all",
+  compact = false
 }: Readonly<{
   api: Api;
   session: Session;
@@ -2982,10 +3002,15 @@ function ThreadsPanel({
   onThreadRequestConsumed?: () => void;
   isMobile: boolean;
   onUnreadCountChange?(count: number): void;
+  mode?: "all" | "pinned";
+  compact?: boolean;
 }>): React.ReactElement {
-  const [rows, setRows] = useState<ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; avatarUrl?: string }>>(
+  const [rows, setRows] = useState<ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; unreadCount: number; avatarUrl?: string }>>(
     []
   );
+  const [unreadOnly, setUnreadOnly] = useState<boolean>(false);
+  const [selectMode, setSelectMode] = useState<boolean>(false);
+  const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
   const [messages, setMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [threadView, setThreadView] = useState<"messages" | "profile">("messages");
@@ -2995,19 +3020,51 @@ function ThreadsPanel({
   const [thirdMemberKey, setThirdMemberKey] = useState<string | null>(null);
   const [pendingSentInvites, setPendingSentInvites] = useState<Record<string, { candidateKey: string }>>({});
   const [groupStatus, setGroupStatus] = useState<string | null>(null);
+  const [pinnedKeys, setPinnedKeys] = useState<ReadonlySet<string>>(new Set());
+  const [deletedKeys, setDeletedKeys] = useState<ReadonlySet<string>>(new Set());
   const avatarUrlByMediaIdRef = useRef<Record<string, string>>({});
   const avatarFetchedAtByMediaIdRef = useRef<Record<string, number>>({});
   const avatarUrlFreshForMs = 8 * 60_000;
+  const deletedStorageKey = `reddoor:threads:deleted:${session.sessionToken}`;
+  const pinnedStorageKey = `reddoor:threads:pinned:${session.sessionToken}`;
 
   const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
   const [threadKindByPeerKey, setThreadKindByPeerKey] = useState<Record<string, "cruise" | "date">>({});
 
+  const visibleRows = useMemo(() => {
+    const byPinned = mode === "pinned" ? rows.filter((row) => pinnedKeys.has(row.key)) : rows;
+    const byDeleted = byPinned.filter((row) => !deletedKeys.has(row.key));
+    return unreadOnly ? byDeleted.filter((row) => row.unreadCount > 0) : byDeleted;
+  }, [deletedKeys, mode, pinnedKeys, rows, unreadOnly]);
   const thirdCandidates = useMemo(
-    () => rows.filter((row) => row.key !== selectedPeerKey && row.chatKind === "cruise").map((row) => ({ key: row.key, label: row.displayName })),
-    [rows, selectedPeerKey]
+    () => visibleRows.filter((row) => row.key !== selectedPeerKey && row.chatKind === "cruise").map((row) => ({ key: row.key, label: row.displayName })),
+    [visibleRows, selectedPeerKey]
   );
   const activeRow = useMemo(() => rows.find((row) => row.key === selectedPeerKey) ?? null, [rows, selectedPeerKey]);
   const selectedChatKind: "cruise" | "date" = selectedPeerKey ? threadKindByPeerKey[selectedPeerKey] ?? "cruise" : "cruise";
+
+  useEffect(() => {
+    const parseSet = (raw: string | null): ReadonlySet<string> => {
+      if (!raw) return new Set();
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) return new Set();
+        return new Set(parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0));
+      } catch {
+        return new Set();
+      }
+    };
+    setPinnedKeys(parseSet(safeLocalStorageGet(pinnedStorageKey)));
+    setDeletedKeys(parseSet(safeLocalStorageGet(deletedStorageKey)));
+  }, [deletedStorageKey, pinnedStorageKey]);
+
+  useEffect(() => {
+    safeLocalStorageSet(pinnedStorageKey, JSON.stringify(Array.from(pinnedKeys.values()).sort()));
+  }, [pinnedKeys, pinnedStorageKey]);
+
+  useEffect(() => {
+    safeLocalStorageSet(deletedStorageKey, JSON.stringify(Array.from(deletedKeys.values()).sort()));
+  }, [deletedKeys, deletedStorageKey]);
 
   useEffect(() => {
     if (thirdCandidates.length === 0) {
@@ -3126,7 +3183,7 @@ function ThreadsPanel({
           }
         }
         const unreadCounts = await Promise.all(
-          next.slice(0, 20).map(async (row) => {
+          next.map(async (row) => {
             try {
               const chat = await api.listChat(session.sessionToken, row.chatKind, row.key);
               const messages = ((chat as { messages?: ChatMessage[] }).messages ?? []) as ChatMessage[];
@@ -3141,9 +3198,14 @@ function ThreadsPanel({
           })
         );
         if (cancelled) return;
-        next.sort((a, b) => b.at - a.at);
-        setRows((prev) => (threadRowsEqual(prev, next) ? prev : next));
-        const nextKinds = next.reduce<Record<string, "cruise" | "date">>((acc, row) => {
+        const nextWithUnread = next
+          .map((row, index) => ({
+            ...row,
+            unreadCount: unreadCounts[index] ?? 0
+          }))
+          .sort((a, b) => b.at - a.at);
+        setRows((prev) => (threadRowsEqual(prev, nextWithUnread) ? prev : nextWithUnread));
+        const nextKinds = nextWithUnread.reduce<Record<string, "cruise" | "date">>((acc, row) => {
           acc[row.key] = row.chatKind;
           return acc;
         }, {});
@@ -3181,6 +3243,14 @@ function ThreadsPanel({
     setThreadView("messages");
     if (typeof onThreadRequestConsumed === "function") onThreadRequestConsumed();
   }, [onThreadRequestConsumed, openThreadRequest]);
+
+  useEffect(() => {
+    if (!selectedPeerKey) return;
+    if (deletedKeys.has(selectedPeerKey)) {
+      setSelectedPeerKey(null);
+      setThreadView("messages");
+    }
+  }, [deletedKeys, selectedPeerKey]);
 
   useEffect(() => {
     const onTabSelect = (evt: Event): void => {
@@ -3335,6 +3405,45 @@ function ThreadsPanel({
     }
   }
 
+  function togglePinThread(key: string): void {
+    setPinnedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function deleteSelectedThreads(): void {
+    if (selectedKeys.size === 0) return;
+    const toDelete = new Set(selectedKeys);
+    setDeletedKeys((prev) => {
+      const next = new Set(prev);
+      for (const key of toDelete) next.add(key);
+      return next;
+    });
+    if (selectedPeerKey && toDelete.has(selectedPeerKey)) {
+      setSelectedPeerKey(null);
+      setThreadView("messages");
+    }
+    setSelectedKeys(new Set());
+    setSelectMode(false);
+  }
+
+  function deleteAllVisibleThreads(): void {
+    if (visibleRows.length === 0) return;
+    const toDelete = new Set(visibleRows.map((row) => row.key));
+    setDeletedKeys((prev) => {
+      const next = new Set(prev);
+      for (const key of toDelete) next.add(key);
+      return next;
+    });
+    setSelectedPeerKey(null);
+    setThreadView("messages");
+    setSelectedKeys(new Set());
+    setSelectMode(false);
+  }
+
   if (selectedPeerKey) {
     const peerLabel = activeRow?.displayName ?? selectedPeerKey;
     return (
@@ -3425,25 +3534,67 @@ function ThreadsPanel({
 
   return (
     <div style={{ display: "grid", gap: 0, marginInline: isMobile ? -10 : 0, marginBlock: 0 }}>
-      {rows.length === 0 ? (
-        <div style={{ color: "#b9bec9", fontSize: 14, padding: 14 }}>No conversations yet.</div>
+      <div style={{ position: compact ? "sticky" : "static", top: 0, zIndex: 3, background: "rgba(6,9,20,0.94)", borderBottom: "1px solid rgba(91,139,255,0.24)", padding: "8px 10px" }}>
+        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button type="button" style={unreadOnly ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setUnreadOnly((prev) => !prev)}>
+              Unread
+            </button>
+            <button
+              type="button"
+              style={selectMode ? buttonPrimary(false) : buttonSecondary(false)}
+              onClick={() => {
+                setSelectMode((prev) => !prev);
+                setSelectedKeys(new Set());
+              }}
+            >
+              Select
+            </button>
+          </div>
+          {selectMode ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button type="button" style={buttonSecondary(selectedKeys.size === 0)} disabled={selectedKeys.size === 0} onClick={deleteSelectedThreads}>
+                Delete Selected
+              </button>
+              <button type="button" style={buttonSecondary(visibleRows.length === 0)} disabled={visibleRows.length === 0} onClick={deleteAllVisibleThreads}>
+                Delete All
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      {visibleRows.length === 0 ? (
+        <div style={{ color: "#b9bec9", fontSize: 14, padding: 14 }}>
+          {mode === "pinned" ? "No pinned conversations yet." : "No conversations yet."}
+        </div>
       ) : (
-        rows.map((row) => (
+        visibleRows.map((row) => (
           <button
             key={row.key}
             type="button"
-            onClick={() => setSelectedPeerKey(row.key)}
+            onClick={() => {
+              if (selectMode) {
+                setSelectedKeys((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(row.key)) next.delete(row.key);
+                  else next.add(row.key);
+                  return next;
+                });
+                return;
+              }
+              setSelectedPeerKey(row.key);
+            }}
             style={{
               border: 0,
               borderBottom: "1px solid rgba(255,58,77,0.24)",
               borderRadius: 0,
               padding: "10px 12px",
-              background: "rgba(0,0,0,0.2)",
+              background: selectMode && selectedKeys.has(row.key) ? "rgba(14,58,111,0.55)" : "rgba(0,0,0,0.2)",
               textAlign: "left",
               color: "#fff",
               cursor: "pointer",
               display: "grid",
-              gridTemplateColumns: "52px 1fr",
+              gridTemplateColumns: "52px 1fr auto",
               gap: 10,
               alignItems: "center",
               width: "100%"
@@ -3458,6 +3609,37 @@ function ThreadsPanel({
               <div style={{ fontWeight: 700 }}>{row.displayName}</div>
               <div style={{ color: "#b9bec9", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.preview}</div>
             </div>
+            <div style={{ display: "grid", justifyItems: "end", gap: 6 }}>
+              {row.unreadCount > 0 ? (
+                <span
+                  style={{
+                    minWidth: 20,
+                    height: 20,
+                    borderRadius: 999,
+                    paddingInline: 6,
+                    display: "grid",
+                    placeItems: "center",
+                    background: "linear-gradient(180deg, #ff8a00 0%, #ff5d1f 100%)",
+                    color: "#fff",
+                    fontSize: 11,
+                    fontWeight: 700
+                  }}
+                >
+                  {row.unreadCount > 99 ? "99+" : row.unreadCount}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  togglePinThread(row.key);
+                }}
+                style={{ border: 0, background: "transparent", color: pinnedKeys.has(row.key) ? "#8ec7ff" : "#7384a0", cursor: "pointer", fontSize: 16, padding: 0, lineHeight: 1 }}
+                aria-label={pinnedKeys.has(row.key) ? "Unpin thread" : "Pin thread"}
+              >
+                {pinnedKeys.has(row.key) ? "📌" : "•"}
+              </button>
+            </div>
           </button>
         ))
       )}
@@ -3471,13 +3653,15 @@ function PublicPostings({
   session,
   isMobile,
   screen,
-  setLastError
+  setLastError,
+  compact = false
 }: Readonly<{
   api: Api;
   session: Session;
   isMobile: boolean;
   screen: "ads" | "groups" | "cruise";
   setLastError(value: string | null): void;
+  compact?: boolean;
 }>): React.ReactElement {
   const [ads, setAds] = useState<ReadonlyArray<PublicPosting>>([]);
   const [events, setEvents] = useState<ReadonlyArray<PublicPosting>>([]);
@@ -3513,6 +3697,7 @@ function PublicPostings({
   const [groupThreadLoading, setGroupThreadLoading] = useState<boolean>(false);
   const [spotThreadMessages, setSpotThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [spotThreadLoading, setSpotThreadLoading] = useState<boolean>(false);
+  const [createPanelOpen, setCreatePanelOpen] = useState<boolean>(!compact);
   const refreshSeqRef = useRef<number>(0);
 
   const canPostAds = true;
@@ -3526,6 +3711,11 @@ function PublicPostings({
   const selectedAdThreadKey = selectedAd?.authorUserId ? `user:${selectedAd.authorUserId}` : "";
   const selectedGroupThreadKey = selectedGroup ? `event:${selectedGroup.postingId}` : "";
   const selectedSpotThreadKey = selectedSpotId ? `spot:${selectedSpotId}` : "";
+
+  useEffect(() => {
+    if (!compact) return;
+    setCreatePanelOpen(false);
+  }, [compact, screen]);
 
   function combineEventDateTimeToEpochMs(dateText: string, timeText: string): number | null {
     const d = dateText.trim();
@@ -4043,77 +4233,88 @@ function PublicPostings({
     return (
       <div style={{ border: "1px solid rgba(255,58,77,0.38)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.2)" }}>
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>{title}</div>
-          <input value={draftTitle} onChange={(e) => setTitle(e.target.value)} placeholder={`${title} title`} style={fieldStyle()} aria-label={`${title} title`} disabled={!canPostThis} />
-          <textarea value={draftBody} onChange={(e) => setBody(e.target.value)} placeholder={`Write ${title.toLowerCase()} details`} style={{ ...fieldStyle(), minHeight: 86, resize: "vertical" }} aria-label={`${title} details`} disabled={!canPostThis} />
-          {kind === "groups" ? (
-            <div style={{ display: "grid", gap: 8 }}>
-              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
-                <input
-                  value={eventDate}
-                  onChange={(e) => setEventDate(e.target.value)}
-                  type="date"
-                  style={fieldStyle()}
-                  aria-label="Group date"
-                  disabled={!canPostThis}
-                />
-                <input
-                  value={eventTime}
-                  onChange={(e) => setEventTime(e.target.value)}
-                  type="time"
-                  style={fieldStyle()}
-                  aria-label="Group time"
-                  disabled={!canPostThis}
-                />
-              </div>
-              <textarea
-                value={eventGroupDetails}
-                onChange={(e) => setEventGroupDetails(e.target.value)}
-                placeholder="Detailed group profile description"
-                style={{ ...fieldStyle(), minHeight: 74, resize: "vertical" }}
-                aria-label="Group details"
-                disabled={!canPostThis}
-              />
-              <textarea
-                value={eventLocationInstructions}
-                onChange={(e) => setEventLocationInstructions(e.target.value)}
-                placeholder="Location instructions (shown only to attendees)"
-                style={{ ...fieldStyle(), minHeight: 68, resize: "vertical" }}
-                aria-label="Location instructions"
-                disabled={!canPostThis}
-              />
-            </div>
-          ) : null}
-          <div style={{ display: "grid", gap: 8 }}>
-            <input className="rd-input" type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} disabled={!canPostThis} />
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" onClick={() => void uploadGridPhoto(submitKind)} style={canPostThis ? buttonSecondary(isUploading) : buttonSecondary(true)} disabled={!canPostThis || isUploading}>
-                {isUploading ? "UPLOADING..." : "UPLOAD PHOTO"}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{title}</div>
+            {compact ? (
+              <button type="button" style={buttonSecondary(false)} onClick={() => setCreatePanelOpen((prev) => !prev)}>
+                {createPanelOpen ? "Close" : kind === "groups" ? "Add Group +" : "Add Ad +"}
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPhotoMediaId("");
-                  setPhotoFile(null);
-                }}
-                style={buttonSecondary(false)}
-              >
-                CLEAR PHOTO
-              </button>
-            </div>
-            {photoMediaId ? (
-              <img
-                src={mediaUrlById[photoMediaId] ?? avatarForKey(photoMediaId)}
-                alt={`${title} photo preview`}
-                style={{ width: "100%", maxWidth: 240, aspectRatio: "1 / 1", objectFit: "cover", border: "1px solid rgba(255,58,77,0.4)" }}
-              />
             ) : null}
-            {!photoMediaId && photoFile ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Photo selected. Upload to attach.</div> : null}
           </div>
-          <button type="button" onClick={() => void submit(submitKind)} style={canPostThis ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPostThis}>
-            POST {title}
-          </button>
-          {!canPostThis ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view groups but cannot post groups.</div> : null}
+          {createPanelOpen ? (
+            <>
+              <input value={draftTitle} onChange={(e) => setTitle(e.target.value)} placeholder={`${title} title`} style={fieldStyle()} aria-label={`${title} title`} disabled={!canPostThis} />
+              <textarea value={draftBody} onChange={(e) => setBody(e.target.value)} placeholder={`Write ${title.toLowerCase()} details`} style={{ ...fieldStyle(), minHeight: 86, resize: "vertical" }} aria-label={`${title} details`} disabled={!canPostThis} />
+              {kind === "groups" ? (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+                    <input
+                      value={eventDate}
+                      onChange={(e) => setEventDate(e.target.value)}
+                      type="date"
+                      style={fieldStyle()}
+                      aria-label="Group date"
+                      disabled={!canPostThis}
+                    />
+                    <input
+                      value={eventTime}
+                      onChange={(e) => setEventTime(e.target.value)}
+                      type="time"
+                      style={fieldStyle()}
+                      aria-label="Group time"
+                      disabled={!canPostThis}
+                    />
+                  </div>
+                  <textarea
+                    value={eventGroupDetails}
+                    onChange={(e) => setEventGroupDetails(e.target.value)}
+                    placeholder="Detailed group profile description"
+                    style={{ ...fieldStyle(), minHeight: 74, resize: "vertical" }}
+                    aria-label="Group details"
+                    disabled={!canPostThis}
+                  />
+                  <textarea
+                    value={eventLocationInstructions}
+                    onChange={(e) => setEventLocationInstructions(e.target.value)}
+                    placeholder="Location instructions (shown only to attendees)"
+                    style={{ ...fieldStyle(), minHeight: 68, resize: "vertical" }}
+                    aria-label="Location instructions"
+                    disabled={!canPostThis}
+                  />
+                </div>
+              ) : null}
+              <div style={{ display: "grid", gap: 8 }}>
+                <input className="rd-input" type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} disabled={!canPostThis} />
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" onClick={() => void uploadGridPhoto(submitKind)} style={canPostThis ? buttonSecondary(isUploading) : buttonSecondary(true)} disabled={!canPostThis || isUploading}>
+                    {isUploading ? "UPLOADING..." : "UPLOAD PHOTO"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhotoMediaId("");
+                      setPhotoFile(null);
+                    }}
+                    style={buttonSecondary(false)}
+                  >
+                    CLEAR PHOTO
+                  </button>
+                </div>
+                {photoMediaId ? (
+                  <img
+                    src={mediaUrlById[photoMediaId] ?? avatarForKey(photoMediaId)}
+                    alt={`${title} photo preview`}
+                    style={{ width: "100%", maxWidth: 240, aspectRatio: "1 / 1", objectFit: "cover", border: "1px solid rgba(255,58,77,0.4)" }}
+                  />
+                ) : null}
+                {!photoMediaId && photoFile ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Photo selected. Upload to attach.</div> : null}
+              </div>
+              <button type="button" onClick={() => void submit(submitKind)} style={canPostThis ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPostThis}>
+                POST {title}
+              </button>
+              {!canPostThis ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view groups but cannot post groups.</div> : null}
+            </>
+          ) : null}
 
           {showGrid ? (
             <div style={{ display: "grid", gap: 0, marginTop: 6 }}>
@@ -4260,58 +4461,69 @@ function PublicPostings({
   ) : (
     <div style={{ border: "1px solid rgba(255,58,77,0.38)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.2)" }}>
       <div style={{ display: "grid", gap: 10 }}>
-        <div style={{ fontSize: 20, fontWeight: 700 }}>CRUISE</div>
-        <input
-          value={spotName}
-          onChange={(e) => setSpotName(e.target.value)}
-          placeholder="Spot name"
-          style={fieldStyle()}
-          disabled={!canCreateSpots}
-        />
-        <input
-          value={spotAddress}
-          onChange={(e) => setSpotAddress(e.target.value)}
-          placeholder="Spot address"
-          style={fieldStyle()}
-          disabled={!canCreateSpots}
-        />
-        <textarea
-          value={spotDescription}
-          onChange={(e) => setSpotDescription(e.target.value)}
-          placeholder="Spot description"
-          style={{ ...fieldStyle(), minHeight: 80, resize: "vertical" }}
-          disabled={!canCreateSpots}
-        />
-        <div style={{ display: "grid", gap: 8 }}>
-          <input className="rd-input" type="file" accept="image/*" onChange={(e) => setSpotPhotoFile(e.target.files?.[0] ?? null)} disabled={!canCreateSpots} />
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" style={canCreateSpots ? buttonSecondary(uploadingKind === "spot") : buttonSecondary(true)} disabled={!canCreateSpots || uploadingKind === "spot"} onClick={() => void uploadGridPhoto("spot")}>
-              {uploadingKind === "spot" ? "UPLOADING..." : "UPLOAD PHOTO"}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>CRUISE</div>
+          {compact ? (
+            <button type="button" style={buttonSecondary(false)} onClick={() => setCreatePanelOpen((prev) => !prev)}>
+              {createPanelOpen ? "Close" : "Add Spot +"}
             </button>
-            <button
-              type="button"
-              style={buttonSecondary(false)}
-              onClick={() => {
-                setSpotPhotoFile(null);
-                setSpotPhotoMediaId("");
-              }}
-            >
-              CLEAR PHOTO
-            </button>
-          </div>
-          {spotPhotoMediaId ? (
-            <img
-              src={mediaUrlById[spotPhotoMediaId] ?? avatarForKey(spotPhotoMediaId)}
-              alt="Cruising spot preview"
-              style={{ width: "100%", maxWidth: 240, aspectRatio: "1 / 1", objectFit: "cover", border: "1px solid rgba(255,58,77,0.4)" }}
-            />
           ) : null}
-          {!spotPhotoMediaId && spotPhotoFile ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Photo selected. Upload to attach.</div> : null}
         </div>
-        <button type="button" style={canCreateSpots ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canCreateSpots} onClick={() => void createSpot()}>
-          CREATE SPOT
-        </button>
-        {!canCreateSpots ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can check in but cannot create cruise spots.</div> : null}
+        {createPanelOpen ? (
+          <>
+            <input
+              value={spotName}
+              onChange={(e) => setSpotName(e.target.value)}
+              placeholder="Spot name"
+              style={fieldStyle()}
+              disabled={!canCreateSpots}
+            />
+            <input
+              value={spotAddress}
+              onChange={(e) => setSpotAddress(e.target.value)}
+              placeholder="Spot address"
+              style={fieldStyle()}
+              disabled={!canCreateSpots}
+            />
+            <textarea
+              value={spotDescription}
+              onChange={(e) => setSpotDescription(e.target.value)}
+              placeholder="Spot description"
+              style={{ ...fieldStyle(), minHeight: 80, resize: "vertical" }}
+              disabled={!canCreateSpots}
+            />
+            <div style={{ display: "grid", gap: 8 }}>
+              <input className="rd-input" type="file" accept="image/*" onChange={(e) => setSpotPhotoFile(e.target.files?.[0] ?? null)} disabled={!canCreateSpots} />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" style={canCreateSpots ? buttonSecondary(uploadingKind === "spot") : buttonSecondary(true)} disabled={!canCreateSpots || uploadingKind === "spot"} onClick={() => void uploadGridPhoto("spot")}>
+                  {uploadingKind === "spot" ? "UPLOADING..." : "UPLOAD PHOTO"}
+                </button>
+                <button
+                  type="button"
+                  style={buttonSecondary(false)}
+                  onClick={() => {
+                    setSpotPhotoFile(null);
+                    setSpotPhotoMediaId("");
+                  }}
+                >
+                  CLEAR PHOTO
+                </button>
+              </div>
+              {spotPhotoMediaId ? (
+                <img
+                  src={mediaUrlById[spotPhotoMediaId] ?? avatarForKey(spotPhotoMediaId)}
+                  alt="Cruising spot preview"
+                  style={{ width: "100%", maxWidth: 240, aspectRatio: "1 / 1", objectFit: "cover", border: "1px solid rgba(255,58,77,0.4)" }}
+                />
+              ) : null}
+              {!spotPhotoMediaId && spotPhotoFile ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Photo selected. Upload to attach.</div> : null}
+            </div>
+            <button type="button" style={canCreateSpots ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canCreateSpots} onClick={() => void createSpot()}>
+              CREATE SPOT
+            </button>
+            {!canCreateSpots ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can check in but cannot create cruise spots.</div> : null}
+          </>
+        ) : null}
         <div style={{ display: "grid", gap: 10 }}>
           {spots.length === 0 ? (
             <div style={{ color: "#b9bec9", fontSize: 14 }}>No cruise spots yet.</div>
@@ -6033,6 +6245,8 @@ export function Router({
 }>): React.ReactElement {
   const isMobile = useIsMobile();
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
+  const [mobileInboxTab, setMobileInboxTab] = useState<MobileInboxTab>("threads");
+  const isMobileInboxOpen = isMobile && activeTab === "threads";
 
   const unifiedSettingsSurface = (
     <div style={{ display: "grid", gap: 12 }}>
@@ -6045,7 +6259,7 @@ export function Router({
     <div style={{ display: "grid", gap: 12 }}>
       {!hideModeCard ? null : null}
 
-      <div style={{ display: activeTab === "discover" ? "block" : "none" }}>
+      <div style={{ display: activeTab === "discover" || isMobileInboxOpen ? "block" : "none" }}>
         <CruiseSurface
           api={api}
           session={session}
@@ -6064,7 +6278,7 @@ export function Router({
           onUnreadCountChange={onUnreadCountChange}
         />
       </div>
-      {activeTab === "threads" ? (
+      {activeTab === "threads" && !isMobile ? (
         <ThreadsPanel
           api={api}
           session={session}
@@ -6074,6 +6288,93 @@ export function Router({
           isMobile={isMobile}
           onUnreadCountChange={onUnreadCountChange}
         />
+      ) : null}
+      {isMobileInboxOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            left: 0,
+            right: 0,
+            bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
+            zIndex: 51,
+            maxHeight: "calc(100dvh - 130px)",
+            borderTop: "1px solid rgba(114,153,255,0.48)",
+            background: "linear-gradient(180deg, rgba(5,12,30,0.98), rgba(2,6,19,0.98))",
+            boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",
+            display: "grid",
+            gridTemplateRows: "auto minmax(0, 1fr)"
+          }}
+        >
+          <div style={{ paddingTop: 6, borderBottom: "1px solid rgba(114,153,255,0.28)" }}>
+            <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(118,160,255,0.7)" }} />
+            <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "0 10px 8px" }}>
+              {[
+                { id: "chat-grid" as const, label: "Chat Grid" },
+                { id: "threads" as const, label: "Inbox Threads" },
+                { id: "pinned" as const, label: "Pinned Chats" },
+                { id: "spots" as const, label: "Cruising Spots" },
+                { id: "groups" as const, label: "Groups" }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  style={mobileInboxTab === tab.id ? buttonPrimary(false) : buttonSecondary(false)}
+                  onClick={() => setMobileInboxTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ overflowY: "auto", minHeight: 0, padding: 8 }}>
+            {mobileInboxTab === "chat-grid" ? (
+              <CruiseSurface
+                api={api}
+                session={session}
+                settings={settings}
+                discoverFilter={discoverFilter}
+                busy={busy}
+                setBusy={setBusy}
+                setLastError={setLastError}
+                isMobile={isMobile}
+                discoverScreen={"chat"}
+                onDiscoverScreenChange={() => {}}
+                onOpenThreadRequested={(key) => {
+                  setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
+                  setMobileInboxTab("threads");
+                }}
+                onUnreadCountChange={onUnreadCountChange}
+              />
+            ) : null}
+            {mobileInboxTab === "threads" ? (
+              <ThreadsPanel
+                api={api}
+                session={session}
+                setLastError={setLastError}
+                openThreadRequest={externalOpenThreadRequest}
+                onThreadRequestConsumed={() => setExternalOpenThreadRequest(null)}
+                isMobile={isMobile}
+                onUnreadCountChange={onUnreadCountChange}
+                compact={true}
+              />
+            ) : null}
+            {mobileInboxTab === "pinned" ? (
+              <ThreadsPanel
+                api={api}
+                session={session}
+                setLastError={setLastError}
+                openThreadRequest={externalOpenThreadRequest}
+                onThreadRequestConsumed={() => setExternalOpenThreadRequest(null)}
+                isMobile={isMobile}
+                onUnreadCountChange={onUnreadCountChange}
+                mode="pinned"
+                compact={true}
+              />
+            ) : null}
+            {mobileInboxTab === "spots" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setLastError} compact={true} /> : null}
+            {mobileInboxTab === "groups" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setLastError} compact={true} /> : null}
+          </div>
+        </div>
       ) : null}
       {activeTab === "ads" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setLastError} /> : null}
       {activeTab === "groups" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setLastError} /> : null}
