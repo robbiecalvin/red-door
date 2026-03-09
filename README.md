@@ -1,6 +1,6 @@
 # Red Door (Web + Optional Backend)
 
-Last updated: 2026-03-08
+Last updated: 2026-03-09
 
 ## What this project is
 
@@ -83,6 +83,51 @@ The active frontend product emphasis is Cruise mode. Date and Hybrid logic exist
 - API endpoint resolution via build-time constants and local/remote fallback logic
 - WebSocket URL derivation logic for realtime support
 - GitHub Pages static page sync support for route HTML files
+
+## Latest shipped product updates (through 2026-03-09)
+
+The following frontend/backend behavior changes are now implemented and live in `main`:
+
+- Mobile bottom bar redesigned to focused overlays:
+  - Inbox overlay with tabs for Chat Grid, Threads, Pinned, Cruising Spots, Groups
+  - Public Ads board as a dedicated right-side bottom bar action
+- Top bar redesigned with:
+  - RED DOOR logo on left
+  - Profile preview action in center
+  - Filter and account-function overlays from top
+- Travel mode improvements:
+  - Travel picker instruction moved to in-map overlay (no extra black space)
+  - Map click now asks for confirmation before temporary relocation
+- Group creation flow improvements:
+  - Date, Start Time, End Time inputs now labeled
+  - Start/End rendered side-by-side and validated (`end > start`, future end)
+- Chat/inbox behavior upgrades:
+  - Location message preview now reads `Location Sent`
+  - Group-chat invite flow supports accept/decline end-to-end notifications
+  - Invite recipient message text uses `You’ve received a Chat Invite`
+  - Group thread title state now reflects `+1` context
+  - Unread badges now decrement correctly when messages are read
+  - Bottom inbox badge no longer resets on tab/screen changes
+  - Chat-grid unread/online visual signals refined
+- Data persistence behavior:
+  - Cruising spots persist across sessions
+  - Groups expire at configured end time
+  - Ads persist and roll over with 12-hour retention behavior
+- Moderation/safety visibility updates:
+  - Blocked users are removed from map/chat grid visibility
+  - Banned users are filtered from public profile and active presence endpoints
+- Profile/settings cleanup:
+  - Duplicate Discreet/Travel messaging removed
+  - Internal media ID labels removed from user-facing settings UI
+- Red-theme migration and mobile polish:
+  - Blue accents replaced with red variants
+  - Overflow/horizontal scroll issues reduced across overlay layouts
+  - Icon-only controls integrated from new asset set
+- Auth flow update:
+  - Registered users auto-verify age after registration/login path where age is known
+  - Separate age-gate card is now guest/anonymous-only
+- Error handling update:
+  - Error banners are now scoped to the active section/tab and no longer leak into unrelated screens (including Discover map)
 
 ## API and route coverage (high level)
 
@@ -168,7 +213,7 @@ npm run build:pages
 
 ## Testing and verification completed
 
-The following were run successfully on 2026-03-08:
+The following were run successfully on 2026-03-09:
 
 ```bash
 npm test
@@ -179,12 +224,12 @@ npm run build
 ### Test results snapshot
 
 - Test suites: 16 passed / 16 total
-- Tests: 204 passed / 204 total
+- Tests: 207 passed / 207 total
 - Coverage summary:
-  - Statements: 94.35%
-  - Branches: 85.54%
-  - Functions: 96.57%
-  - Lines: 98.48%
+  - Statements: 94.33%
+  - Branches: 85.57%
+  - Functions: 96.55%
+  - Lines: 98.57%
 - Critical services with 100% branch coverage in latest run:
   - `matchingService.ts`
   - `modeService.ts`
@@ -207,42 +252,72 @@ Current findings:
 Notes:
 - Auto-fix path indicates potential breaking upgrade (`vite@7.x`) if using `npm audit fix --force`.
 
-## Debugging and edits completed (tracked history)
+## Recent update log (latest 30 commits)
 
-This section is based on the latest local git history (`git log -n 30 --oneline`) and reflects completed code/debug work in this repository.
+Based on `git log -n 30 --oneline`:
 
-### Recent debugging and behavior fixes
+- `b291817` auth: auto-verify age after register and guest-only age gate
+- `24cc1fa` travel: confirm relocation after map selection
+- `e667cb0` chat: keep inbox badge driven by app-level unread sync
+- `0021fcd` ui: scope errors to active section and suppress discover carryover
+- `5a646e0` map: overlay travel picker hint to remove bottom spacer
+- `d483314` ui: add group start/end inputs and tighten ban/block visibility
+- `0c40cce` chat: fix invite flow, location preview, and unread decrement
+- `d670cca` updates
+- `1506615` ui: center chat action sheet and tighten top icon controls
+- `ef41fbf` chat ui: fix action sheet clipping and camera/mic integrations
+- `548f0a3` ui/chat: unread-highlight grid, 12h ad retention, nav layout polish
+- `4a1d5bd` chat/groups: anon labels, unread decrement, persistent spots and expiring groups
+- `d41e9ac` ui: remove mobile overflow and retheme remaining blue accents
+- `d216a7c` ui: move session errors into active tab overlays
+- `41f2e65` frontend: darken bars and make mobile discover map full-height
+- `e32d418` frontend: increase nav and overlay icon sizes
+- `21d5467` frontend: enlarge ui icons and remove visible icon button chrome
+- `aec2dd0` frontend: move ui icons into src assets for CI-safe imports
+- `2225f14` frontend: replace nav controls with icon-only asset buttons
+- `ffa97df` frontend: redesign topbar and add expanded top-down filters
+- `d02d4ec` frontend: retheme overlays red and remove mobile horizontal overflow
+- `77c6b43` frontend: add mobile ads board overlay and third nav button
+- `e1b3c4f` frontend: add two-button mobile nav with tabbed inbox overlay
+- `d5dae03` fix: show authenticated action errors and tighten posting validation
+- `3aa7529` test: stabilize auth coverage threshold in CI
+- `bc22ada` fix: restore posting and spot creation flows
+- `3b3fc06` chore: push all pending updates
+- `36db5fc` ci: harden scripts and align workflow gates
+- `f9754ad` Add AI governance, architecture docs, and codex workflow files
+- `7592d90` fix promoted profiles create/sync behavior
 
-- `9e95ede` map: stopped remount loop causing strobe flicker
-- `a59e4b3` prevented profile modal flicker from stale async updates
-- `f1b9f4b` made web register/login errors visible and reduced auth friction
-- `06b1038` synced media updates across views and guarded persistent API mode
-- `f088389` fixed cruising spot visibility and synced pages build
-- `5a5032c` refreshed and recovered stale public media URLs
+## Deployment and release workflow
 
-### Recent UI/layout edits
+### GitHub Actions workflows
 
-- `f410346` expanded authenticated desktop views to full-width layout
-- `210dce2` tuned desktop chat tile sizing and profile two-column layout
-- `f88a4fc` made desktop top bar full-width with main content
-- `79f3be1` implemented desktop split-grid layouts and context chat panels
-- `e450cff` polished media/settings UI and added map-based travel picker
+- `CI` (`.github/workflows/ci.yml`)
+  - Runs on push + pull request
+  - Executes: `npm ci`, `npm run typecheck`, `npm run test:coverage`, `npm run build`, `npm audit --omit=dev --audit-level=high`
+- `Quality Gates` (`.github/workflows/quality-gates.yml`)
+  - Runs on pull requests to `main` and manual trigger
+  - Executes: typecheck, coverage tests, build, high-level audit
+- `Deploy GitHub Pages` (`.github/workflows/pages.yml`)
+  - Runs on push to `main` and manual trigger
+  - Builds site from source (`npm run build`)
+  - Publishes `dist/` via official Pages actions (`configure-pages`, `upload-pages-artifact`, `deploy-pages`)
 
-### Infrastructure, deployment, and repo maintenance edits
+### Local deployment commands
 
-- `15531cb` synced root static files with latest desktop build
-- `7dea972` changed CI to build Pages from source instead of committed static assets
-- `4e5adf4` removed mobile workflows and stopped quality gates on main push
-- `e973fc0` split mobile projects into separate repo and kept web-only scope
-- `5a5b9d4` improved web dev refresh workflow and pages asset sync
-- `b5f04f4` synced concurrent workspace changes
+- Production build:
+  - `npm run build`
+- Build + sync static pages artifacts:
+  - `npm run build:pages`
+- Preview production build locally:
+  - `npm run preview`
 
-### Moderation/admin/security-oriented edits
+### Deployment notes
 
-- `4ae993a` added super-admin moderation and enforcement
-- `916e9b7` added admin database health diagnostics endpoint
-- `5c39ec3` added web admin controls panel for moderation
-- `b928a4f` auto-promoted configured admin emails on load/login
+- Pages deploy now uses workflow artifacts from source build (not committed static dist snapshots).
+- If Pages deploy fails:
+  - Verify CI/build passed on the same commit
+  - Confirm `dist/` generation succeeds locally with `npm run build`
+  - Re-run `Deploy GitHub Pages` via workflow dispatch
 
 ## Project structure
 
