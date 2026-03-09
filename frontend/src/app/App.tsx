@@ -37,6 +37,7 @@ const DEFAULT_SHARED_API_BASE = "https://red-door-api.onrender.com";
 const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "cruise", "profile", "settings", "submissions", "promoted"]);
 const DEFAULT_TAB: TopTab = "discover";
 const FULL_PAGE_TAB_NAV = false;
+const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
 const Router = React.lazy(async () => {
   const mod = await import("./Router");
   return { default: mod.Router };
@@ -275,6 +276,32 @@ function normalizePeerKey(rawKey: string): string {
   return key;
 }
 
+function readChatReadCursorMap(): Record<string, number> {
+  const raw = safeLocalStorageGet(CHAT_READ_CURSOR_STORAGE_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const next: Record<string, number> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) next[key] = value;
+    }
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+function chatReadCursorKey(chatKind: "cruise" | "date", peerKey: string): string {
+  return `${chatKind}|${normalizePeerKey(peerKey)}`;
+}
+
+function getChatReadCursor(chatKind: "cruise" | "date", peerKey: string): number {
+  const map = readChatReadCursorMap();
+  const value = map[chatReadCursorKey(chatKind, peerKey)];
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
 function emptyProfileSetupDraft(): ProfileSetupDraft {
   return {
     displayName: "",
@@ -489,9 +516,16 @@ export function App(): React.ReactElement {
               fromKey?: string;
               toKey?: string;
               readAtMs?: number;
+              createdAtMs?: number;
             }>;
+            const cursor = getChatReadCursor(pair.chatKind, pair.otherKey);
             for (const message of messages) {
-              if (message.fromKey === pair.otherKey && message.toKey === meKey && typeof message.readAtMs !== "number") {
+              if (
+                message.fromKey === pair.otherKey &&
+                message.toKey === meKey &&
+                typeof message.readAtMs !== "number" &&
+                (!(typeof message.createdAtMs === "number" && Number.isFinite(message.createdAtMs)) || message.createdAtMs > cursor)
+              ) {
                 unreadTotal += 1;
               }
             }

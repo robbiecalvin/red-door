@@ -48,7 +48,12 @@ type DiscoverScreen = MobileCruiseTab;
 type MobileInboxTab = "chat-grid" | "threads" | "pinned" | "spots" | "groups";
 type MessageChannel = "instant" | "direct";
 const FIRE_SIGNAL_TEXT = "FIRE_SIGNAL|1";
+const GROUP_INVITE_REQUEST_PREFIX = "GROUP_INVITE_REQUEST|";
+const GROUP_INVITE_ACCEPT_PREFIX = "GROUP_INVITE_ACCEPT|";
+const GROUP_INVITE_DECLINE_PREFIX = "GROUP_INVITE_DECLINE|";
+const GROUP_INVITE_STATUS_PREFIX = "GROUP_INVITE_STATUS|";
 const PROFILE_MEDIA_UPDATED_EVENT = "rd:profile-media-updated";
+const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
 declare const __DUALMODE_WS_URL__: string | undefined;
 
 type ProfileDraft = Readonly<{
@@ -267,7 +272,56 @@ function isFireSignalText(text: string): boolean {
 }
 
 function displayMessageText(text: string): string {
-  return isFireSignalText(text) ? "🔥 I'm into you" : text;
+  const trimmed = text.trim();
+  if (trimmed.startsWith("LOCATION|")) return "Location Sent";
+  if (trimmed.startsWith(GROUP_INVITE_REQUEST_PREFIX)) return "You’ve received a Chat Invite";
+  if (trimmed.startsWith(GROUP_INVITE_ACCEPT_PREFIX)) return "Chat Invite Accepted";
+  if (trimmed.startsWith(GROUP_INVITE_DECLINE_PREFIX)) return "Chat Invite Declined";
+  const status = parseGroupInviteStatus(trimmed);
+  if (status) return status.outcome === "accepted" ? "Chat Invite Accepted" : "Chat Invite Declined";
+  return isFireSignalText(trimmed) ? "🔥 I'm into you" : text;
+}
+
+function parseGroupInviteRequest(text: string): { inviteId: string; inviterKey: string; primaryPeerKey: string } | null {
+  if (!text.startsWith(GROUP_INVITE_REQUEST_PREFIX)) return null;
+  const [, inviteId, inviterKey, primaryPeerKey] = text.split("|");
+  if (!inviteId || !inviterKey || !primaryPeerKey) return null;
+  return { inviteId, inviterKey, primaryPeerKey };
+}
+
+function parseGroupInviteAccept(text: string): { inviteId: string; candidateKey: string; primaryPeerKey: string | null } | null {
+  if (!text.startsWith(GROUP_INVITE_ACCEPT_PREFIX)) return null;
+  const [, inviteId, candidateKey, primaryPeerKey] = text.split("|");
+  if (!inviteId || !candidateKey) return null;
+  return { inviteId, candidateKey, primaryPeerKey: primaryPeerKey && primaryPeerKey.trim().length > 0 ? normalizePeerKey(primaryPeerKey) : null };
+}
+
+function parseGroupInviteDecline(text: string): { inviteId: string; candidateKey: string } | null {
+  if (!text.startsWith(GROUP_INVITE_DECLINE_PREFIX)) return null;
+  const [, inviteId, candidateKey] = text.split("|");
+  if (!inviteId || !candidateKey) return null;
+  return { inviteId, candidateKey };
+}
+
+function parseGroupInviteStatus(text: string): {
+  inviteId: string;
+  outcome: "accepted" | "declined";
+  inviterKey: string;
+  primaryPeerKey: string;
+  candidateKey: string;
+} | null {
+  if (!text.startsWith(GROUP_INVITE_STATUS_PREFIX)) return null;
+  const [, inviteId, outcomeRaw, inviterKey, primaryPeerKey, candidateKey] = text.split("|");
+  if (!inviteId || !inviterKey || !primaryPeerKey || !candidateKey) return null;
+  const normalizedOutcome = outcomeRaw === "accepted" || outcomeRaw === "declined" ? outcomeRaw : null;
+  if (!normalizedOutcome) return null;
+  return {
+    inviteId,
+    outcome: normalizedOutcome,
+    inviterKey: normalizePeerKey(inviterKey),
+    primaryPeerKey: normalizePeerKey(primaryPeerKey),
+    candidateKey: normalizePeerKey(candidateKey)
+  };
 }
 
 function emitProfileMediaUpdated(profile: UserProfile): void {
@@ -355,6 +409,41 @@ function safeLocalStorageSet(key: string, value: string): void {
   } catch {
     // no-op for strict privacy mode
   }
+}
+
+function readChatReadCursorMap(): Record<string, number> {
+  const raw = safeLocalStorageGet(CHAT_READ_CURSOR_STORAGE_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const next: Record<string, number> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) next[key] = value;
+    }
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+function chatReadCursorKey(chatKind: "cruise" | "date", peerKey: string): string {
+  return `${chatKind}|${normalizePeerKey(peerKey)}`;
+}
+
+function getChatReadCursor(chatKind: "cruise" | "date", peerKey: string): number {
+  const key = chatReadCursorKey(chatKind, peerKey);
+  const value = readChatReadCursorMap()[key];
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function setChatReadCursor(chatKind: "cruise" | "date", peerKey: string, timestampMs: number): void {
+  const safeTs = Number.isFinite(timestampMs) && timestampMs > 0 ? Math.floor(timestampMs) : 0;
+  if (safeTs <= 0) return;
+  const map = readChatReadCursorMap();
+  const key = chatReadCursorKey(chatKind, peerKey);
+  map[key] = Math.max(map[key] ?? 0, safeTs);
+  safeLocalStorageSet(CHAT_READ_CURSOR_STORAGE_KEY, JSON.stringify(map));
 }
 
 function useIsMobile(): boolean {
@@ -1866,19 +1955,11 @@ function CruiseChat({
     }
   }
 
-  function parseGroupInviteRequest(text: string): { inviteId: string; inviterKey: string; primaryPeerKey: string } | null {
-    if (!text.startsWith("GROUP_INVITE_REQUEST|")) return null;
-    const [, inviteId, inviterKey, primaryPeerKey] = text.split("|");
-    if (!inviteId || !inviterKey || !primaryPeerKey) return null;
-    return { inviteId, inviterKey, primaryPeerKey };
-  }
+  const pendingSentInvitesRef = useRef<Record<string, { candidateKey: string; primaryPeerKey: string }>>({});
 
-  function parseGroupInviteAccept(text: string): { inviteId: string; candidateKey: string } | null {
-    if (!text.startsWith("GROUP_INVITE_ACCEPT|")) return null;
-    const [, inviteId, candidateKey] = text.split("|");
-    if (!inviteId || !candidateKey) return null;
-    return { inviteId, candidateKey };
-  }
+  useEffect(() => {
+    pendingSentInvitesRef.current = pendingSentInvites;
+  }, [pendingSentInvites]);
 
   function upsertIncomingMessage(message: ChatMessage): void {
     if (!markMessageSeen(message.messageId)) return;
@@ -1896,6 +1977,7 @@ function CruiseChat({
       const isOpenThread = view === "thread" && normalizePeerKey(peerKey) === normalizePeerKey(other);
       if (isOpenThread) {
         setLastSeenByPeerKey((prev) => ({ ...prev, [other]: Math.max(prev[other] ?? 0, message.createdAtMs) }));
+        setChatReadCursor(channelToChatKind(channel), other, message.createdAtMs);
         setUnreadByPeerKey((prev) => {
           const next = { ...prev };
           delete next[other];
@@ -1912,7 +1994,8 @@ function CruiseChat({
     }
     const accept = parseGroupInviteAccept(message.text ?? "");
     if (accept && message.toKey === me) {
-      const pending = pendingSentInvites[accept.inviteId];
+      const pending = pendingSentInvitesRef.current[accept.inviteId];
+      const primaryPeerKey = accept.primaryPeerKey ?? pending?.primaryPeerKey ?? null;
       if (pending) {
         setThirdMemberKey(normalizePeerKey(accept.candidateKey));
         setGroupStatus(`Invite accepted by ${displayNameByKey[accept.candidateKey] ?? displayNameForPeerKey(accept.candidateKey)}.`);
@@ -1921,6 +2004,45 @@ function CruiseChat({
           delete next[accept.inviteId];
           return next;
         });
+      }
+      if (primaryPeerKey) {
+        void api
+          .sendChat(
+            session.sessionToken,
+            "cruise",
+            primaryPeerKey,
+            `${GROUP_INVITE_STATUS_PREFIX}${accept.inviteId}|accepted|${me}|${primaryPeerKey}|${accept.candidateKey}`
+          )
+          .catch(() => {});
+      }
+    }
+    const decline = parseGroupInviteDecline(message.text ?? "");
+    if (decline && message.toKey === me) {
+      const pending = pendingSentInvitesRef.current[decline.inviteId];
+      if (pending) {
+        setGroupStatus(`Invite declined by ${displayNameByKey[decline.candidateKey] ?? displayNameForPeerKey(decline.candidateKey)}.`);
+        setPendingSentInvites((prev) => {
+          const next = { ...prev };
+          delete next[decline.inviteId];
+          return next;
+        });
+        void api
+          .sendChat(
+            session.sessionToken,
+            "cruise",
+            pending.primaryPeerKey,
+            `${GROUP_INVITE_STATUS_PREFIX}${decline.inviteId}|declined|${me}|${pending.primaryPeerKey}|${decline.candidateKey}`
+          )
+          .catch(() => {});
+      }
+    }
+    const status = parseGroupInviteStatus(message.text ?? "");
+    if (status && message.toKey === me) {
+      if (status.outcome === "accepted") {
+        setThirdMemberKey(status.candidateKey);
+        setGroupStatus(`${displayNameByKey[status.candidateKey] ?? displayNameForPeerKey(status.candidateKey)} joined the chat.`);
+      } else {
+        setGroupStatus(`${displayNameByKey[status.candidateKey] ?? displayNameForPeerKey(status.candidateKey)} declined the chat invite.`);
       }
     }
   }
@@ -1950,6 +2072,7 @@ function CruiseChat({
           ...prev,
           [normalizedTargetPeerKey]: Math.max(prev[normalizedTargetPeerKey] ?? 0, maxIncoming)
         }));
+        setChatReadCursor(channelToChatKind(channel), normalizedTargetPeerKey, maxIncoming);
       }
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
@@ -2011,7 +2134,7 @@ function CruiseChat({
               metaRows.push([normalizedKey, { lastAt: last.createdAtMs, lastText: messagePreview(last) }]);
             }
             let count = 0;
-            const seenAfter = lastSeenByPeerKey[normalizedKey] ?? 0;
+            const seenAfter = Math.max(lastSeenByPeerKey[normalizedKey] ?? 0, getChatReadCursor(chatKind, normalizedKey));
             for (const m of list) {
               if (m.fromKey === normalizedKey && m.createdAtMs > seenAfter) count += 1;
             }
@@ -2352,12 +2475,7 @@ function CruiseChat({
         return;
       }
       const inviteId = crypto.randomUUID();
-      await api.sendChat(
-        session.sessionToken,
-        "cruise",
-        normalizedThird,
-        `GROUP_INVITE_REQUEST|${inviteId}|${me}|${peerKey.trim()}`
-      );
+      await api.sendChat(session.sessionToken, "cruise", normalizedThird, `${GROUP_INVITE_REQUEST_PREFIX}${inviteId}|${me}|${peerKey.trim()}`);
       setPendingSentInvites((prev) => ({ ...prev, [inviteId]: { candidateKey: normalizedThird, primaryPeerKey: peerKey.trim() } }));
       setGroupStatus(`Invite sent to ${displayNameByKey[normalizedThird] ?? displayNameForPeerKey(normalizedThird)}. Waiting for acceptance.`);
     } catch (e) {
@@ -2367,8 +2485,9 @@ function CruiseChat({
 
   async function acceptInvite(inviteId: string, inviterKey: string, primaryPeerKey: string): Promise<void> {
     try {
-      await api.sendChat(session.sessionToken, "cruise", inviterKey, `GROUP_INVITE_ACCEPT|${inviteId}|${me}`);
+      await api.sendChat(session.sessionToken, "cruise", inviterKey, `${GROUP_INVITE_ACCEPT_PREFIX}${inviteId}|${me}|${primaryPeerKey}`);
       setPendingInviteNotifs((prev) => prev.filter((n) => n.inviteId !== inviteId));
+      setThirdMemberKey(normalizePeerKey(inviterKey));
       setGroupStatus("Group invite accepted.");
       openThread(primaryPeerKey);
     } catch (e) {
@@ -2376,8 +2495,14 @@ function CruiseChat({
     }
   }
 
-  function declineInvite(inviteId: string): void {
-    setPendingInviteNotifs((prev) => prev.filter((n) => n.inviteId !== inviteId));
+  async function declineInvite(inviteId: string, inviterKey: string): Promise<void> {
+    try {
+      await api.sendChat(session.sessionToken, "cruise", inviterKey, `${GROUP_INVITE_DECLINE_PREFIX}${inviteId}|${me}`);
+      setPendingInviteNotifs((prev) => prev.filter((n) => n.inviteId !== inviteId));
+      setGroupStatus("Invite declined.");
+    } catch (e) {
+      setLastError(normalizeErrorMessage(e));
+    }
   }
 
   function openThread(nextPeerKey: string): void {
@@ -2389,7 +2514,9 @@ function CruiseChat({
       delete next[normalizedNextPeerKey];
       return next;
     });
-    setLastSeenByPeerKey((prev) => ({ ...prev, [normalizedNextPeerKey]: Date.now() }));
+    const now = Date.now();
+    setLastSeenByPeerKey((prev) => ({ ...prev, [normalizedNextPeerKey]: now }));
+    setChatReadCursor(channelToChatKind(channel), normalizedNextPeerKey, now);
     setView("thread");
   }
 
@@ -2472,13 +2599,23 @@ function CruiseChat({
             {pendingInviteNotifs.map((invite) => (
               <div key={invite.inviteId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
                 <div style={{ color: "#ced3dc", fontSize: 13 }}>
-                  {displayNameByKey[invite.inviterKey] ?? displayNameForPeerKey(invite.inviterKey)} invited you to join a conversation.
+                  You’ve received a Chat Invite from {displayNameByKey[invite.inviterKey] ?? displayNameForPeerKey(invite.inviterKey)}.
                 </div>
-                <button type="button" style={buttonPrimary(false)} onClick={() => void acceptInvite(invite.inviteId, invite.inviterKey, invite.primaryPeerKey)}>
-                  ACCEPT
+                <button
+                  type="button"
+                  style={{ ...buttonPrimary(false), minWidth: 0, width: 42, height: 42, padding: 0, display: "grid", placeItems: "center" }}
+                  onClick={() => void acceptInvite(invite.inviteId, invite.inviterKey, invite.primaryPeerKey)}
+                  aria-label="Accept chat invite"
+                >
+                  <img src="/assets/accept.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
                 </button>
-                <button type="button" style={buttonSecondary(false)} onClick={() => declineInvite(invite.inviteId)}>
-                  DECLINE
+                <button
+                  type="button"
+                  style={{ ...buttonSecondary(false), minWidth: 0, width: 42, height: 42, padding: 0, display: "grid", placeItems: "center" }}
+                  onClick={() => void declineInvite(invite.inviteId, invite.inviterKey)}
+                  aria-label="Decline chat invite"
+                >
+                  <img src="/assets/decline.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
                 </button>
               </div>
             ))}
@@ -2545,13 +2682,23 @@ function CruiseChat({
           {pendingInviteNotifs.map((invite) => (
             <div key={invite.inviteId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
               <div style={{ color: "#ced3dc", fontSize: 13 }}>
-                {displayNameByKey[invite.inviterKey] ?? displayNameForPeerKey(invite.inviterKey)} invited you to join a conversation.
+                You’ve received a Chat Invite from {displayNameByKey[invite.inviterKey] ?? displayNameForPeerKey(invite.inviterKey)}.
               </div>
-              <button type="button" style={buttonPrimary(false)} onClick={() => void acceptInvite(invite.inviteId, invite.inviterKey, invite.primaryPeerKey)}>
-                ACCEPT
+              <button
+                type="button"
+                style={{ ...buttonPrimary(false), minWidth: 0, width: 42, height: 42, padding: 0, display: "grid", placeItems: "center" }}
+                onClick={() => void acceptInvite(invite.inviteId, invite.inviterKey, invite.primaryPeerKey)}
+                aria-label="Accept chat invite"
+              >
+                <img src="/assets/accept.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
               </button>
-              <button type="button" style={buttonSecondary(false)} onClick={() => declineInvite(invite.inviteId)}>
-                DECLINE
+              <button
+                type="button"
+                style={{ ...buttonSecondary(false), minWidth: 0, width: 42, height: 42, padding: 0, display: "grid", placeItems: "center" }}
+                onClick={() => void declineInvite(invite.inviteId, invite.inviterKey)}
+                aria-label="Decline chat invite"
+              >
+                <img src="/assets/decline.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
               </button>
             </div>
           ))}
@@ -3116,6 +3263,10 @@ function ThreadsPanel({
     const byDeleted = byPinned.filter((row) => !deletedKeys.has(row.key));
     return unreadOnly ? byDeleted.filter((row) => row.unreadCount > 0) : byDeleted;
   }, [deletedKeys, mode, pinnedKeys, rows, unreadOnly]);
+  const rowsUnreadTotal = useMemo(
+    () => rows.filter((row) => !deletedKeys.has(row.key)).reduce((sum, row) => sum + (Number.isFinite(row.unreadCount) ? row.unreadCount : 0), 0),
+    [deletedKeys, rows]
+  );
   const thirdCandidates = useMemo(
     () => visibleRows.filter((row) => row.key !== selectedPeerKey && row.chatKind === "cruise").map((row) => ({ key: row.key, label: row.displayName })),
     [visibleRows, selectedPeerKey]
@@ -3145,6 +3296,10 @@ function ThreadsPanel({
   useEffect(() => {
     safeLocalStorageSet(deletedStorageKey, JSON.stringify(Array.from(deletedKeys.values()).sort()));
   }, [deletedKeys, deletedStorageKey]);
+
+  useEffect(() => {
+    if (typeof onUnreadCountChange === "function") onUnreadCountChange(rowsUnreadTotal);
+  }, [onUnreadCountChange, rowsUnreadTotal]);
 
   useEffect(() => {
     if (thirdCandidates.length === 0) {
@@ -3262,25 +3417,57 @@ function ThreadsPanel({
             if (cachedUrl) row.avatarUrl = cachedUrl;
           }
         }
-        const unreadCounts = await Promise.all(
-          next.map(async (row) => {
-            try {
-              const chat = await api.listChat(session.sessionToken, row.chatKind, row.key);
-              const messages = ((chat as { messages?: ChatMessage[] }).messages ?? []) as ChatMessage[];
-              let unread = 0;
-              for (const message of messages) {
-                if (message.fromKey === row.key && message.toKey === meKey && typeof message.readAtMs !== "number") unread += 1;
+        const unreadCounts: number[] = [];
+        const groupLabelByPeerKey: Record<string, string> = {};
+        for (const row of next) {
+          try {
+            const chat = await api.listChat(session.sessionToken, row.chatKind, row.key);
+            const messages = ((chat as { messages?: ChatMessage[] }).messages ?? []) as ChatMessage[];
+            const cursor = getChatReadCursor(row.chatKind, row.key);
+            let unread = 0;
+            for (const message of messages) {
+              if (
+                message.fromKey === row.key &&
+                message.toKey === meKey &&
+                typeof message.readAtMs !== "number" &&
+                (!Number.isFinite(message.createdAtMs) || message.createdAtMs > cursor)
+              ) {
+                unread += 1;
               }
-              return unread;
-            } catch {
-              return 0;
+              const text = String(message.text ?? "");
+              const request = parseGroupInviteRequest(text);
+              if (request) {
+                if (message.toKey === meKey) {
+                  const inviterLabel = nameByKey[request.inviterKey] ?? displayNameForPeerKey(request.inviterKey);
+                  groupLabelByPeerKey[row.key] = `${inviterLabel} +1`;
+                } else if (message.fromKey === meKey) {
+                  const primaryLabel = nameByKey[request.primaryPeerKey] ?? displayNameForPeerKey(request.primaryPeerKey);
+                  groupLabelByPeerKey[request.primaryPeerKey] = `${primaryLabel} +1`;
+                }
+              }
+              const accept = parseGroupInviteAccept(text);
+              if (accept && message.toKey === meKey && accept.primaryPeerKey) {
+                const primaryLabel = nameByKey[accept.primaryPeerKey] ?? displayNameForPeerKey(accept.primaryPeerKey);
+                groupLabelByPeerKey[accept.primaryPeerKey] = `${primaryLabel} +1`;
+              }
+              const status = parseGroupInviteStatus(text);
+              if (status && message.toKey === meKey && status.outcome === "accepted") {
+                const inviterLabel = nameByKey[status.inviterKey] ?? displayNameForPeerKey(status.inviterKey);
+                const primaryLabel = nameByKey[status.primaryPeerKey] ?? displayNameForPeerKey(status.primaryPeerKey);
+                groupLabelByPeerKey[status.inviterKey] = `${inviterLabel} +1`;
+                groupLabelByPeerKey[status.primaryPeerKey] = `${primaryLabel} +1`;
+              }
             }
-          })
-        );
+            unreadCounts.push(unread);
+          } catch {
+            unreadCounts.push(0);
+          }
+        }
         if (cancelled) return;
         const nextWithUnread = next
           .map((row, index) => ({
             ...row,
+            displayName: groupLabelByPeerKey[row.key] ?? row.displayName,
             unreadCount: unreadCounts[index] ?? 0
           }))
           .sort((a, b) => b.at - a.at);
@@ -3385,6 +3572,17 @@ function ThreadsPanel({
           const safeList = Array.isArray(list) ? list : [];
           setMessages((prev) => (chatMessagesEqual(prev, safeList) ? prev : safeList));
           void api.markChatRead(session.sessionToken, selectedChatKind, selectedPeerKey).catch(() => {});
+          let maxIncoming = 0;
+          for (const message of safeList) {
+            if (message.fromKey === selectedPeerKey && Number.isFinite(message.createdAtMs) && message.createdAtMs > maxIncoming) {
+              maxIncoming = message.createdAtMs;
+            }
+          }
+          if (maxIncoming > 0) setChatReadCursor(selectedChatKind, selectedPeerKey, maxIncoming);
+          setRows((prev) => {
+            const next = prev.map((row) => (row.key === selectedPeerKey ? { ...row, unreadCount: 0 } : row));
+            return threadRowsEqual(prev, next) ? prev : next;
+          });
         }
       } catch (e) {
         if (!cancelled) setLastError(normalizeErrorMessage(e));
@@ -3399,13 +3597,6 @@ function ThreadsPanel({
       window.clearInterval(id);
     };
   }, [api, selectedChatKind, selectedPeerKey, session.sessionToken, setLastError]);
-
-  function parseGroupInviteAccept(text: string): { inviteId: string; candidateKey: string } | null {
-    if (!text.startsWith("GROUP_INVITE_ACCEPT|")) return null;
-    const [, inviteId, candidateKey] = text.split("|");
-    if (!inviteId || !candidateKey) return null;
-    return { inviteId, candidateKey };
-  }
 
   const client: ChatApiClient = useMemo(
     () => ({
@@ -3462,12 +3653,7 @@ function ThreadsPanel({
     }
     try {
       const inviteId = crypto.randomUUID();
-      await api.sendChat(
-        session.sessionToken,
-        "cruise",
-        thirdCandidateKey,
-        `GROUP_INVITE_REQUEST|${inviteId}|${meKey}|${selectedPeerKey}`
-      );
+      await api.sendChat(session.sessionToken, "cruise", thirdCandidateKey, `${GROUP_INVITE_REQUEST_PREFIX}${inviteId}|${meKey}|${selectedPeerKey}`);
       setPendingSentInvites((prev) => ({ ...prev, [inviteId]: { candidateKey: thirdCandidateKey } }));
       setGroupStatus(`Invite sent to ${rows.find((r) => r.key === thirdCandidateKey)?.displayName ?? thirdCandidateKey}.`);
     } catch (e) {
@@ -3653,17 +3839,22 @@ function ThreadsPanel({
             key={row.key}
             type="button"
             onClick={() => {
-              if (selectMode) {
-                setSelectedKeys((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(row.key)) next.delete(row.key);
-                  else next.add(row.key);
-                  return next;
-                });
-                return;
-              }
-              setSelectedPeerKey(row.key);
-            }}
+            if (selectMode) {
+              setSelectedKeys((prev) => {
+                const next = new Set(prev);
+                if (next.has(row.key)) next.delete(row.key);
+                else next.add(row.key);
+                return next;
+              });
+              return;
+            }
+            setSelectedPeerKey(row.key);
+            setChatReadCursor(row.chatKind, row.key, Date.now());
+            setRows((prev) => {
+              const next = prev.map((item) => (item.key === row.key ? { ...item, unreadCount: 0 } : item));
+              return threadRowsEqual(prev, next) ? prev : next;
+            });
+          }}
             style={{
               border: 0,
               borderBottom: "1px solid rgba(255,58,77,0.24)",
