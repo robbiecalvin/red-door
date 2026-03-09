@@ -731,7 +731,7 @@ export function App(): React.ReactElement {
     m.addEventListener("change", onChange);
     return () => m.removeEventListener("change", onChange);
   }, []);
-  const isDesktopFullMap = !isMobile && session?.ageVerified === true && activeTab === "discover" && discoverScreen === "map";
+  const isMapFullScreen = session?.ageVerified === true && activeTab === "discover" && discoverScreen === "map";
 
   useEffect(() => {
     const nav = navigator as Navigator & {
@@ -918,7 +918,7 @@ export function App(): React.ReactElement {
       ) : null}
 
       <main
-        className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isDesktopFullMap ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
+        className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
       >
         <div className="rd-grid">
           {!session ? (

@@ -1098,7 +1098,7 @@ function CruiseSurface({
       avatarByKey={avatarUrlByKey}
       additionalMarkers={mapOverlayMarkers}
       defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
-      height={isMobile ? "calc(100vh - 340px)" : "calc(100dvh - 62px)"}
+      height={isMobile ? "100%" : "calc(100dvh - 62px)"}
       visible
       travelPickerArmed={travelPickerArmed}
       onToggleTravelPicker={() => setTravelPickerArmed((prev) => !prev)}
@@ -1107,7 +1107,7 @@ function CruiseSurface({
   );
 
   const mobileMapPanel = (
-    <div style={{ background: "#000", marginInline: -10 }}>
+    <div style={{ background: "#000", marginInline: -10, height: "100%" }}>
       <CruiseMap
         wsUrl={wsProxyUrl()}
         sessionToken={session.sessionToken}
@@ -1117,7 +1117,7 @@ function CruiseSurface({
         avatarByKey={avatarUrlByKey}
         additionalMarkers={mapOverlayMarkers}
         defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
-        height={"calc(100dvh - 220px)"}
+        height={"100%"}
         visible={mobileTab === "map"}
         travelPickerArmed={travelPickerArmed}
         onToggleTravelPicker={() => setTravelPickerArmed((prev) => !prev)}
@@ -1150,7 +1150,7 @@ function CruiseSurface({
   );
 
   return (
-    <div style={!isMobile && mobileTab === "map" ? { height: "100%" } : { display: "grid", gap: 8 }}>
+    <div style={mobileTab === "map" ? { height: "100%" } : { display: "grid", gap: 8 }}>
       {isMobile ? (
         <>
           {mobileTab === "map" ? mobileMapPanel : chatPanel}
