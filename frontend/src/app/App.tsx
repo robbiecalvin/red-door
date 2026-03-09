@@ -997,7 +997,7 @@ export function App(): React.ReactElement {
                     </div>
                   ) : null}
 
-                  {authInfo ? <div style={{ color: "#26d5ff", marginBottom: 12 }}>{authInfo}</div> : null}
+                  {authInfo ? <div style={{ color: "#ff7a88", marginBottom: 12 }}>{authInfo}</div> : null}
                   {pendingVerificationEmail ? (
                     <div style={{ color: "var(--muted)", marginBottom: 12 }}>
                       SMS delivery may not be configured yet. Use the 6-digit code printed in the backend terminal.

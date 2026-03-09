@@ -630,31 +630,42 @@ function CruiseSurface({
   }, [api, peerProfileByKey, sortedPeers]);
 
   useEffect(() => {
-    void (async () => {
+    let cancelled = false;
+    async function refreshDiscoveryState(): Promise<void> {
       try {
         const list = await api.getPublicProfiles();
-        setPublicProfiles(list.profiles as any);
+        if (!cancelled) setPublicProfiles(list.profiles as any);
       } catch {
-        setPublicProfiles([]);
+        if (!cancelled) setPublicProfiles([]);
       }
       if (session.userType === "guest") {
-        setFavorites(new Set());
-        setBlockedKeys(new Set());
+        if (!cancelled) {
+          setFavorites(new Set());
+          setBlockedKeys(new Set());
+        }
         return;
       }
       try {
         const fav = await api.getFavorites(session.sessionToken);
-        setFavorites(new Set(fav.favorites));
+        if (!cancelled) setFavorites(new Set(fav.favorites));
       } catch {
-        setFavorites(new Set());
+        if (!cancelled) setFavorites(new Set());
       }
       try {
         const blocked = await api.listBlocked(session.sessionToken);
-        setBlockedKeys(new Set(blocked.blocked));
+        if (!cancelled) setBlockedKeys(new Set(blocked.blocked));
       } catch {
-        setBlockedKeys(new Set());
+        if (!cancelled) setBlockedKeys(new Set());
       }
-    })();
+    }
+    void refreshDiscoveryState();
+    const id = window.setInterval(() => {
+      void refreshDiscoveryState();
+    }, 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [api, session.sessionToken, session.userType]);
 
   useEffect(() => {
@@ -1046,7 +1057,7 @@ function CruiseSurface({
       cruisingSpots.map((spot) => ({
         id: `spot:${spot.spotId}`,
         position: { lat: spot.lat, lng: spot.lng },
-        color: "#26d5ff",
+        color: "#ff7a88",
         markerType: "spot" as const,
         imageUrl: mapSpotIcon,
         label: `${spot.name} | check-ins: ${spot.checkInCount ?? 0} | action: ${spot.actionCount ?? 0}`,
@@ -1070,7 +1081,7 @@ function CruiseSurface({
         return {
           id: `group:${posting.postingId}`,
           position: { lat: lat as number, lng: lng as number },
-          color: "#26d5ff",
+          color: "#ff7a88",
           markerType: "group" as const,
           imageUrl: mapGroupIcon,
           label: `Group: ${posting.title}`,
@@ -1107,7 +1118,7 @@ function CruiseSurface({
   );
 
   const mobileMapPanel = (
-    <div style={{ background: "#000", marginInline: -10, height: "100%" }}>
+    <div style={{ background: "#000", marginInline: 0, height: "100%" }}>
       <CruiseMap
         wsUrl={wsProxyUrl()}
         sessionToken={session.sessionToken}
@@ -1208,11 +1219,11 @@ function CruiseSurface({
                     alt="Profile avatar"
                     style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover", border: "2px solid #ff3047" }}
                   />
-                  <span style={{ position: "absolute", right: 4, bottom: 4, width: 14, height: 14, borderRadius: "50%", background: "#26d5ff", border: "2px solid #000" }} />
+                  <span style={{ position: "absolute", right: 4, bottom: 4, width: 14, height: 14, borderRadius: "50%", background: "#ff7a88", border: "2px solid #000" }} />
                 </div>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={{ fontSize: 22, fontWeight: 700 }}>{selectedPublicProfile?.displayName ?? selectedProfileKey}</div>
-                  <div style={{ color: "#26d5ff", fontSize: 14 }}>Instant Messaging Available</div>
+                  <div style={{ color: "#ff7a88", fontSize: 14 }}>Instant Messaging Available</div>
                 </div>
                 <div style={{ display: "grid", gap: 8 }}>
                   {selectedPublicProfile && selectedPublicProfile.userId !== (session.userId ?? "") ? (
@@ -1220,8 +1231,8 @@ function CruiseSurface({
                       type="button"
                       style={{
                         ...buttonSecondary(false),
-                        color: "#26d5ff",
-                        borderColor: "rgba(38,213,255,0.62)",
+                        color: "#ff7a88",
+                        borderColor: "rgba(255,122,136,0.62)",
                         minWidth: 126
                       }}
                       onClick={() => void toggleFavoriteFromProfile(selectedPublicProfile.userId)}
@@ -1323,7 +1334,7 @@ function CruiseSurface({
                                     padding: 0,
                                     borderRadius: 8,
                                     overflow: "hidden",
-                                    border: idx === boundedIndex ? "2px solid #26d5ff" : "1px solid rgba(255,58,77,0.4)",
+                                    border: idx === boundedIndex ? "2px solid #ff7a88" : "1px solid rgba(255,58,77,0.4)",
                                     background: "#000",
                                     cursor: "pointer",
                                     color: "#fff",
@@ -2453,7 +2464,7 @@ function CruiseChat({
   if (view === "thread" && peerKey.trim()) {
     const peerLabel = displayNameByKey[peerKey] ?? peerProfileByKey[peerKey]?.displayName ?? peerKey;
     return (
-      <div style={{ display: "grid", gap: 0, marginInline: isMobile ? -10 : 0 }}>
+      <div style={{ display: "grid", gap: 0, marginInline: 0 }}>
         {pendingInviteNotifs.length > 0 ? (
           <div style={{ ...cardStyle(), display: "grid", gap: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 700 }}>INVITE REQUESTS</div>
@@ -2472,7 +2483,7 @@ function CruiseChat({
             ))}
           </div>
         ) : null}
-        {groupStatus ? <div style={{ color: "#26d5ff", fontSize: 12 }}>{groupStatus}</div> : null}
+        {groupStatus ? <div style={{ color: "#ff7a88", fontSize: 12 }}>{groupStatus}</div> : null}
         <ChatWindow
           chatKind={channelToChatKind(channel)}
           peerKey={peerKey}
@@ -2526,7 +2537,7 @@ function CruiseChat({
   const chatGridColumns = isMobile ? "repeat(3, minmax(0, 1fr))" : "repeat(auto-fill, minmax(170px, 210px))";
 
   return (
-    <div style={{ display: "grid", gap: 0, marginInline: isMobile ? -10 : 0 }}>
+    <div style={{ display: "grid", gap: 0, marginInline: 0 }}>
       {pendingInviteNotifs.length > 0 ? (
         <div style={{ ...cardStyle(), display: "grid", gap: 8 }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>INVITE REQUESTS</div>
@@ -2545,7 +2556,7 @@ function CruiseChat({
           ))}
         </div>
       ) : null}
-      {groupStatus ? <div style={{ color: "#26d5ff", fontSize: 12 }}>{groupStatus}</div> : null}
+      {groupStatus ? <div style={{ color: "#ff7a88", fontSize: 12 }}>{groupStatus}</div> : null}
       {filtersOpen ? (
         <div
           style={{
@@ -2675,9 +2686,9 @@ function CruiseChat({
                         }
                       }}
                       alt="User avatar"
-                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
+                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #ff7f8c" }}
                     />
-                    {p.isOnline ? <span style={{ position: "absolute", top: 4, left: 4, width: 10, height: 10, borderRadius: "50%", background: "#26d5ff", border: "2px solid #000" }} /> : null}
+                    {p.isOnline ? <span style={{ position: "absolute", top: 4, left: 4, width: 10, height: 10, borderRadius: "50%", background: "#ff7a88", border: "2px solid #000" }} /> : null}
                   </div>
                 </button>
               ))
@@ -3506,7 +3517,7 @@ function ThreadsPanel({
           display: "grid",
           gap: 0,
           minHeight: isMobile ? "calc(100dvh - 150px)" : undefined,
-          marginInline: isMobile ? -10 : 0,
+          marginInline: 0,
           marginBlock: 0
         }}
       >
@@ -3514,7 +3525,7 @@ function ThreadsPanel({
           <button
             type="button"
             onClick={() => setThreadView((prev) => (prev === "messages" ? "profile" : "messages"))}
-            style={{ background: "transparent", border: 0, color: "#26d5ff", fontSize: 13, fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase", padding: 0, cursor: "pointer" }}
+            style={{ background: "transparent", border: 0, color: "#ff7a88", fontSize: 13, fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase", padding: 0, cursor: "pointer" }}
           >
             {threadView === "messages" ? "View Profile" : "Back to Thread"}
           </button>
@@ -3553,7 +3564,7 @@ function ThreadsPanel({
               />
               <div style={{ display: "grid", gap: 4 }}>
                 <div style={{ fontSize: 24, fontWeight: 700 }}>{threadProfile?.displayName ?? peerLabel}</div>
-                <div style={{ color: "#26d5ff", fontSize: 14 }}>Instant Messaging Available</div>
+                <div style={{ color: "#ff7a88", fontSize: 14 }}>Instant Messaging Available</div>
               </div>
             </div>
             {threadProfileLoading ? <div style={{ color: "#9fb6bf", fontSize: 14 }}>Loading profile...</div> : null}
@@ -3587,8 +3598,8 @@ function ThreadsPanel({
   }
 
   return (
-    <div style={{ display: "grid", gap: 0, marginInline: isMobile ? -10 : 0, marginBlock: 0 }}>
-      <div style={{ position: compact ? "sticky" : "static", top: 0, zIndex: 3, background: "rgba(6,9,20,0.94)", borderBottom: "1px solid rgba(91,139,255,0.24)", padding: "8px 10px" }}>
+    <div style={{ display: "grid", gap: 0, marginInline: 0, marginBlock: 0 }}>
+      <div style={{ position: compact ? "sticky" : "static", top: 0, zIndex: 3, background: "rgba(6,9,20,0.94)", borderBottom: "1px solid rgba(255,122,136,0.24)", padding: "8px 10px" }}>
         <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button type="button" style={unreadOnly ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setUnreadOnly((prev) => !prev)}>
@@ -3657,7 +3668,7 @@ function ThreadsPanel({
             <img
               src={row.avatarUrl ?? avatarForKey(row.key)}
               alt={`${row.displayName} avatar`}
-              style={{ width: 52, height: 52, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(38,213,255,0.9)" }}
+              style={{ width: 52, height: 52, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(255,122,136,0.9)" }}
             />
             <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
               <div style={{ fontWeight: 700 }}>{row.displayName}</div>
@@ -3697,7 +3708,7 @@ function ThreadsPanel({
           </button>
         ))
       )}
-      {groupStatus ? <div style={{ color: "#26d5ff", fontSize: 12, padding: 10 }}>{groupStatus}</div> : null}
+      {groupStatus ? <div style={{ color: "#ff7a88", fontSize: 12, padding: 10 }}>{groupStatus}</div> : null}
     </div>
   );
 }
@@ -4488,7 +4499,7 @@ function PublicPostings({
                           <img
                             src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
                             alt={`${title} posting`}
-                            style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
+                            style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #ff7f8c" }}
                           />
                         </div>
                         <div style={{ padding: 8, display: "grid", gap: 6 }}>
@@ -4562,7 +4573,7 @@ function PublicPostings({
         display: "grid",
         gap: 0,
         minHeight: isMobile ? "calc(100dvh - 150px)" : undefined,
-        marginInline: isMobile ? -10 : 0,
+        marginInline: 0,
         marginBlock: 0
       }}
     >
@@ -4696,7 +4707,7 @@ function PublicPostings({
                     <img
                       src={spot.photoMediaId ? (mediaUrlById[spot.photoMediaId] ?? avatarForKey(spot.spotId)) : avatarForKey(spot.spotId)}
                       alt="Cruising spot"
-                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #0fd9ff" }}
+                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #ff7f8c" }}
                     />
                   </div>
                   <div style={{ padding: "10px 12px", display: "grid", gap: 8 }}>
@@ -4879,7 +4890,7 @@ function PublicPostings({
                 style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedAdId === p.postingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
               >
                 <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Ad media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #0fd9ff" }} />
+                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Ad media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #ff7f8c" }} />
                 </div>
                 <div style={{ padding: 8, display: "grid", gap: 4 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
@@ -4934,7 +4945,7 @@ function PublicPostings({
                 style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedGroupId === p.postingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
               >
                 <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Group media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #0fd9ff" }} />
+                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Group media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #ff7f8c" }} />
                 </div>
                 <div style={{ padding: 8, display: "grid", gap: 4 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
@@ -4985,7 +4996,7 @@ function PublicPostings({
               style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedSpotId === spot.spotId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
             >
               <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                <img src={spot.photoMediaId ? (mediaUrlById[spot.photoMediaId] ?? avatarForKey(spot.spotId)) : avatarForKey(spot.spotId)} alt="Cruising spot" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #0fd9ff" }} />
+                <img src={spot.photoMediaId ? (mediaUrlById[spot.photoMediaId] ?? avatarForKey(spot.spotId)) : avatarForKey(spot.spotId)} alt="Cruising spot" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #ff7f8c" }} />
               </div>
               <div style={{ padding: 8, display: "grid", gap: 4 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{spot.name}</div>
@@ -5000,7 +5011,7 @@ function PublicPostings({
   }
 
   return (
-    <div style={{ display: "grid", gap: 8, marginInline: isMobile ? -10 : 0 }}>
+    <div style={{ display: "grid", gap: 8, marginInline: 0 }}>
       {screen === "ads" ? panel("ads") : null}
       {screen === "groups" ? panel("groups") : null}
       {screen === "groups" && selectedGroup ? (
@@ -5429,7 +5440,7 @@ function PromotedProfilesPanel({
               style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedListingId === listing.listingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
             >
               <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                <img src={avatarUrlByUserId[listing.userId] ?? avatarForKey(`user:${listing.userId}`)} alt={`${listing.displayName} profile`} style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #0fd9ff" }} />
+                <img src={avatarUrlByUserId[listing.userId] ?? avatarForKey(`user:${listing.userId}`)} alt={`${listing.displayName} profile`} style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #ff7f8c" }} />
               </div>
               <div style={{ padding: 8, display: "grid", gap: 4 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{listing.title}</div>
@@ -5443,7 +5454,7 @@ function PromotedProfilesPanel({
             <div style={{ display: "grid", gap: 8 }}>
               <div style={{ fontSize: 20, fontWeight: 700 }}>PROMOTED PROFILES</div>
               <div style={{ color: "#b9bec9", fontSize: 14 }}>Publishing requires a ${Math.round(feeCents / 100)} fee per profile.</div>
-              <div style={{ color: "#26d5ff", fontSize: 13 }}>{status}</div>
+              <div style={{ color: "#ff7a88", fontSize: 13 }}>{status}</div>
             </div>
           </div>
           <div style={{ border: "1px solid rgba(255,58,77,0.35)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.22)" }}>
@@ -5500,7 +5511,7 @@ function PromotedProfilesPanel({
         <div style={{ display: "grid", gap: 8 }}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>PROMOTED PROFILES</div>
           <div style={{ color: "#b9bec9", fontSize: 14 }}>Publishing requires a ${Math.round(feeCents / 100)} fee per profile.</div>
-          <div style={{ color: "#26d5ff", fontSize: 13 }}>{status}</div>
+          <div style={{ color: "#ff7a88", fontSize: 13 }}>{status}</div>
         </div>
       </div>
 
@@ -5531,11 +5542,11 @@ function PromotedProfilesPanel({
                 <img
                   src={avatarUrlByUserId[listing.userId] ?? avatarForKey(`user:${listing.userId}`)}
                   alt={`${listing.displayName} profile`}
-                  style={{ width: 72, height: 72, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(38,213,255,0.9)" }}
+                  style={{ width: 72, height: 72, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(255,122,136,0.9)" }}
                 />
                 <div style={{ display: "grid", gap: 4 }}>
                   <div style={{ fontSize: 18, fontWeight: 700 }}>{listing.title}</div>
-                  <div style={{ color: "#26d5ff", fontSize: 13 }}>{listing.displayName}</div>
+                  <div style={{ color: "#ff7a88", fontSize: 13 }}>{listing.displayName}</div>
                   <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", fontSize: 14 }}>{listing.body}</div>
                   <button
                     type="button"
@@ -6603,7 +6614,8 @@ export function Router({
             background: "linear-gradient(180deg, rgba(24, 3, 8, 0.98), rgba(7, 2, 5, 0.98))",
             boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",
             display: "grid",
-            gridTemplateRows: "auto minmax(0, 1fr)"
+            gridTemplateRows: "auto minmax(0, 1fr)",
+            overflowX: "hidden"
           }}
         >
           <div style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 6px)", borderBottom: "1px solid rgba(255, 95, 104, 0.28)" }}>
@@ -6705,7 +6717,8 @@ export function Router({
             background: "linear-gradient(180deg, rgba(24, 3, 8, 0.98), rgba(7, 2, 5, 0.98))",
             boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",
             display: "grid",
-            gridTemplateRows: "auto minmax(0, 1fr)"
+            gridTemplateRows: "auto minmax(0, 1fr)",
+            overflowX: "hidden"
           }}
         >
           <div style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 6px)", borderBottom: "1px solid rgba(255, 95, 104, 0.28)" }}>
