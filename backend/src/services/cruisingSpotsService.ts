@@ -1960,7 +1960,7 @@ const PERMANENT_CRUISING_SPOTS: ReadonlyArray<CruisingSpot> = [
     moderationStatus: "approved",
     moderatedAtMs: Date.parse("2026-03-12T00:02:06.000Z"),
     moderatedByUserId: "system:seed"
-  }
+  },
 ];
 
 const PERMANENT_CRUISING_SPOT_IDS = new Set(PERMANENT_CRUISING_SPOTS.map((spot) => spot.spotId));

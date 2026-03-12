@@ -1856,7 +1856,7 @@ const PERMANENT_CRUISING_SPOTS: ReadonlyArray<CruisingSpot> = [
     checkInCount: 0,
     actionCount: 0,
     moderationStatus: "approved"
-  }
+  },
 ];
 
 const PERMANENT_CRUISING_SPOT_IDS = new Set(PERMANENT_CRUISING_SPOTS.map((spot) => spot.spotId));
