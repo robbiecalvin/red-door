@@ -28,7 +28,9 @@ describe("cruisingSpotsService", () => {
     const list = svc.listAll();
     expect(list.ok).toBe(true);
     if (!list.ok) throw new Error("unreachable");
-    expect(list.value).toHaveLength(1);
+    expect(list.value.map((spot) => spot.spotId)).toEqual(
+      expect.arrayContaining(["spot_1", "spot_van_pumpjack_pub", "spot_van_fantasy_factory_davie", "spot_van_aids_memorial"])
+    );
   });
 
   it("Given a guest When creating a spot Then it succeeds and tracks guest actor key", () => {
@@ -74,8 +76,9 @@ describe("cruisingSpotsService", () => {
     const spots = svc.listAll();
     expect(spots.ok).toBe(true);
     if (!spots.ok) throw new Error("unreachable");
-    expect(spots.value[0].checkInCount).toBe(1);
-    expect(spots.value[0].actionCount).toBe(1);
+    const createdSpot = spots.value.find((spot) => spot.spotId === "spot_2");
+    expect(createdSpot?.checkInCount).toBe(1);
+    expect(createdSpot?.actionCount).toBe(1);
   });
 
   it("Given a spot with photo media id When create is called Then the media reference is persisted", () => {
@@ -112,7 +115,30 @@ describe("cruisingSpotsService", () => {
     const listed = svc.list();
     expect(listed.ok).toBe(true);
     if (!listed.ok) throw new Error("unreachable");
-    expect(listed.value).toHaveLength(1);
-    expect(listed.value[0].moderationStatus).toBe("approved");
+    expect(listed.value.map((spot) => spot.spotId)).toEqual(
+      expect.arrayContaining(["spot_mod_1", "spot_van_pumpjack_pub", "spot_van_fantasy_factory_davie", "spot_van_aids_memorial"])
+    );
+    expect(listed.value.find((spot) => spot.spotId === "spot_mod_1")?.moderationStatus).toBe("approved");
+  });
+
+  it("Given a new service When listing spots Then permanent seeded spots are present", () => {
+    const svc = createCruisingSpotsService();
+    const listed = svc.listAll();
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw new Error("unreachable");
+    expect(listed.value.map((spot) => spot.spotId)).toEqual(
+      expect.arrayContaining(["spot_van_pumpjack_pub", "spot_van_fantasy_factory_davie", "spot_van_aids_memorial"])
+    );
+  });
+
+  it("Given a permanent seeded spot When remove is called Then it is rejected", () => {
+    const svc = createCruisingSpotsService();
+    const removed = svc.remove("spot_van_pumpjack_pub");
+    expect(removed.ok).toBe(false);
+    if (removed.ok) throw new Error("unreachable");
+    expect(removed.error).toEqual({
+      code: "INVALID_INPUT",
+      message: "Built-in cruising spots cannot be removed."
+    });
   });
 });

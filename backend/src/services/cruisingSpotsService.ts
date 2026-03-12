@@ -55,6 +55,161 @@ export type CruisingSpotsState = Readonly<{
   actions: ReadonlyArray<Readonly<{ spotId: string; rows: ReadonlyArray<{ spotId: string; actorKey: string; markedAtMs: number }> }>>;
 }>;
 
+const PERMANENT_CRUISING_SPOTS: ReadonlyArray<CruisingSpot> = [
+  {
+    spotId: "spot_van_pumpjack_pub",
+    name: "PumpJack Pub",
+    address: "1167 Davie St",
+    lat: 49.2814951,
+    lng: -123.132742,
+    description: "Permanent cruising spot with a shared message board. Categories: Bars, Clubs.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:00.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:00.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_fantasy_factory_davie",
+    name: "Fantasy Factory - Davie St",
+    address: "1155 Davie Street",
+    lat: 49.2813093,
+    lng: -123.132428,
+    description: "Permanent cruising spot with a shared message board. Categories: Bars, Clubs.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:01.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:01.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_aids_memorial",
+    name: "Vancouver AIDS Memorial",
+    address: "Beach Ave & Nicola St.",
+    lat: 49.2820175,
+    lng: -123.1396467,
+    description: "Permanent cruising spot with a shared message board. Category: Cruising Areas.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:02.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:02.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_english_bay_bathroom",
+    name: "English Bay Bathroom",
+    address: "1790 Beach Ave",
+    lat: 49.2866865,
+    lng: -123.1427459,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:03.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:03.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_sandman_suites_hotel",
+    name: "Sandman Suites Hotel",
+    address: "1160 Davie St",
+    lat: 49.2810379,
+    lng: -123.132738,
+    description: "Permanent cruising spot with a shared message board. Categories: Hotels, Resorts, Campgrounds.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:04.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:04.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_sunset_beach_concession",
+    name: "Sunset Beach Concession",
+    address: "1204 Beach Ave, Vancouver, BC V6E 1V3",
+    lat: 49.2787413,
+    lng: -123.1378388,
+    description: "Permanent cruising spot with a shared message board. Category: Cruising Areas.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:05.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:05.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_f212_steam",
+    name: "F212 Steam",
+    address: "1048 Davie Street",
+    lat: 49.2797986,
+    lng: -123.130533,
+    description: "Permanent cruising spot with a shared message board. Categories: Bathhouses, Saunas.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:06.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:06.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_1281_west_georgia_office",
+    name: "1281 West Georgia St. Office",
+    address: "1281 West Georgia",
+    lat: 49.2882184,
+    lng: -123.126509,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:07.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:07.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_1188_west_georgia_floors_10_13",
+    name: "1188 West Georgia Street, Floors 10, 11, 12, 13",
+    address: "1188 West Georgia Street",
+    lat: 49.2866929,
+    lng: -123.125311,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:08.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:08.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_robert_lee_ymca",
+    name: "Robert Lee YMCA",
+    address: "955 Burrard St",
+    lat: 49.2818468,
+    lng: -123.125464,
+    description: "Permanent cruising spot with a shared message board. Category: Gyms.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:09.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:09.000Z"),
+    moderatedByUserId: "system:seed"
+  }
+];
+
+const PERMANENT_CRUISING_SPOT_IDS = new Set(PERMANENT_CRUISING_SPOTS.map((spot) => spot.spotId));
+
 function ok<T>(value: T): ResultOk<T> {
   return { ok: true, value };
 }
@@ -74,6 +229,13 @@ function asOptionalText(value: unknown): string | undefined | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function mergePermanentCruisingSpots(spots: ReadonlyArray<CruisingSpot>): CruisingSpot[] {
+  const byId = new Map<string, CruisingSpot>();
+  for (const spot of PERMANENT_CRUISING_SPOTS) byId.set(spot.spotId, spot);
+  for (const spot of spots) byId.set(spot.spotId, spot);
+  return Array.from(byId.values());
 }
 
 function actorKey(session: SessionLike): string {
@@ -172,7 +334,7 @@ export function createCruisingSpotsService(
   function loadState(): void {
     const initial = deps?.initialState;
     const applyState = (state: CruisingSpotsState): void => {
-      spots.splice(0, spots.length, ...(state.spots ?? []));
+      spots.splice(0, spots.length, ...mergePermanentCruisingSpots(state.spots ?? []));
       checkInsBySpot.clear();
       actionBySpot.clear();
       for (const group of state.checkIns ?? []) {
@@ -199,10 +361,19 @@ export function createCruisingSpotsService(
       applyState(initial);
       return;
     }
-    if (!persistenceFilePath) return;
-    if (!fs.existsSync(persistenceFilePath)) return;
+    if (!persistenceFilePath) {
+      applyState({ spots: [], checkIns: [], actions: [] });
+      return;
+    }
+    if (!fs.existsSync(persistenceFilePath)) {
+      applyState({ spots: [], checkIns: [], actions: [] });
+      return;
+    }
     const raw = fs.readFileSync(persistenceFilePath, "utf8");
-    if (!raw.trim()) return;
+    if (!raw.trim()) {
+      applyState({ spots: [], checkIns: [], actions: [] });
+      return;
+    }
     const parsed = JSON.parse(raw) as { version?: unknown; spots?: unknown; checkIns?: unknown; actions?: unknown };
     if (parsed.version !== 1) return;
     applyState({
@@ -353,6 +524,9 @@ export function createCruisingSpotsService(
     remove(spotId: unknown): Result<{ spotId: string }> {
       const id = asText(spotId);
       if (!id) return err("INVALID_INPUT", "Spot id is required.");
+      if (PERMANENT_CRUISING_SPOT_IDS.has(id)) {
+        return err("INVALID_INPUT", "Built-in cruising spots cannot be removed.");
+      }
       const idx = spots.findIndex((s) => s.spotId === id);
       if (idx < 0) return err("SPOT_NOT_FOUND", "Cruising spot not found.");
       spots.splice(idx, 1);
