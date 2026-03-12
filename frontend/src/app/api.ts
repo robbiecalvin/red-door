@@ -1011,6 +1011,84 @@ const PERMANENT_CRUISING_SPOTS: ReadonlyArray<CruisingSpot> = [
     checkInCount: 0,
     actionCount: 0,
     moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_burnaby_central_park",
+    name: "Central Park - Burnaby",
+    address: "Central Park",
+    lat: 49.227573,
+    lng: -123.0180725,
+    description: "Permanent cruising spot with a shared message board. Category: Parks.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:01:02.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_richmond_garden_city_community_park",
+    name: "Garden City Community Park",
+    address: "Garden City Community Park",
+    lat: 49.1645913,
+    lng: -123.1224606,
+    description: "Permanent cruising spot with a shared message board. Category: Parks.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:01:03.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_richmond_lansdowne_centre",
+    name: "Lansdowne Mall",
+    address: "5300 No. 3 Road",
+    lat: 49.1755487,
+    lng: -123.1324779,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:01:04.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_burnaby_metrotown",
+    name: "Metrotown Office Galleria",
+    address: "4700 Kingsway",
+    lat: 49.2264338,
+    lng: -123.0011791,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:01:05.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_richmond_nature_park",
+    name: "Richmond Nature Park",
+    address: "11851 Westminster Highway",
+    lat: 49.1734849,
+    lng: -123.0972474,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:01:06.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_burnaby_burnaby_lake_regional_park",
+    name: "Burnaby Lake Clubhouse",
+    address: "Burnaby Lake Regional Park",
+    lat: 49.2470452,
+    lng: -122.9226356,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:01:07.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
   }
 ];
 
