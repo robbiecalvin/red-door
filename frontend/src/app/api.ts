@@ -1871,10 +1871,25 @@ const PERMANENT_CRUISING_SPOT_IDS = new Set(PERMANENT_CRUISING_SPOTS.map((spot) 
 
 async function readJsonOrThrow(res: Response): Promise<any> {
   const text = await res.text();
-  const parsed = text.length ? JSON.parse(text) : null;
-  if (res.ok) return parsed;
-  // Backend errors are already in {code,message,context?}; surface verbatim.
-  throw parsed as ServiceError;
+  const trimmed = text.trim();
+  const contentType = res.headers.get("content-type") ?? "";
+  const looksJson = contentType.includes("application/json") || (trimmed.startsWith("{") || trimmed.startsWith("["));
+  if (looksJson) {
+    const parsed = trimmed.length ? JSON.parse(trimmed) : null;
+    if (res.ok) return parsed;
+    // Backend errors are already in {code,message,context?}; surface verbatim.
+    throw parsed as ServiceError;
+  }
+  if (res.ok) return null;
+  throw {
+    code: "INVALID_RESPONSE",
+    message: `API returned ${res.status} ${res.statusText || ""}`.trim(),
+    context: {
+      status: res.status,
+      statusText: res.statusText,
+      bodyPreview: trimmed.slice(0, 160)
+    }
+  } as ServiceError;
 }
 
 type ChatKind = "cruise" | "date";
