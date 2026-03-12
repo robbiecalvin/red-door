@@ -2628,7 +2628,8 @@ export function apiClient(basePath = "/api"): Readonly<{
         method: "GET",
         headers: headers(sessionToken)
       });
-      return (await readJsonOrThrow(res)) as { spots: ReadonlyArray<CruisingSpot> };
+      const parsed = (await readJsonOrThrow(res)) as { spots?: ReadonlyArray<CruisingSpot> };
+      return { spots: mergePermanentCruisingSpots(Array.isArray(parsed.spots) ? parsed.spots : []) };
     },
     async createCruisingSpot(
       sessionToken: string,
@@ -2726,7 +2727,8 @@ export function apiClient(basePath = "/api"): Readonly<{
         method: "GET",
         headers: headers(sessionToken)
       });
-      return (await readJsonOrThrow(res)) as { spots: ReadonlyArray<CruisingSpot> };
+      const parsed = (await readJsonOrThrow(res)) as { spots?: ReadonlyArray<CruisingSpot> };
+      return { spots: mergePermanentCruisingSpots(Array.isArray(parsed.spots) ? parsed.spots : []) };
     },
     async adminApproveCruisingSpot(sessionToken: string, spotId: string, reason?: string): Promise<{ spot: CruisingSpot }> {
       const res = await fetch(`${basePath}/admin/cruise-spots/${encodeURIComponent(spotId)}/approve`, {
