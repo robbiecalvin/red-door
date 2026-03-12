@@ -28,3 +28,5 @@ yarn-error.log*
 
 # Local screenshots and captures
 Screenshot *.png
+.tmp_*
+red-door-user-prompts.docx
