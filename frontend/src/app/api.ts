@@ -842,6 +842,32 @@ const PERMANENT_CRUISING_SPOTS: ReadonlyArray<CruisingSpot> = [
     checkInCount: 0,
     actionCount: 0,
     moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_van_jw_marriott_lobby_washroom",
+    name: "Jw Marriott Hotel Lobby Washroom",
+    address: "39 Smithe Street",
+    lat: 49.2753903,
+    lng: -123.112766,
+    description: "Permanent cruising spot with a shared message board. Categories: Hotels, Resorts, Campgrounds.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:49.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_van_evolve_strength_the_post",
+    name: "Evolve Fitness at The Post",
+    address: "658 Homer Street",
+    lat: 49.28125,
+    lng: -123.1134453,
+    description: "Permanent cruising spot with a shared message board. Category: Gyms.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:50.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
   }
 ];
 
