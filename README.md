@@ -169,9 +169,45 @@ Primary implementation: `backend/src/server.ts`
 - Optional integrations present in code/env:
   - SMTP: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
   - Twilio: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
+  - Google Sheets webhook: `GOOGLE_SHEETS_WEBHOOK_URL`
   - S3-compatible: `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE`
 
 Use `.env.example` as baseline.
+
+### Google Sheets signup capture
+
+The early-access homepage can forward each new signup to a Google Sheet through a deployed Google Apps Script web app.
+
+1. Create a Google Sheet with a tab named `Signups`.
+2. Open `Extensions -> Apps Script`.
+3. Paste this script:
+
+```javascript
+function doPost(e) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Signups");
+  const body = JSON.parse(e.postData.contents);
+
+  sheet.appendRow([
+    new Date(),
+    body.name || "",
+    body.email || "",
+    body.membershipCode || "",
+    body.createdAtMs || "",
+    body.source || "red-door"
+  ]);
+
+  return ContentService
+    .createTextOutput(JSON.stringify({ ok: true }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+```
+
+4. Deploy the script as a web app:
+   - Execute as: `Me`
+   - Who has access: `Anyone`
+5. Copy the deployment URL into `GOOGLE_SHEETS_WEBHOOK_URL`.
+
+New early-access signups will continue to save locally in the backend store and will also be forwarded to Google Sheets. If the Google webhook fails, signup still succeeds and the server logs the sync failure explicitly.
 
 ## Development and build workflow
 

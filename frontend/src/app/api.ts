@@ -37,6 +37,14 @@ export type RegisterResponse = Readonly<{
 
 export type GuestResponse = Readonly<{ session: Session }>;
 
+export type EarlyAccessSignup = Readonly<{
+  name: string;
+  email: string;
+  membershipCode: string;
+  createdAtMs: number;
+  existing?: boolean;
+}>;
+
 export type DatingProfile = Readonly<{
   id: string;
   displayName: string;
@@ -1920,6 +1928,13 @@ type LocalUser = Readonly<{
   tier: "free" | "premium";
 }>;
 
+type LocalEarlyAccessSignup = Readonly<{
+  name: string;
+  email: string;
+  membershipCode: string;
+  createdAtMs: number;
+}>;
+
 type LocalState = Readonly<{
   usersById: Record<string, LocalUser>;
   userIdByEmail: Record<string, string>;
@@ -1946,6 +1961,7 @@ type LocalState = Readonly<{
 
 const LOCAL_STATE_KEY = "reddoor_local_state_v1";
 const LOCAL_AUTH_STATE_KEY = "reddoor_local_auth_state_v1";
+const LOCAL_EARLY_ACCESS_SIGNUPS_KEY = "reddoor_local_early_access_signups_v1";
 const LOCAL_UPLOAD_PREFIX = "rdlocal://";
 // Full-page web navigation requires durable local state across reloads.
 const LOCAL_PERSIST_ENABLED = true;
@@ -1969,6 +1985,43 @@ function isLocalApiMode(basePath: string): boolean {
 
 function nowMs(): number {
   return Date.now();
+}
+
+function normalizeLocalMembershipCode(value: string): string {
+  return typeof value === "string" ? value.trim().toUpperCase() : "";
+}
+
+function loadLocalEarlyAccessSignups(): ReadonlyArray<LocalEarlyAccessSignup> {
+  try {
+    const raw = localStorage.getItem(LOCAL_EARLY_ACCESS_SIGNUPS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const row = entry as Partial<LocalEarlyAccessSignup>;
+      const name = typeof row.name === "string" ? row.name.trim() : "";
+      const email = typeof row.email === "string" ? row.email.trim().toLowerCase() : "";
+      const membershipCode = normalizeLocalMembershipCode(String(row.membershipCode ?? ""));
+      const createdAtMs = Number(row.createdAtMs);
+      if (!name || !email || !membershipCode || !Number.isFinite(createdAtMs) || createdAtMs <= 0) return [];
+      return [{ name, email, membershipCode, createdAtMs: Math.trunc(createdAtMs) }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalEarlyAccessSignups(signups: ReadonlyArray<LocalEarlyAccessSignup>): void {
+  try {
+    localStorage.setItem(LOCAL_EARLY_ACCESS_SIGNUPS_KEY, JSON.stringify(signups));
+  } catch {
+    // Local marketing capture is best effort only.
+  }
+}
+
+function createLocalMembershipCode(): string {
+  return `RED-${Math.random().toString(16).slice(2, 10).toUpperCase()}`;
 }
 
 function mergePermanentCruisingSpots(spots: ReadonlyArray<CruisingSpot>): ReadonlyArray<CruisingSpot> {
@@ -2337,6 +2390,8 @@ export async function uploadToLocalSignedUrl(uploadUrl: string, file: Blob, mime
 
 function createLocalApiClient(): Readonly<{
   createGuest(): Promise<GuestResponse>;
+  requestEarlyAccessSignup(name: string, email: string): Promise<{ signup: EarlyAccessSignup }>;
+  validateMembershipCode(membershipCode: string): Promise<{ valid: true; signup: EarlyAccessSignup }>;
   register(email: string, password: string, phoneE164: string, profile: RegistrationProfileInput): Promise<RegisterResponse>;
   verifyEmail(email: string, code: string): Promise<VerifyEmailOrLoginResponse>;
   resendVerification(email: string): Promise<RegisterResponse>;
@@ -2484,6 +2539,40 @@ function createLocalApiClient(): Readonly<{
       const state = readState();
       writeState(withUpdatedSession(state, session));
       return { session: clone(session) };
+    },
+    async requestEarlyAccessSignup(name: string, email: string): Promise<{ signup: EarlyAccessSignup }> {
+      const normalizedName = typeof name === "string" ? name.trim().replace(/\s+/g, " ") : "";
+      const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+      if (normalizedName.length < 2 || normalizedName.length > 80) {
+        throw { code: "INVALID_INPUT", message: "Name must be between 2 and 80 characters." } as ServiceError;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+        throw { code: "INVALID_INPUT", message: "Enter a valid email address." } as ServiceError;
+      }
+      const signups = loadLocalEarlyAccessSignups();
+      const existing = signups.find((signup) => signup.email === normalizedEmail);
+      if (existing) {
+        return { signup: { ...existing, existing: true } };
+      }
+      const signup: LocalEarlyAccessSignup = {
+        name: normalizedName,
+        email: normalizedEmail,
+        membershipCode: createLocalMembershipCode(),
+        createdAtMs: nowMs()
+      };
+      saveLocalEarlyAccessSignups([...signups, signup]);
+      return { signup: { ...signup, existing: false } };
+    },
+    async validateMembershipCode(membershipCode: string): Promise<{ valid: true; signup: EarlyAccessSignup }> {
+      const normalizedCode = normalizeLocalMembershipCode(membershipCode);
+      if (!normalizedCode) {
+        throw { code: "INVALID_INPUT", message: "Membership code is required." } as ServiceError;
+      }
+      const signup = loadLocalEarlyAccessSignups().find((entry) => entry.membershipCode === normalizedCode);
+      if (!signup) {
+        throw { code: "MEMBERSHIP_CODE_NOT_FOUND", message: "Membership code not found." } as ServiceError;
+      }
+      return { valid: true, signup };
     },
     async register(email: string, password: string, phoneE164: string, profile: RegistrationProfileInput): Promise<RegisterResponse> {
       const normalizedEmail = email.trim().toLowerCase();
@@ -3639,6 +3728,8 @@ function createLocalApiClient(): Readonly<{
 
 export function apiClient(basePath = "/api"): Readonly<{
   createGuest(): Promise<GuestResponse>;
+  requestEarlyAccessSignup(name: string, email: string): Promise<{ signup: EarlyAccessSignup }>;
+  validateMembershipCode(membershipCode: string): Promise<{ valid: true; signup: EarlyAccessSignup }>;
   register(email: string, password: string, phoneE164: string, profile: RegistrationProfileInput): Promise<RegisterResponse>;
   verifyEmail(email: string, code: string): Promise<VerifyEmailOrLoginResponse>;
   resendVerification(email: string): Promise<RegisterResponse>;
@@ -3782,6 +3873,22 @@ export function apiClient(basePath = "/api"): Readonly<{
     async createGuest(): Promise<GuestResponse> {
       const res = await fetch(`${basePath}/auth/guest`, { method: "POST" });
       return (await readJsonOrThrow(res)) as GuestResponse;
+    },
+    async requestEarlyAccessSignup(name: string, email: string): Promise<{ signup: EarlyAccessSignup }> {
+      const res = await fetch(`${basePath}/early-access/signup`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ name, email })
+      });
+      return (await readJsonOrThrow(res)) as { signup: EarlyAccessSignup };
+    },
+    async validateMembershipCode(membershipCode: string): Promise<{ valid: true; signup: EarlyAccessSignup }> {
+      const res = await fetch(`${basePath}/early-access/validate`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ membershipCode })
+      });
+      return (await readJsonOrThrow(res)) as { valid: true; signup: EarlyAccessSignup };
     },
     async register(email: string, password: string, phoneE164: string, profile: RegistrationProfileInput): Promise<RegisterResponse> {
       const res = await fetch(`${basePath}/auth/register`, {

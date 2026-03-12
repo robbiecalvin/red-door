@@ -20,6 +20,8 @@ import { createReportService } from "./services/reportService";
 import { createSubmissionsService, type ServiceError as SubmissionsError } from "./services/submissionsService";
 import { createCruisingSpotsService, type ServiceError as CruisingSpotsError } from "./services/cruisingSpotsService";
 import { createPromotedProfilesService, type ServiceError as PromotedProfilesError } from "./services/promotedProfilesService";
+import { createEarlyAccessService, type ServiceError as EarlyAccessError } from "./services/earlyAccessService";
+import { createEarlyAccessWebhook } from "./services/earlyAccessWebhook";
 import { createWebsocketGateway, type ServiceError as WsError } from "./realtime/websocketGateway";
 import { createInMemoryMediaRepository } from "./repositories/inMemoryMediaRepository";
 import { createInMemoryProfileRepository } from "./repositories/inMemoryProfileRepository";
@@ -44,7 +46,8 @@ type AnyServiceError =
   | PublicPostingsError
   | SubmissionsError
   | CruisingSpotsError
-  | PromotedProfilesError;
+  | PromotedProfilesError
+  | EarlyAccessError;
 
 function sendError(res: Response, error: AnyServiceError): void {
   const code = error.code;
@@ -101,6 +104,8 @@ function sendError(res: Response, error: AnyServiceError): void {
         ? 410
       : code === "PAYMENT_REQUIRED"
         ? 402
+      : code === "MEMBERSHIP_CODE_NOT_FOUND"
+        ? 404
       : code === "STORAGE_ERROR"
         ? 502
       : 400;
@@ -369,6 +374,8 @@ async function main(): Promise<void> {
     persistenceFilePath: path.resolve(process.cwd(), "backend/.data/cruise-spots.json")
   });
   const promotedProfilesService = createPromotedProfilesService();
+  const earlyAccessService = createEarlyAccessService();
+  const earlyAccessWebhook = createEarlyAccessWebhook(process.env.GOOGLE_SHEETS_WEBHOOK_URL);
 
   const postgresSettings = resolvePostgresSettingsFromEnv();
   if (requireDatabase && !postgresSettings) {
@@ -679,6 +686,26 @@ async function main(): Promise<void> {
     const result = authService.verifyAge(sessionToken, ageYears);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ session: result.value });
+  });
+
+  app.post("/early-access/signup", async (req, res) => {
+    const result = await earlyAccessService.registerInterest((req.body as any)?.name, (req.body as any)?.email);
+    if (!result.ok) return sendError(res, result.error);
+    if (earlyAccessWebhook.isEnabled() && result.value.existing !== true) {
+      try {
+        await earlyAccessWebhook.notifySignup(result.value);
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`[RedDoor] Failed to sync early access signup to Google Sheets: ${message}`);
+      }
+    }
+    return res.status(200).json({ signup: result.value });
+  });
+
+  app.post("/early-access/validate", async (req, res) => {
+    const result = await earlyAccessService.validateMembershipCode((req.body as any)?.membershipCode);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ valid: true, signup: result.value });
   });
 
   // Profile

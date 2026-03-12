@@ -1,6 +1,8 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiClient, type ServiceError, type Session } from "./api";
+import { isVerificationRequiredError } from "./authUi";
+import { LAUNCH_TARGET_MS, getCountdownParts, normalizeMembershipCode, validateEarlyAccessSignup } from "./launchAccess";
 import placeholderA from "../assets/reddoor-placeholder-1.svg";
 import placeholderB from "../assets/reddoor-placeholder-2.svg";
 import placeholderC from "../assets/reddoor-placeholder-3.svg";
@@ -38,6 +40,7 @@ const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "gro
 const DEFAULT_TAB: TopTab = "discover";
 const FULL_PAGE_TAB_NAV = false;
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
+const MEMBER_ACCESS_CODE_KEY = "reddoor_membership_code";
 const Router = React.lazy(async () => {
   const mod = await import("./Router");
   return { default: mod.Router };
@@ -323,7 +326,10 @@ export function App(): React.ReactElement {
   const [session, setSession] = useState<Session | null>(null);
 
   const [lastError, setLastError] = useState<string | null>(null);
+  const [marketingError, setMarketingError] = useState<string | null>(null);
+  const [marketingInfo, setMarketingInfo] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
+  const [countdownNowMs, setCountdownNowMs] = useState<number>(() => Date.now());
 
   const [authView, setAuthView] = useState<AuthView>("guest");
   const [activeTab, setActiveTab] = useState<TopTab>(() => tabFromLocation());
@@ -346,6 +352,12 @@ export function App(): React.ReactElement {
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
   const [topMenuOpen, setTopMenuOpen] = useState<boolean>(false);
   const [filterPanelOpen, setFilterPanelOpen] = useState<boolean>(false);
+  const [earlyAccessName, setEarlyAccessName] = useState<string>("");
+  const [earlyAccessEmail, setEarlyAccessEmail] = useState<string>("");
+  const [memberAccessCode, setMemberAccessCode] = useState<string>(() => safeLocalStorageGet(MEMBER_ACCESS_CODE_KEY) ?? "");
+  const [grantedMembershipCode, setGrantedMembershipCode] = useState<string>(() => safeLocalStorageGet(MEMBER_ACCESS_CODE_KEY) ?? "");
+  const [memberAccessUnlocked, setMemberAccessUnlocked] = useState<boolean>(false);
+  const [memberAccessChecking, setMemberAccessChecking] = useState<boolean>(() => Boolean(safeLocalStorageGet(MEMBER_ACCESS_CODE_KEY)));
   const unreadSyncInFlightRef = useRef<boolean>(false);
 
   const persistSessionToken = useCallback((token: string): void => {
@@ -378,6 +390,45 @@ export function App(): React.ReactElement {
       window.history.replaceState(null, "", cleanUrl);
     }
   }, [persistSessionToken]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setCountdownNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const storedCode = normalizeMembershipCode(safeLocalStorageGet(MEMBER_ACCESS_CODE_KEY) ?? "");
+    if (!storedCode) {
+      setMemberAccessChecking(false);
+      setMemberAccessUnlocked(false);
+      return;
+    }
+    let cancelled = false;
+    setMemberAccessChecking(true);
+    api
+      .validateMembershipCode(storedCode)
+      .then((res) => {
+        if (cancelled) return;
+        setMemberAccessUnlocked(true);
+        setGrantedMembershipCode(res.signup.membershipCode);
+        setMemberAccessCode(res.signup.membershipCode);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        safeLocalStorageRemove(MEMBER_ACCESS_CODE_KEY);
+        setMemberAccessUnlocked(false);
+        setGrantedMembershipCode("");
+        setMemberAccessCode("");
+      })
+      .finally(() => {
+        if (!cancelled) setMemberAccessChecking(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
 
   const refreshSession = useCallback(
     async (token: string): Promise<void> => {
@@ -640,10 +691,8 @@ export function App(): React.ReactElement {
         setVerificationCode("");
         setAuthInfo("");
       } catch (loginError) {
-        const err = loginError as ServiceError;
         const message = normalizeUiError(loginError, "Register failed.");
-        const requiresVerification =
-          err?.code === "EMAIL_VERIFICATION_REQUIRED" || message.toLowerCase().includes("verification required");
+        const requiresVerification = isVerificationRequiredError(loginError);
         if (!requiresVerification) {
           throw loginError;
         }
@@ -714,9 +763,7 @@ export function App(): React.ReactElement {
     } catch (e) {
       const err = e as ServiceError;
       const msg = normalizeUiError(e, "Login failed.");
-      const needsVerification =
-        err?.code === "EMAIL_VERIFICATION_REQUIRED" ||
-        msg.toLowerCase().includes("email verification required");
+      const needsVerification = isVerificationRequiredError(e);
       if (needsVerification) {
         const targetEmail = typeof err.context?.email === "string" ? err.context.email : email;
         setPendingVerificationEmail(targetEmail);
@@ -728,6 +775,66 @@ export function App(): React.ReactElement {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submitEarlyAccessSignup(): Promise<void> {
+    const validationError = validateEarlyAccessSignup(earlyAccessName, earlyAccessEmail);
+    if (validationError) {
+      setMarketingError(validationError);
+      return;
+    }
+    setBusy(true);
+    setMarketingError(null);
+    setMarketingInfo("");
+    try {
+      const res = await api.requestEarlyAccessSignup(earlyAccessName, earlyAccessEmail);
+      const code = res.signup.membershipCode;
+      safeLocalStorageSet(MEMBER_ACCESS_CODE_KEY, code);
+      setGrantedMembershipCode(code);
+      setMemberAccessCode(code);
+      setMemberAccessUnlocked(true);
+      setMarketingInfo(
+        res.signup.existing
+          ? `Welcome back. Your saved membership code is ${code}.`
+          : `You're on the early access list. Your membership code is ${code}.`
+      );
+    } catch (e) {
+      setMarketingError(normalizeUiError(e, "Early access signup failed."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlockMemberAccess(): Promise<void> {
+    const normalizedCode = normalizeMembershipCode(memberAccessCode);
+    if (!normalizedCode) {
+      setMarketingError("Enter your membership code.");
+      return;
+    }
+    setBusy(true);
+    setMarketingError(null);
+    setMarketingInfo("");
+    try {
+      const res = await api.validateMembershipCode(normalizedCode);
+      safeLocalStorageSet(MEMBER_ACCESS_CODE_KEY, res.signup.membershipCode);
+      setGrantedMembershipCode(res.signup.membershipCode);
+      setMemberAccessCode(res.signup.membershipCode);
+      setMemberAccessUnlocked(true);
+      setMarketingInfo(`Member access unlocked for ${res.signup.email}.`);
+    } catch (e) {
+      setMarketingError(normalizeUiError(e, "Unable to unlock member access."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function lockMemberAccess(): void {
+    safeLocalStorageRemove(MEMBER_ACCESS_CODE_KEY);
+    setMemberAccessUnlocked(false);
+    setMemberAccessCode("");
+    setGrantedMembershipCode("");
+    setMarketingInfo("");
+    setMarketingError(null);
   }
 
   async function submitAgeGate(): Promise<void> {
@@ -923,7 +1030,13 @@ export function App(): React.ReactElement {
   const topAvatar = topAvatarUrl ?? avatarForSeed(session?.userId ?? session?.sessionToken ?? "guest");
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
   const showBottomNav = Boolean(session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking);
-
+  const countdown = getCountdownParts(LAUNCH_TARGET_MS, countdownNowMs);
+  const countdownItems = [
+    { label: "Days", value: String(countdown.days).padStart(2, "0") },
+    { label: "Hours", value: String(countdown.hours).padStart(2, "0") },
+    { label: "Minutes", value: String(countdown.minutes).padStart(2, "0") },
+    { label: "Seconds", value: String(countdown.seconds).padStart(2, "0") }
+  ] as const;
   const desktopWideSession = Boolean(session && session.ageVerified === true && !isMobile);
 
   return (
@@ -984,202 +1097,327 @@ export function App(): React.ReactElement {
         <div className="rd-grid">
           {!session ? (
             <>
-              <section className="rd-card rd-home-hero" aria-label="Welcome to Red Door">
+              <section className="rd-card rd-launch-hero" aria-label="Red Door coming soon">
                 <div className="rd-card-body">
-                  <div className="rd-home-image-wrap">
-                    <img src={welcomeDoorImage} alt="Red Door welcome" className="rd-home-image" />
+                  <div className="rd-launch-hero-grid">
+                    <div className="rd-launch-copy">
+                      <div className="rd-launch-kicker">May 1, 2026</div>
+                      <div className="rd-home-title">Red Door</div>
+                      <div className="rd-home-tagline">A red door. A private launch. Full access for early members.</div>
+                      <div className="rd-home-copy">
+                        Red Door is opening soon. Join the early list now to get an exclusive membership code and unlock the current experience for free before launch.
+                      </div>
+                    </div>
+                    <div className="rd-coming-door-wrap" aria-hidden="true">
+                      <div className="rd-coming-door">
+                        <div className="rd-coming-door-panel rd-coming-door-panel-top" />
+                        <div className="rd-coming-door-panel rd-coming-door-panel-bottom" />
+                        <div className="rd-coming-door-handle" />
+                      </div>
+                    </div>
                   </div>
-                  <div className="rd-home-title">Red Door</div>
-                  <div className="rd-home-tagline">Welcome to the Red Door adult gay social network for men</div>
-                  <div className="rd-home-copy">Anonymous cruising, instant chat, map discovery, and private profiles when you choose.</div>
+                  <div className="rd-launch-countdown" role="timer" aria-live="polite">
+                    {countdownItems.map((item) => (
+                      <div key={item.label} className="rd-launch-countdown-card">
+                        <div className="rd-launch-countdown-value">{item.value}</div>
+                        <div className="rd-launch-countdown-label">{item.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="rd-launch-caption">
+                    {countdown.expired ? "The early access window is open." : "Countdown to May 1, 2026."}
+                  </div>
                 </div>
               </section>
 
-              <section className={`rd-card ${isMobile ? "rd-auth-hero" : ""}`} aria-label="Authentication">
+              <section className="rd-card" aria-label="Early access signup">
                 <div className="rd-card-head">
-                  <div className="rd-card-title">Access</div>
-                  <div className="rd-card-sub">Cruise allows guests</div>
+                  <div className="rd-card-title">Early Access</div>
+                  <div className="rd-card-sub">Get a membership code</div>
                 </div>
-
-                <div className="rd-tabs" role="tablist" aria-label="Authentication tabs">
-                  <button
-                    type="button"
-                    className={`rd-tab ${authView === "guest" ? "active" : ""}`}
-                    onClick={() => setAuthView("guest")}
-                    disabled={busy}
-                    aria-label="Anon login"
-                    role="tab"
-                    aria-selected={authView === "guest"}
-                  >
-                    Anon Login
-                  </button>
-                  <button
-                    type="button"
-                    className={`rd-tab ${authView === "register" ? "active" : ""}`}
-                    onClick={() => setAuthView("register")}
-                    disabled={busy}
-                    aria-label="Register"
-                    role="tab"
-                    aria-selected={authView === "register"}
-                  >
-                    Register
-                  </button>
-                  <button
-                    type="button"
-                    className={`rd-tab ${authView === "login" ? "active" : ""}`}
-                    onClick={() => setAuthView("login")}
-                    disabled={busy}
-                    aria-label="Login"
-                    role="tab"
-                    aria-selected={authView === "login"}
-                  >
-                    Login
-                  </button>
-                </div>
-
                 <div className="rd-card-body">
-                  <div style={{ color: "var(--muted)", marginBottom: 12 }}>
-                    Cruise Mode supports anonymous sessions. Date and Hybrid require a registered identity.
-                  </div>
-                  {lastError ? (
-                    <div
-                      role="alert"
-                      aria-live="polite"
-                      style={{
-                        color: "#ff848f",
-                        background: "rgba(120, 8, 18, 0.35)",
-                        border: "1px solid rgba(255, 90, 100, 0.5)",
-                        borderRadius: 8,
-                        padding: "10px 12px",
-                        marginBottom: 12
-                      }}
-                    >
-                      {lastError}
-                    </div>
-                  ) : null}
-
-                  {authInfo ? <div style={{ color: "#ff7a88", marginBottom: 12 }}>{authInfo}</div> : null}
-                  {pendingVerificationEmail ? (
-                    <div style={{ color: "var(--muted)", marginBottom: 12 }}>
-                      SMS delivery may not be configured yet. Use the 6-digit code printed in the backend terminal.
-                    </div>
-                  ) : null}
-
-                  {authView === "guest" ? (
-                    <div className="rd-row">
-                      <button type="button" className="rd-btn primary" onClick={() => void createGuest()} disabled={busy} aria-label="Create guest session">
-                        Anon Login
-                      </button>
-                    </div>
-                  ) : null}
-
-                  {authView === "register" || authView === "login" ? (
+                  <div className="rd-launch-form-grid">
                     <form
                       onSubmit={(e) => {
                         e.preventDefault();
-                        void (authView === "register" ? submitRegister() : submitLogin());
+                        void submitEarlyAccessSignup();
                       }}
+                      className="rd-launch-form"
                     >
                       <label className="rd-field">
-                        <span className="rd-label">Email</span>
-                        <input className="rd-input" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email" />
+                        <span className="rd-label">Name</span>
+                        <input className="rd-input" value={earlyAccessName} onChange={(e) => setEarlyAccessName(e.target.value)} aria-label="Name" />
                       </label>
-
                       <label className="rd-field">
-                        <span className="rd-label">Password</span>
-                        <input className="rd-input" value={password} onChange={(e) => setPassword(e.target.value)} type="password" aria-label="Password" />
+                        <span className="rd-label">Email</span>
+                        <input className="rd-input" value={earlyAccessEmail} onChange={(e) => setEarlyAccessEmail(e.target.value)} aria-label="Email" />
                       </label>
+                      <div className="rd-row">
+                        <button type="submit" className="rd-btn primary" disabled={busy} aria-label="Request membership code">
+                          Request Free Membership Code
+                        </button>
+                      </div>
+                    </form>
 
-                      {authView === "register" ? (
-                        <label className="rd-field">
-                          <span className="rd-label">Display Name</span>
-                          <input className="rd-input" value={registerDisplayName} onChange={(e) => setRegisterDisplayName(e.target.value)} aria-label="Display name" />
-                        </label>
-                      ) : null}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void unlockMemberAccess();
+                      }}
+                      className="rd-launch-form"
+                    >
+                      <div className="rd-launch-unlock-title">Already have a code?</div>
+                      <div className="rd-launch-unlock-copy">Use your membership code to unlock the current homepage and get in before launch.</div>
+                      <label className="rd-field">
+                        <span className="rd-label">Membership Code</span>
+                        <input className="rd-input" value={memberAccessCode} onChange={(e) => setMemberAccessCode(e.target.value)} aria-label="Membership code" />
+                      </label>
+                      <div className="rd-row">
+                        <button type="submit" className="rd-btn" disabled={busy || memberAccessChecking} aria-label="Unlock member access">
+                          {memberAccessChecking ? "Checking..." : "Unlock Member Access"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
 
-                      {authView === "register" ? (
-                        <label className="rd-field">
-                          <span className="rd-label">Age</span>
-                          <input
-                            className="rd-input"
-                            value={registerAge}
-                            onChange={(e) => setRegisterAge(e.target.value)}
-                            inputMode="numeric"
-                            aria-label="Age"
-                          />
-                        </label>
-                      ) : null}
+                  {marketingError ? <div className="rd-error" role="alert" aria-live="polite">{marketingError}</div> : null}
+                  {marketingInfo ? <div className="rd-launch-info">{marketingInfo}</div> : null}
+                  {grantedMembershipCode ? (
+                    <div className="rd-launch-code-banner">
+                      <span>Your membership code</span>
+                      <strong>{grantedMembershipCode}</strong>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
 
-                      {authView === "register" ? (
-                        <label className="rd-field">
-                          <span className="rd-label">Phone (E.164, optional)</span>
-                          <input
-                            className="rd-input"
-                            value={phoneE164}
-                            onChange={(e) => setPhoneE164(e.target.value)}
-                            placeholder="+15555551234"
-                            aria-label="Phone number"
-                          />
-                        </label>
-                      ) : null}
+              {memberAccessUnlocked ? (
+                <>
+                  <section className="rd-card rd-launch-unlocked" aria-label="Member access unlocked">
+                    <div className="rd-card-body">
+                      <div className="rd-launch-unlocked-row">
+                        <div>
+                          <div className="rd-launch-kicker">Unlocked</div>
+                          <div className="rd-launch-unlocked-title">Current homepage access is open.</div>
+                          <div className="rd-home-copy">Use your membership code to enter the current Red Door experience before the May 1, 2026 launch.</div>
+                        </div>
+                        <button type="button" className="rd-btn" onClick={lockMemberAccess} aria-label="Lock member access">
+                          Lock Access
+                        </button>
+                      </div>
+                    </div>
+                  </section>
 
-                      {authView === "register" ? (
-                        <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
-                          Password must be at least 6 characters for this web build.
+                  <section className="rd-card rd-home-hero" aria-label="Welcome to Red Door">
+                    <div className="rd-card-body">
+                      <div className="rd-home-image-wrap">
+                        <img src={welcomeDoorImage} alt="Red Door welcome" className="rd-home-image" />
+                      </div>
+                      <div className="rd-home-title">Red Door</div>
+                      <div className="rd-home-tagline">Welcome to the Red Door adult gay social network for men</div>
+                      <div className="rd-home-copy">Anonymous cruising, instant chat, map discovery, and private profiles when you choose.</div>
+                    </div>
+                  </section>
+
+                  <section className={`rd-card ${isMobile ? "rd-auth-hero" : ""}`} aria-label="Authentication">
+                    <div className="rd-card-head">
+                      <div className="rd-card-title">Access</div>
+                      <div className="rd-card-sub">Cruise allows guests</div>
+                    </div>
+
+                    <div className="rd-tabs" role="tablist" aria-label="Authentication tabs">
+                      <button
+                        type="button"
+                        className={`rd-tab ${authView === "guest" ? "active" : ""}`}
+                        onClick={() => setAuthView("guest")}
+                        disabled={busy}
+                        aria-label="Anon login"
+                        role="tab"
+                        aria-selected={authView === "guest"}
+                      >
+                        Anon Login
+                      </button>
+                      <button
+                        type="button"
+                        className={`rd-tab ${authView === "register" ? "active" : ""}`}
+                        onClick={() => setAuthView("register")}
+                        disabled={busy}
+                        aria-label="Register"
+                        role="tab"
+                        aria-selected={authView === "register"}
+                      >
+                        Register
+                      </button>
+                      <button
+                        type="button"
+                        className={`rd-tab ${authView === "login" ? "active" : ""}`}
+                        onClick={() => setAuthView("login")}
+                        disabled={busy}
+                        aria-label="Login"
+                        role="tab"
+                        aria-selected={authView === "login"}
+                      >
+                        Login
+                      </button>
+                    </div>
+
+                    <div className="rd-card-body">
+                      <div style={{ color: "var(--muted)", marginBottom: 12 }}>
+                        Cruise Mode supports anonymous sessions. Date and Hybrid require a registered identity.
+                      </div>
+                      {lastError ? (
+                        <div
+                          role="alert"
+                          aria-live="polite"
+                          style={{
+                            color: "#ff848f",
+                            background: "rgba(120, 8, 18, 0.35)",
+                            border: "1px solid rgba(255, 90, 100, 0.5)",
+                            borderRadius: 8,
+                            padding: "10px 12px",
+                            marginBottom: 12
+                          }}
+                        >
+                          {lastError}
                         </div>
                       ) : null}
 
-                      <div className="rd-row">
-                        <button type="submit" className="rd-btn primary" disabled={busy} aria-label={authView === "register" ? "Register" : "Login"}>
-                          {authView === "register" ? "Register" : "Login"}
-                        </button>
-                      </div>
-                    </form>
-                  ) : null}
+                      {authInfo ? <div style={{ color: "#ff7a88", marginBottom: 12 }}>{authInfo}</div> : null}
+                      {pendingVerificationEmail ? (
+                        <div style={{ color: "var(--muted)", marginBottom: 12 }}>
+                          SMS delivery may not be configured yet. Use the 6-digit code printed in the backend terminal.
+                        </div>
+                      ) : null}
 
-                  {pendingVerificationEmail && (authView === "register" || authView === "login") ? (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void submitVerifyEmail();
-                      }}
-                    >
-                      <label className="rd-field">
-                        <span className="rd-label">Email</span>
-                        <input
-                          className="rd-input"
-                          value={pendingVerificationEmail || email}
-                          onChange={(e) => {
-                            setPendingVerificationEmail(e.target.value);
-                            setEmail(e.target.value);
+                      {authView === "guest" ? (
+                        <div className="rd-row">
+                          <button type="button" className="rd-btn primary" onClick={() => void createGuest()} disabled={busy} aria-label="Create guest session">
+                            Anon Login
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {authView === "register" || authView === "login" ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void (authView === "register" ? submitRegister() : submitLogin());
                           }}
-                          aria-label="Verification email"
-                        />
-                      </label>
+                        >
+                          <label className="rd-field">
+                            <span className="rd-label">Email</span>
+                            <input className="rd-input" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email" />
+                          </label>
 
-                      <label className="rd-field">
-                        <span className="rd-label">6-digit verification code</span>
-                        <input
-                          className="rd-input"
-                          value={verificationCode}
-                          onChange={(e) => setVerificationCode(e.target.value)}
-                          inputMode="numeric"
-                          aria-label="Verification code"
-                        />
-                      </label>
+                          <label className="rd-field">
+                            <span className="rd-label">Password</span>
+                            <input className="rd-input" value={password} onChange={(e) => setPassword(e.target.value)} type="password" aria-label="Password" />
+                          </label>
 
-                      <div className="rd-row">
-                        <button type="submit" className="rd-btn primary" disabled={busy} aria-label="Verify email">
-                          Verify Email
-                        </button>
-                        <button type="button" className="rd-btn" disabled={busy} onClick={() => void resendVerificationCode()} aria-label="Resend verification code">
-                          Resend Code
-                        </button>
-                      </div>
-                    </form>
-                  ) : null}
-                </div>
-              </section>
+                          {authView === "register" ? (
+                            <label className="rd-field">
+                              <span className="rd-label">Display Name</span>
+                              <input className="rd-input" value={registerDisplayName} onChange={(e) => setRegisterDisplayName(e.target.value)} aria-label="Display name" />
+                            </label>
+                          ) : null}
+
+                          {authView === "register" ? (
+                            <label className="rd-field">
+                              <span className="rd-label">Age</span>
+                              <input
+                                className="rd-input"
+                                value={registerAge}
+                                onChange={(e) => setRegisterAge(e.target.value)}
+                                inputMode="numeric"
+                                aria-label="Age"
+                              />
+                            </label>
+                          ) : null}
+
+                          {authView === "register" ? (
+                            <label className="rd-field">
+                              <span className="rd-label">Phone (E.164, optional)</span>
+                              <input
+                                className="rd-input"
+                                value={phoneE164}
+                                onChange={(e) => setPhoneE164(e.target.value)}
+                                placeholder="+15555551234"
+                                aria-label="Phone number"
+                              />
+                            </label>
+                          ) : null}
+
+                          {authView === "register" ? (
+                            <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
+                              Password must be at least 6 characters for this web build.
+                            </div>
+                          ) : null}
+
+                          <div className="rd-row">
+                            <button type="submit" className="rd-btn primary" disabled={busy} aria-label={authView === "register" ? "Register" : "Login"}>
+                              {authView === "register" ? "Register" : "Login"}
+                            </button>
+                          </div>
+                        </form>
+                      ) : null}
+
+                      {pendingVerificationEmail && (authView === "register" || authView === "login") ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void submitVerifyEmail();
+                          }}
+                        >
+                          <label className="rd-field">
+                            <span className="rd-label">Email</span>
+                            <input
+                              className="rd-input"
+                              value={pendingVerificationEmail || email}
+                              onChange={(e) => {
+                                setPendingVerificationEmail(e.target.value);
+                                setEmail(e.target.value);
+                              }}
+                              aria-label="Verification email"
+                            />
+                          </label>
+
+                          <label className="rd-field">
+                            <span className="rd-label">6-digit verification code</span>
+                            <input
+                              className="rd-input"
+                              value={verificationCode}
+                              onChange={(e) => setVerificationCode(e.target.value)}
+                              inputMode="numeric"
+                              aria-label="Verification code"
+                            />
+                          </label>
+
+                          <div className="rd-row">
+                            <button type="submit" className="rd-btn primary" disabled={busy} aria-label="Verify email">
+                              Verify Email
+                            </button>
+                            <button type="button" className="rd-btn" disabled={busy} onClick={() => void resendVerificationCode()} aria-label="Resend verification code">
+                              Resend Code
+                            </button>
+                          </div>
+                        </form>
+                      ) : null}
+                    </div>
+                  </section>
+                </>
+              ) : (
+                <section className="rd-card rd-launch-locked" aria-label="Protected homepage">
+                  <div className="rd-card-head">
+                    <div className="rd-card-title">Protected Homepage</div>
+                    <div className="rd-card-sub">Membership code required</div>
+                  </div>
+                  <div className="rd-card-body">
+                    <div className="rd-home-copy">
+                      The current homepage is now password protected. Request a free early-access membership code above, then unlock it here.
+                    </div>
+                  </div>
+                </section>
+              )}
             </>
           ) : null}
 
