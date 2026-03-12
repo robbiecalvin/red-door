@@ -730,6 +730,66 @@ const PERMANENT_CRUISING_SPOTS: ReadonlyArray<CruisingSpot> = [
     moderationStatus: "approved",
     moderatedAtMs: Date.parse("2026-03-12T00:00:44.000Z"),
     moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_pacific_centre",
+    name: "Pacific Centre",
+    address: "701 West Georgia Street",
+    lat: 49.2822466,
+    lng: -123.119484,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:45.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:45.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_ywca_hornby",
+    name: "YWCA",
+    address: "535 Hornby Street",
+    lat: 49.285466,
+    lng: -123.117782,
+    description: "Permanent cruising spot with a shared message board. Category: Gyms.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:46.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:46.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_waterfront_centre",
+    name: "Waterfront Centre",
+    address: "200 Burrard Street",
+    lat: 49.287666,
+    lng: -123.1151969,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:47.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:47.000Z"),
+    moderatedByUserId: "system:seed"
+  },
+  {
+    spotId: "spot_van_sfu_harbour_centre",
+    name: "SFU Harbour Centre",
+    address: "515 West Hastings Street",
+    lat: 49.2845459,
+    lng: -123.1116636,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:48.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved",
+    moderatedAtMs: Date.parse("2026-03-12T00:00:48.000Z"),
+    moderatedByUserId: "system:seed"
   }
 ];
 
