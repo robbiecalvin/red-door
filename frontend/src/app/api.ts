@@ -725,6 +725,71 @@ const PERMANENT_CRUISING_SPOTS: ReadonlyArray<CruisingSpot> = [
     checkInCount: 0,
     actionCount: 0,
     moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_van_vancouver_public_library",
+    name: "Vancouver Public Library",
+    address: "350 West Georgia Street",
+    lat: 49.279659,
+    lng: -123.115614,
+    description: "Permanent cruising spot with a shared message board. Categories: Washrooms, Cottages.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:40.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_van_delta_hotels_vancouver_downtown",
+    name: "Delta Hotels by Marriott Vancouver",
+    address: "550 West Hastings Street",
+    lat: 49.2841528,
+    lng: -123.1126616,
+    description: "Permanent cruising spot with a shared message board. Categories: Hotels, Resorts, Campgrounds.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:41.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_van_kitsilano_beach",
+    name: "Kitsilano Beach",
+    address: "Kitsilano Beach",
+    lat: 49.2756531,
+    lng: -123.1537326,
+    description: "Permanent cruising spot with a shared message board. Category: Cruising Areas.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:42.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_van_andy_livingstone_park",
+    name: "Andy Livingstone Park",
+    address: "Andy Livingstone Park",
+    lat: 49.278457,
+    lng: -123.103763,
+    description: "Permanent cruising spot with a shared message board. Category: Parks.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:43.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
+  },
+  {
+    spotId: "spot_van_crab_park_at_portside",
+    name: "Crab Park",
+    address: "CRAB Park at Portside",
+    lat: 49.2854169,
+    lng: -123.100346,
+    description: "Permanent cruising spot with a shared message board. Category: Parks.",
+    creatorUserId: "system:seed",
+    createdAtMs: Date.parse("2026-03-12T00:00:44.000Z"),
+    checkInCount: 0,
+    actionCount: 0,
+    moderationStatus: "approved"
   }
 ];
 
