@@ -287,9 +287,20 @@ export function MapView({
         markerButton.addEventListener("touchend", trigger, { passive: false });
         markerButton.addEventListener("pointerup", trigger);
       }
-      const marker = new ml.Marker({ element: markerButton } as unknown as Record<string, unknown>)
+      const marker = new ml.Marker({ 
+        element: markerButton,
+        draggable: m.draggable === true
+      } as unknown as Record<string, unknown>)
         .setLngLat([m.position.lng, m.position.lat]);
       if (popup) marker.setPopup(popup);
+      
+      if (m.draggable && typeof m.onDragEnd === "function") {
+        marker.on("dragend", () => {
+          const lngLat = marker.getLngLat();
+          m.onDragEnd?.({ lng: lngLat.lng, lat: lngLat.lat });
+        });
+      }
+      
       marker.addTo(map);
       markersRef.current.push(marker);
     }

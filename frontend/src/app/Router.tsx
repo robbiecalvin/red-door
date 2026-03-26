@@ -24,6 +24,7 @@ import { createMatchEngine } from "../features/dating/MatchEngine";
 import { DatingFeed } from "../features/dating/DatingFeed";
 import { ChatWindow, type ChatApiClient } from "../features/chat/ChatWindow";
 import type { ChatMessage } from "../features/chat/chat.types";
+import { MapView } from "../features/map/MapView";
 import placeholderA from "../assets/reddoor-placeholder-1.svg";
 import placeholderB from "../assets/reddoor-placeholder-2.svg";
 import placeholderC from "../assets/reddoor-placeholder-3.svg";
@@ -6508,9 +6509,15 @@ function SettingsPanel({
   const [adminCreateProfileDisplayName, setAdminCreateProfileDisplayName] = useState<string>("");
   const [adminCreateProfileAge, setAdminCreateProfileAge] = useState<string>("");
   const [adminCreateProfileBio, setAdminCreateProfileBio] = useState<string>("");
-  const [adminCreateProfileLat, setAdminCreateProfileLat] = useState<string>("");
-  const [adminCreateProfileLng, setAdminCreateProfileLng] = useState<string>("");
+  const [adminCreateMainPhotoFile, setAdminCreateMainPhotoFile] = useState<File | null>(null);
+  const [adminCreateGalleryPhotoFiles, setAdminCreateGalleryPhotoFiles] = useState<ReadonlyArray<File>>([]);
+  const [adminCreateVideoFile, setAdminCreateVideoFile] = useState<File | null>(null);
   const [adminCreatedUserId, setAdminCreatedUserId] = useState<string | null>(null);
+  const [adminPendingUserPlacement, setAdminPendingUserPlacement] = useState<{
+    userId: string;
+    displayName: string;
+    position: { lat: number; lng: number };
+  } | null>(null);
 
   async function refreshAdmin(): Promise<void> {
     if (session.role !== "admin") {
@@ -6678,8 +6685,51 @@ function SettingsPanel({
       setAdminStatus("Email, password, and display name are required.");
       return;
     }
+    
+    // Get admin's current location
+    if (!("geolocation" in navigator)) {
+      setAdminStatus("Geolocation not available.");
+      return;
+    }
+    
     setAdminBusy(true);
-    setAdminStatus("");
+    setAdminStatus("Getting your location...");
+    
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 30000
+        });
+      });
+      
+      const adminLocation = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude
+      };
+      
+      // Create pending user state for placement
+      setAdminPendingUserPlacement({
+        userId: `pending-${Date.now()}`,
+        displayName: adminCreateProfileDisplayName.trim(),
+        position: adminLocation
+      });
+      
+      setAdminStatus("Position the user on the map and confirm placement.");
+    } catch (e) {
+      setAdminStatus("Failed to get your location. Please check location permissions.");
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function adminConfirmUserPlacement(): Promise<void> {
+    if (!adminPendingUserPlacement) return;
+    
+    setAdminBusy(true);
+    setAdminStatus("Creating user and profile...");
+    
     try {
       // Create the user
       const userResult = await api.adminCreateUser(session.sessionToken, {
@@ -6694,10 +6744,63 @@ function SettingsPanel({
       const userId = userResult.user.id;
       setAdminCreatedUserId(userId);
       
-      // Create the profile
+      // Upload photos if provided
+      let mainPhotoMediaId: string | undefined;
+      let galleryMediaIds: string[] = [];
+      
+      if (adminCreateMainPhotoFile) {
+        try {
+          const initiated = await api.initiateMediaUpload(session.sessionToken, {
+            kind: "photo_main",
+            mimeType: adminCreateMainPhotoFile.type || "image/jpeg",
+            sizeBytes: adminCreateMainPhotoFile.size
+          });
+          
+          const handledLocally = await uploadToLocalSignedUrl(initiated.uploadUrl, adminCreateMainPhotoFile, adminCreateMainPhotoFile.type || "image/jpeg");
+          if (!handledLocally) {
+            const uploadRes = await fetch(initiated.uploadUrl, {
+              method: "PUT",
+              headers: { "content-type": adminCreateMainPhotoFile.type || "image/jpeg" },
+              body: adminCreateMainPhotoFile
+            });
+            if (!uploadRes.ok) throw new Error(`Upload failed (${uploadRes.status})`);
+          }
+          
+          await api.completeMediaUpload(session.sessionToken, initiated.mediaId);
+          mainPhotoMediaId = initiated.mediaId;
+        } catch (e) {
+          console.warn("Failed to upload main photo:", e);
+        }
+      }
+      
+      // Upload gallery photos
+      for (const file of adminCreateGalleryPhotoFiles) {
+        try {
+          const initiated = await api.initiateMediaUpload(session.sessionToken, {
+            kind: "photo_gallery",
+            mimeType: file.type || "image/jpeg",
+            sizeBytes: file.size
+          });
+          
+          const handledLocally = await uploadToLocalSignedUrl(initiated.uploadUrl, file, file.type || "image/jpeg");
+          if (!handledLocally) {
+            const uploadRes = await fetch(initiated.uploadUrl, {
+              method: "PUT",
+              headers: { "content-type": file.type || "image/jpeg" },
+              body: file
+            });
+            if (!uploadRes.ok) throw new Error(`Upload failed (${uploadRes.status})`);
+          }
+          
+          await api.completeMediaUpload(session.sessionToken, initiated.mediaId);
+          galleryMediaIds.push(initiated.mediaId);
+        } catch (e) {
+          console.warn("Failed to upload gallery photo:", e);
+        }
+      }
+      
+      // Create the profile with location
       const age = parseInt(adminCreateProfileAge.trim()) || 25;
-      const lat = parseFloat(adminCreateProfileLat.trim()) || undefined;
-      const lng = parseFloat(adminCreateProfileLng.trim()) || undefined;
       
       const profileData: any = {
         displayName: adminCreateProfileDisplayName.trim(),
@@ -6705,13 +6808,23 @@ function SettingsPanel({
         bio: adminCreateProfileBio.trim() || ""
       };
       
-      if (lat !== undefined && lng !== undefined) {
-        profileData.travelMode = {
-          enabled: true,
-          lat,
-          lng
-        };
+      // Add stats if provided (we'll need to add these to the form)
+      // For now, just basic profile
+      
+      if (mainPhotoMediaId) {
+        profileData.mainPhotoMediaId = mainPhotoMediaId;
       }
+      
+      if (galleryMediaIds.length > 0) {
+        profileData.galleryMediaIds = galleryMediaIds;
+      }
+      
+      // Set travel mode to the confirmed position
+      profileData.travelMode = {
+        enabled: true,
+        lat: adminPendingUserPlacement.position.lat,
+        lng: adminPendingUserPlacement.position.lng
+      };
       
       await api.adminUpsertProfile(session.sessionToken, userId, profileData);
       
@@ -6725,8 +6838,10 @@ function SettingsPanel({
       setAdminCreateProfileDisplayName("");
       setAdminCreateProfileAge("");
       setAdminCreateProfileBio("");
-      setAdminCreateProfileLat("");
-      setAdminCreateProfileLng("");
+      setAdminCreateMainPhotoFile(null);
+      setAdminCreateGalleryPhotoFiles([]);
+      setAdminCreateVideoFile(null);
+      setAdminPendingUserPlacement(null);
       
       await refreshAdmin();
       setAdminStatus(`User and profile created successfully. User ID: ${userId}`);
@@ -6736,6 +6851,20 @@ function SettingsPanel({
       setLastError(msg);
     } finally {
       setAdminBusy(false);
+    }
+  }
+
+  function adminCancelUserPlacement(): void {
+    setAdminPendingUserPlacement(null);
+    setAdminStatus("User creation cancelled.");
+  }
+
+  function adminUpdatePendingUserPosition(position: { lat: number; lng: number }): void {
+    if (adminPendingUserPlacement) {
+      setAdminPendingUserPlacement({
+        ...adminPendingUserPlacement,
+        position
+      });
     }
   }
 
@@ -6912,41 +7041,18 @@ function SettingsPanel({
                     placeholder="John Doe"
                   />
                 </label>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <label style={{ display: "grid", gap: 4 }}>
-                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Age</span>
-                    <input
-                      type="number"
-                      value={adminCreateProfileAge}
-                      onChange={(e) => setAdminCreateProfileAge(e.target.value)}
-                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
-                      placeholder="25"
-                      min="18"
-                      max="120"
-                    />
-                  </label>
-                  <div style={{ display: "grid", gap: 4 }}>
-                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Location (optional)</span>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                      <input
-                        type="number"
-                        value={adminCreateProfileLat}
-                        onChange={(e) => setAdminCreateProfileLat(e.target.value)}
-                        style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
-                        placeholder="Lat"
-                        step="0.000001"
-                      />
-                      <input
-                        type="number"
-                        value={adminCreateProfileLng}
-                        onChange={(e) => setAdminCreateProfileLng(e.target.value)}
-                        style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
-                        placeholder="Lng"
-                        step="0.000001"
-                      />
-                    </div>
-                  </div>
-                </div>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Age</span>
+                  <input
+                    type="number"
+                    value={adminCreateProfileAge}
+                    onChange={(e) => setAdminCreateProfileAge(e.target.value)}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                    placeholder="25"
+                    min="18"
+                    max="120"
+                  />
+                </label>
                 <label style={{ display: "grid", gap: 4 }}>
                   <span style={{ fontSize: 13, color: "#b9bec9" }}>Bio (optional)</span>
                   <textarea
@@ -6957,16 +7063,88 @@ function SettingsPanel({
                     maxLength={280}
                   />
                 </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Main Photo</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setAdminCreateMainPhotoFile(e.target.files?.[0] || null)}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Gallery Photos</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => setAdminCreateGalleryPhotoFiles(Array.from(e.target.files || []))}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Video (optional)</span>
+                  <input
+                    type="file"
+                    accept="video/*"
+                    onChange={(e) => setAdminCreateVideoFile(e.target.files?.[0] || null)}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                  />
+                </label>
                 <button
                   type="button"
                   style={buttonSecondary(adminBusy)}
                   disabled={adminBusy}
                   onClick={() => void adminCreateUserAndProfile()}
                 >
-                  CREATE USER & PROFILE
+                  CREATE USER & POSITION ON MAP
                 </button>
               </div>
             </div>
+
+            {adminPendingUserPlacement && (
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>POSITION USER ON MAP</div>
+                <div style={{ color: "#b9bec9", fontSize: 13 }}>
+                  Drag the marker to position the user, then confirm placement.
+                </div>
+                <div style={{ height: 400, border: "1px solid #444", borderRadius: 4, overflow: "hidden" }}>
+                  <MapView
+                    initialView={{
+                      center: adminPendingUserPlacement.position,
+                      zoom: 15
+                    }}
+                    markers={[{
+                      id: adminPendingUserPlacement.userId,
+                      position: adminPendingUserPlacement.position,
+                      color: "#C00000",
+                      draggable: true,
+                      onDragEnd: adminUpdatePendingUserPosition
+                    }]}
+                    visible={true}
+                    onMapClick={() => {}}
+                  />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: 8 }}>
+                  <button
+                    type="button"
+                    style={buttonPrimary(adminBusy)}
+                    disabled={adminBusy}
+                    onClick={() => void adminConfirmUserPlacement()}
+                  >
+                    {adminBusy ? "CREATING..." : "CONFIRM PLACEMENT & CREATE USER"}
+                  </button>
+                  <button
+                    type="button"
+                    style={buttonSecondary(adminBusy)}
+                    disabled={adminBusy}
+                    onClick={() => void adminCancelUserPlacement()}
+                  >
+                    CANCEL
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : null}

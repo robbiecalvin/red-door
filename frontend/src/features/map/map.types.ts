@@ -12,6 +12,8 @@ export type MapMarker = Readonly<{
   label?: string;
   imageUrl?: string;
   onClick?: () => void;
+  draggable?: boolean;
+  onDragEnd?: (position: LngLat) => void;
 }>;
 
 export type MapViewOptions = Readonly<{
