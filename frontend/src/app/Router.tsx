@@ -6509,6 +6509,13 @@ function SettingsPanel({
   const [adminCreateProfileDisplayName, setAdminCreateProfileDisplayName] = useState<string>("");
   const [adminCreateProfileAge, setAdminCreateProfileAge] = useState<string>("");
   const [adminCreateProfileBio, setAdminCreateProfileBio] = useState<string>("");
+  const [adminCreateProfileHeightInches, setAdminCreateProfileHeightInches] = useState<string>("");
+  const [adminCreateProfileWeightLbs, setAdminCreateProfileWeightLbs] = useState<string>("");
+  const [adminCreateProfileRace, setAdminCreateProfileRace] = useState<string>("");
+  const [adminCreateProfileCockSizeInches, setAdminCreateProfileCockSizeInches] = useState<string>("");
+  const [adminCreateProfileCutStatus, setAdminCreateProfileCutStatus] = useState<"" | ProfileCutStatus>("");
+  const [adminCreateProfilePosition, setAdminCreateProfilePosition] = useState<"" | ProfilePosition>("");
+  const [adminCreateProfileDiscreetMode, setAdminCreateProfileDiscreetMode] = useState<boolean>(false);
   const [adminCreateMainPhotoFile, setAdminCreateMainPhotoFile] = useState<File | null>(null);
   const [adminCreateGalleryPhotoFiles, setAdminCreateGalleryPhotoFiles] = useState<ReadonlyArray<File>>([]);
   const [adminCreateVideoFile, setAdminCreateVideoFile] = useState<File | null>(null);
@@ -6808,8 +6815,26 @@ function SettingsPanel({
         bio: adminCreateProfileBio.trim() || ""
       };
       
-      // Add stats if provided (we'll need to add these to the form)
-      // For now, just basic profile
+      // Add physical stats
+      if (adminCreateProfileHeightInches.trim()) {
+        profileData.heightInches = parseInt(adminCreateProfileHeightInches.trim());
+      }
+      if (adminCreateProfileWeightLbs.trim()) {
+        profileData.weightLbs = parseInt(adminCreateProfileWeightLbs.trim());
+      }
+      if (adminCreateProfileRace.trim()) {
+        profileData.race = adminCreateProfileRace.trim();
+      }
+      if (adminCreateProfileCockSizeInches.trim()) {
+        profileData.cockSizeInches = parseFloat(adminCreateProfileCockSizeInches.trim());
+      }
+      if (adminCreateProfileCutStatus) {
+        profileData.cutStatus = adminCreateProfileCutStatus;
+      }
+      if (adminCreateProfilePosition) {
+        profileData.position = adminCreateProfilePosition;
+      }
+      profileData.discreetMode = adminCreateProfileDiscreetMode;
       
       if (mainPhotoMediaId) {
         profileData.mainPhotoMediaId = mainPhotoMediaId;
@@ -6838,6 +6863,13 @@ function SettingsPanel({
       setAdminCreateProfileDisplayName("");
       setAdminCreateProfileAge("");
       setAdminCreateProfileBio("");
+      setAdminCreateProfileHeightInches("");
+      setAdminCreateProfileWeightLbs("");
+      setAdminCreateProfileRace("");
+      setAdminCreateProfileCockSizeInches("");
+      setAdminCreateProfileCutStatus("");
+      setAdminCreateProfilePosition("");
+      setAdminCreateProfileDiscreetMode(false);
       setAdminCreateMainPhotoFile(null);
       setAdminCreateGalleryPhotoFiles([]);
       setAdminCreateVideoFile(null);
@@ -7063,6 +7095,90 @@ function SettingsPanel({
                     maxLength={280}
                   />
                 </label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Height (in)</span>
+                    <input
+                      type="number"
+                      value={adminCreateProfileHeightInches}
+                      onChange={(e) => setAdminCreateProfileHeightInches(e.target.value)}
+                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                      placeholder="70"
+                      min="48"
+                      max="96"
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Weight (lbs)</span>
+                    <input
+                      type="number"
+                      value={adminCreateProfileWeightLbs}
+                      onChange={(e) => setAdminCreateProfileWeightLbs(e.target.value)}
+                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                      placeholder="180"
+                      min="80"
+                      max="400"
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Race</span>
+                    <input
+                      type="text"
+                      value={adminCreateProfileRace}
+                      onChange={(e) => setAdminCreateProfileRace(e.target.value)}
+                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                      placeholder="White"
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Cock Size (in)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={adminCreateProfileCockSizeInches}
+                      onChange={(e) => setAdminCreateProfileCockSizeInches(e.target.value)}
+                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                      placeholder="7.5"
+                      min="3"
+                      max="12"
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Cut / Uncut</span>
+                    <select
+                      value={adminCreateProfileCutStatus}
+                      onChange={(e) => setAdminCreateProfileCutStatus(e.target.value as "" | ProfileCutStatus)}
+                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                    >
+                      <option value="">Select</option>
+                      <option value="cut">Cut</option>
+                      <option value="uncut">Uncut</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Position</span>
+                    <select
+                      value={adminCreateProfilePosition}
+                      onChange={(e) => setAdminCreateProfilePosition(e.target.value as "" | ProfilePosition)}
+                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                    >
+                      <option value="">Select</option>
+                      <option value="top">Top</option>
+                      <option value="bottom">Bottom</option>
+                      <option value="side">Side</option>
+                    </select>
+                  </label>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
+                  <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={adminCreateProfileDiscreetMode}
+                      onChange={(e) => setAdminCreateProfileDiscreetMode(e.target.checked)}
+                    />
+                    <span style={{ fontSize: 13, color: "#b9bec9", margin: 0 }}>Discreet Mode</span>
+                  </label>
+                </div>
                 <label style={{ display: "grid", gap: 4 }}>
                   <span style={{ fontSize: 13, color: "#b9bec9" }}>Main Photo</span>
                   <input
