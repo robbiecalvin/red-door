@@ -130,6 +130,15 @@ export type RegistrationProfileInput = Readonly<{
   stats?: ProfileUpdatePayload["stats"];
 }>;
 
+export type ProfileUpdate = Readonly<{
+  displayName: unknown;
+  age: unknown;
+  bio: unknown;
+  stats?: unknown;
+  discreetMode?: unknown;
+  travelMode?: unknown;
+}>;
+
 export type MediaKind = "photo_main" | "photo_gallery" | "video";
 
 export type InitiateMediaUploadResponse = Readonly<{
@@ -3645,6 +3654,75 @@ function createLocalApiClient(): Readonly<{
       if (!state.usersById[userId]) throw { code: "USER_NOT_FOUND", message: "User not found." } as ServiceError;
       return { user: { id: userId, bannedAtMs: null, bannedReason: null } };
     },
+    async adminCreateUser(sessionToken: string, userData: Readonly<{ email: string; password: string; phoneE164?: string; userType: "guest" | "registered" | "subscriber"; tier: "free" | "premium"; role: "user" | "admin" }>): Promise<{ user: AdminUserSummary }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const normalizedEmail = userData.email.trim().toLowerCase();
+      if (state.userIdByEmail[normalizedEmail]) {
+        throw { code: "EMAIL_IN_USE", message: "Email already registered." } as ServiceError;
+      }
+      const userId = randomId("user");
+      const user: LocalUser = {
+        id: userId,
+        email: normalizedEmail,
+        password: userData.password,
+        phoneE164: userData.phoneE164 || null,
+        verified: true,
+        userType: userData.userType,
+        tier: userData.tier
+      };
+      writeState({
+        ...state,
+        usersById: { ...state.usersById, [userId]: user },
+        userIdByEmail: { ...state.userIdByEmail, [normalizedEmail]: userId }
+      });
+      const summary: AdminUserSummary = {
+        id: userId,
+        email: normalizedEmail,
+        userType: userData.userType,
+        tier: userData.tier,
+        role: userData.role,
+        ageVerified: true,
+        emailVerified: true,
+        bannedAtMs: null,
+        bannedReason: null,
+        createdAtMs: nowMs()
+      };
+      return { user: summary };
+    },
+    async adminGetProfile(sessionToken: string, userId: string): Promise<{ profile: Profile }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const profile = state.profilesByUserId[userId];
+      if (!profile) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
+      return { profile: clone(profile) };
+    },
+    async adminUpsertProfile(sessionToken: string, userId: string, profileData: ProfileUpdate): Promise<{ profile: Profile }> {
+      const state = readState();
+      requireAdminSession(state, sessionToken);
+      const existing = state.profilesByUserId[userId];
+      const displayName = typeof profileData.displayName === "string" ? profileData.displayName.trim() : (existing?.displayName || "");
+      const age = typeof profileData.age === "number" ? profileData.age : (existing?.age || 25);
+      const bio = typeof profileData.bio === "string" ? profileData.bio.trim() : (existing?.bio || "");
+      const stats = profileData.stats || existing?.stats || {};
+      const discreetMode = profileData.discreetMode === true;
+      const travelMode = profileData.travelMode || existing?.travelMode;
+      const profile: Profile = {
+        userId,
+        displayName,
+        age,
+        bio,
+        stats,
+        discreetMode,
+        travelMode,
+        mainPhotoMediaId: existing?.mainPhotoMediaId,
+        galleryMediaIds: existing?.galleryMediaIds || [],
+        videoMediaId: existing?.videoMediaId,
+        updatedAtMs: nowMs()
+      };
+      writeState({ ...state, profilesByUserId: { ...state.profilesByUserId, [userId]: profile } });
+      return { profile: clone(profile) };
+    },
     async adminListCruisingSpots(sessionToken: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
       const state = readState();
       requireAdminSession(state, sessionToken);
@@ -4455,6 +4533,29 @@ export function apiClient(basePath = "/api"): Readonly<{
         headers: headers(sessionToken)
       });
       return (await readJsonOrThrow(res)) as { user: Pick<AdminUserSummary, "id" | "bannedAtMs" | "bannedReason"> };
+    },
+    async adminCreateUser(sessionToken: string, userData: Readonly<{ email: string; password: string; phoneE164?: string; userType: "guest" | "registered" | "subscriber"; tier: "free" | "premium"; role: "user" | "admin" }>): Promise<{ user: AdminUserSummary }> {
+      const res = await fetch(`${basePath}/admin/users/create`, {
+        method: "POST",
+        headers: headers(sessionToken),
+        body: JSON.stringify(userData)
+      });
+      return (await readJsonOrThrow(res)) as { user: AdminUserSummary };
+    },
+    async adminGetProfile(sessionToken: string, userId: string): Promise<{ profile: Profile }> {
+      const res = await fetch(`${basePath}/admin/profiles/${encodeURIComponent(userId)}`, {
+        method: "GET",
+        headers: headers(sessionToken)
+      });
+      return (await readJsonOrThrow(res)) as { profile: Profile };
+    },
+    async adminUpsertProfile(sessionToken: string, userId: string, profileData: ProfileUpdate): Promise<{ profile: Profile }> {
+      const res = await fetch(`${basePath}/admin/profiles/${encodeURIComponent(userId)}`, {
+        method: "PUT",
+        headers: headers(sessionToken),
+        body: JSON.stringify(profileData)
+      });
+      return (await readJsonOrThrow(res)) as { profile: Profile };
     },
     async adminListCruisingSpots(sessionToken: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
       const res = await fetch(`${basePath}/admin/cruise-spots`, {

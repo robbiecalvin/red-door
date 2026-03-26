@@ -764,6 +764,21 @@ async function main(): Promise<void> {
     return res.status(200).json({ profile: result.value });
   });
 
+  // Admin profile management
+  app.get("/admin/profiles/:userId", async (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const result = await profileService.adminGetProfile((req.params as any)?.userId);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ profile: result.value });
+  });
+
+  app.put("/admin/profiles/:userId", async (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const result = await profileService.adminUpsertProfile((req.params as any)?.userId, req.body as any);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(200).json({ profile: result.value });
+  });
+
   // Media (S3 presigned uploads)
   app.post("/profile/media/initiate", async (req, res) => {
     const token = getSessionToken(req);
@@ -1019,6 +1034,19 @@ async function main(): Promise<void> {
     const result = authService.unbanUser(targetUserId);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ user: result.value });
+  });
+
+  app.post("/admin/users/create", (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const email = (req.body as any)?.email;
+    const password = (req.body as any)?.password;
+    const phoneE164 = (req.body as any)?.phoneE164;
+    const userType = (req.body as any)?.userType;
+    const tier = (req.body as any)?.tier;
+    const role = (req.body as any)?.role;
+    const result = authService.adminCreateUser(email, password, phoneE164, userType, tier, role);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(201).json({ user: result.value });
   });
 
   app.get("/admin/cruise-spots", (req, res) => {

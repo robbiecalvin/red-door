@@ -13,7 +13,8 @@ import {
   type Session,
   type ServiceError,
   type Submission,
-  type UserProfile
+  type UserProfile,
+  type ProfileUpdate
 } from "./api";
 import type { DatingProfile } from "./api";
 import { CruiseMap } from "../features/cruise/CruiseMap";
@@ -6498,6 +6499,18 @@ function SettingsPanel({
   const [adminSpots, setAdminSpots] = useState<ReadonlyArray<CruisingSpot>>([]);
   const [adminPostings, setAdminPostings] = useState<ReadonlyArray<PublicPosting>>([]);
   const [adminSubmissions, setAdminSubmissions] = useState<ReadonlyArray<Submission>>([]);
+  const [adminCreateUserEmail, setAdminCreateUserEmail] = useState<string>("");
+  const [adminCreateUserPassword, setAdminCreateUserPassword] = useState<string>("");
+  const [adminCreateUserPhone, setAdminCreateUserPhone] = useState<string>("");
+  const [adminCreateUserType, setAdminCreateUserType] = useState<"registered" | "subscriber">("registered");
+  const [adminCreateUserTier, setAdminCreateUserTier] = useState<"free" | "premium">("free");
+  const [adminCreateUserRole, setAdminCreateUserRole] = useState<"user" | "admin">("user");
+  const [adminCreateProfileDisplayName, setAdminCreateProfileDisplayName] = useState<string>("");
+  const [adminCreateProfileAge, setAdminCreateProfileAge] = useState<string>("");
+  const [adminCreateProfileBio, setAdminCreateProfileBio] = useState<string>("");
+  const [adminCreateProfileLat, setAdminCreateProfileLat] = useState<string>("");
+  const [adminCreateProfileLng, setAdminCreateProfileLng] = useState<string>("");
+  const [adminCreatedUserId, setAdminCreatedUserId] = useState<string | null>(null);
 
   async function refreshAdmin(): Promise<void> {
     if (session.role !== "admin") {
@@ -6660,6 +6673,72 @@ function SettingsPanel({
     }
   }
 
+  async function adminCreateUserAndProfile(): Promise<void> {
+    if (!adminCreateUserEmail.trim() || !adminCreateUserPassword.trim() || !adminCreateProfileDisplayName.trim()) {
+      setAdminStatus("Email, password, and display name are required.");
+      return;
+    }
+    setAdminBusy(true);
+    setAdminStatus("");
+    try {
+      // Create the user
+      const userResult = await api.adminCreateUser(session.sessionToken, {
+        email: adminCreateUserEmail.trim(),
+        password: adminCreateUserPassword.trim(),
+        phoneE164: adminCreateUserPhone.trim() || undefined,
+        userType: adminCreateUserType,
+        tier: adminCreateUserTier,
+        role: adminCreateUserRole
+      });
+      
+      const userId = userResult.user.id;
+      setAdminCreatedUserId(userId);
+      
+      // Create the profile
+      const age = parseInt(adminCreateProfileAge.trim()) || 25;
+      const lat = parseFloat(adminCreateProfileLat.trim()) || undefined;
+      const lng = parseFloat(adminCreateProfileLng.trim()) || undefined;
+      
+      const profileData: any = {
+        displayName: adminCreateProfileDisplayName.trim(),
+        age,
+        bio: adminCreateProfileBio.trim() || ""
+      };
+      
+      if (lat !== undefined && lng !== undefined) {
+        profileData.travelMode = {
+          enabled: true,
+          lat,
+          lng
+        };
+      }
+      
+      await api.adminUpsertProfile(session.sessionToken, userId, profileData);
+      
+      // Reset form
+      setAdminCreateUserEmail("");
+      setAdminCreateUserPassword("");
+      setAdminCreateUserPhone("");
+      setAdminCreateUserType("registered");
+      setAdminCreateUserTier("free");
+      setAdminCreateUserRole("user");
+      setAdminCreateProfileDisplayName("");
+      setAdminCreateProfileAge("");
+      setAdminCreateProfileBio("");
+      setAdminCreateProfileLat("");
+      setAdminCreateProfileLng("");
+      
+      await refreshAdmin();
+      setAdminStatus(`User and profile created successfully. User ID: ${userId}`);
+    } catch (e) {
+      const msg = normalizeErrorMessage(e);
+      setAdminStatus(msg);
+      setLastError(msg);
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={cardStyle()}>
@@ -6753,6 +6832,140 @@ function SettingsPanel({
                   <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderateSubmission(submission.submissionId, "delete")}>DELETE</button>
                 </div>
               ))}
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>CREATE USER & PROFILE</div>
+              <div style={{ display: "grid", gap: 8 }}>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Email</span>
+                  <input
+                    type="email"
+                    value={adminCreateUserEmail}
+                    onChange={(e) => setAdminCreateUserEmail(e.target.value)}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                    placeholder="user@example.com"
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Password</span>
+                  <input
+                    type="password"
+                    value={adminCreateUserPassword}
+                    onChange={(e) => setAdminCreateUserPassword(e.target.value)}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                    placeholder="password123"
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Phone (optional)</span>
+                  <input
+                    type="tel"
+                    value={adminCreateUserPhone}
+                    onChange={(e) => setAdminCreateUserPhone(e.target.value)}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                    placeholder="+15551234567"
+                  />
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>User Type</span>
+                    <select
+                      value={adminCreateUserType}
+                      onChange={(e) => setAdminCreateUserType(e.target.value as "registered" | "subscriber")}
+                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                    >
+                      <option value="registered">Registered</option>
+                      <option value="subscriber">Subscriber</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Tier</span>
+                    <select
+                      value={adminCreateUserTier}
+                      onChange={(e) => setAdminCreateUserTier(e.target.value as "free" | "premium")}
+                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                    >
+                      <option value="free">Free</option>
+                      <option value="premium">Premium</option>
+                    </select>
+                  </label>
+                </div>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Role</span>
+                  <select
+                    value={adminCreateUserRole}
+                    onChange={(e) => setAdminCreateUserRole(e.target.value as "user" | "admin")}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                  >
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Display Name</span>
+                  <input
+                    type="text"
+                    value={adminCreateProfileDisplayName}
+                    onChange={(e) => setAdminCreateProfileDisplayName(e.target.value)}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                    placeholder="John Doe"
+                  />
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Age</span>
+                    <input
+                      type="number"
+                      value={adminCreateProfileAge}
+                      onChange={(e) => setAdminCreateProfileAge(e.target.value)}
+                      style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                      placeholder="25"
+                      min="18"
+                      max="120"
+                    />
+                  </label>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontSize: 13, color: "#b9bec9" }}>Location (optional)</span>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                      <input
+                        type="number"
+                        value={adminCreateProfileLat}
+                        onChange={(e) => setAdminCreateProfileLat(e.target.value)}
+                        style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                        placeholder="Lat"
+                        step="0.000001"
+                      />
+                      <input
+                        type="number"
+                        value={adminCreateProfileLng}
+                        onChange={(e) => setAdminCreateProfileLng(e.target.value)}
+                        style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff" }}
+                        placeholder="Lng"
+                        step="0.000001"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 13, color: "#b9bec9" }}>Bio (optional)</span>
+                  <textarea
+                    value={adminCreateProfileBio}
+                    onChange={(e) => setAdminCreateProfileBio(e.target.value)}
+                    style={{ padding: 8, border: "1px solid #444", borderRadius: 4, background: "#2a2d32", color: "#fff", minHeight: 60 }}
+                    placeholder="Tell us about yourself..."
+                    maxLength={280}
+                  />
+                </label>
+                <button
+                  type="button"
+                  style={buttonSecondary(adminBusy)}
+                  disabled={adminBusy}
+                  onClick={() => void adminCreateUserAndProfile()}
+                >
+                  CREATE USER & PROFILE
+                </button>
+              </div>
             </div>
           </div>
         </div>

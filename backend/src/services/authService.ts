@@ -95,6 +95,7 @@ export type AuthService = Readonly<{
   listUsers(): ReadonlyArray<Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role" | "ageVerified" | "emailVerified" | "bannedAtMs" | "bannedReason" | "createdAtMs">>;
   banUser(userId: unknown, reason: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">>;
   unbanUser(userId: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">>;
+  adminCreateUser(email: string, password: string, phoneE164: string | null, userType: UserType, tier: SubscriptionTier, role: UserRole): Result<StoredUser>;
   snapshotState(): AuthStateSnapshot;
 }>;
 
@@ -846,6 +847,54 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         bannedAtMs: updated.bannedAtMs,
         bannedReason: updated.bannedReason
       });
+    },
+
+    adminCreateUser(email: string, password: string, phoneE164: string | null, userType: UserType, tier: SubscriptionTier, role: UserRole): Result<StoredUser> {
+      if (typeof email !== "string" || !isLikelyValidEmail(email)) {
+        return err("UNAUTHORIZED_ACTION", "Invalid email.");
+      }
+      const normalizedPhone = typeof phoneE164 === "string" ? phoneE164.trim() : "";
+      if (normalizedPhone.length > 0 && !isLikelyValidPhoneE164(normalizedPhone)) {
+        return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
+      }
+      const passwordValid = typeof password === "string" && password.length >= 6;
+      if (!passwordValid) {
+        return err("UNAUTHORIZED_ACTION", "Invalid password. Use at least 6 characters.");
+      }
+
+      const normalizedEmail = normalizeEmail(email);
+      if (usersByEmail.has(normalizedEmail)) {
+        return err("UNAUTHORIZED_ACTION", "Email already registered.");
+      }
+
+      const salt = crypto.randomBytes(PASSWORD_SALT_BYTES);
+      const hash = hashPassword(password, salt);
+
+      const now = nowMs();
+      const user: StoredUser = {
+        id: crypto.randomUUID(),
+        email: normalizedEmail,
+        phoneE164: normalizedPhone.length > 0 ? normalizedPhone : null,
+        userType,
+        tier,
+        role,
+        ageVerified: true, // Admin-created users are auto age-verified
+        emailVerified: true, // Admin-created users are auto email-verified
+        bannedAtMs: null,
+        bannedReason: null,
+        verificationCodeSaltB64: null,
+        verificationCodeHashB64: null,
+        verificationCodeExpiresAtMs: null,
+        passwordSaltB64: salt.toString("base64"),
+        passwordHashB64: hash.toString("base64"),
+        createdAtMs: now
+      };
+
+      usersByEmail.set(normalizedEmail, user);
+      usersById.set(user.id, user);
+      persistUsers();
+      notifyStateChanged();
+      return ok(user);
     },
 
     snapshotState(): AuthStateSnapshot {

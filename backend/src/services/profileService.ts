@@ -239,6 +239,8 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
   ): Promise<Result<Profile>>;
   getPublicByUserId(userId: unknown): Promise<Result<PublicProfile>>;
   listPublicProfiles(): Promise<Result<ReadonlyArray<PublicProfile>>>;
+  adminGetProfile(userId: string): Promise<Result<Profile>>;
+  adminUpsertProfile(userId: string, update: ProfileUpdate): Promise<Result<Profile>>;
 }> {
   const nowMs = deps.nowMs ?? (() => Date.now());
 
@@ -401,6 +403,67 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
           updatedAtMs: p.updatedAtMs
         }));
       return ok(visible);
+    },
+
+    async adminGetProfile(userId: string): Promise<Result<Profile>> {
+      if (typeof userId !== "string" || userId.trim() === "") {
+        return err("INVALID_INPUT", "userId is required.");
+      }
+      const existing = await deps.repo.getByUserId(userId.trim());
+      if (!existing) return err("PROFILE_NOT_FOUND", "Profile not found.");
+      return ok(existing);
+    },
+
+    async adminUpsertProfile(userId: string, update: ProfileUpdate): Promise<Result<Profile>> {
+      if (typeof userId !== "string" || userId.trim() === "") {
+        return err("INVALID_INPUT", "userId is required.");
+      }
+
+      const displayNameRes = validateDisplayName(update.displayName);
+      if (!displayNameRes.ok) return displayNameRes;
+      const ageRes = validateAge(update.age);
+      if (!ageRes.ok) return ageRes;
+      const bioRes = validateBio(update.bio);
+      if (!bioRes.ok) return bioRes;
+      const statsRes = validateStats(update.stats);
+      if (!statsRes.ok) return statsRes;
+
+      const existing = await deps.repo.getByUserId(userId.trim());
+      const discreetMode = update.discreetMode === undefined ? existing?.discreetMode === true : update.discreetMode === true;
+      let travelMode = existing?.travelMode;
+      if (update.travelMode !== undefined) {
+        if (!isObject(update.travelMode)) return err("INVALID_INPUT", "travelMode must be an object.");
+        const enabled = (update.travelMode as Record<string, unknown>).enabled === true;
+        const latRaw = (update.travelMode as Record<string, unknown>).lat;
+        const lngRaw = (update.travelMode as Record<string, unknown>).lng;
+        const lat = latRaw === undefined ? undefined : asNumber(latRaw);
+        const lng = lngRaw === undefined ? undefined : asNumber(lngRaw);
+        if (latRaw !== undefined && lat === null) return err("INVALID_INPUT", "travelMode.lat must be a number.");
+        if (lngRaw !== undefined && lng === null) return err("INVALID_INPUT", "travelMode.lng must be a number.");
+        if (typeof lat === "number" && (lat < -90 || lat > 90)) return err("INVALID_INPUT", "travelMode.lat is out of range.", { min: -90, max: 90 });
+        if (typeof lng === "number" && (lng < -180 || lng > 180)) return err("INVALID_INPUT", "travelMode.lng is out of range.", { min: -180, max: 180 });
+        travelMode = {
+          enabled,
+          lat: lat === null ? undefined : lat,
+          lng: lng === null ? undefined : lng
+        };
+      }
+
+      const next: Profile = {
+        userId: userId.trim(),
+        displayName: displayNameRes.value,
+        age: ageRes.value,
+        bio: bioRes.value,
+        stats: statsRes.value,
+        discreetMode,
+        travelMode,
+        mainPhotoMediaId: existing?.mainPhotoMediaId,
+        galleryMediaIds: existing?.galleryMediaIds ?? [],
+        videoMediaId: existing?.videoMediaId,
+        updatedAtMs: nowMs()
+      };
+      await deps.repo.upsert(next);
+      return ok(next);
     }
   };
 }
