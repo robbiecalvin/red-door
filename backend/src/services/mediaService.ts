@@ -61,6 +61,7 @@ export type InitiateRequest = Readonly<{
   kind: unknown;
   mimeType: unknown;
   sizeBytes: unknown;
+  targetUserId?: string; // For admins to upload media for other users
 }>;
 
 export type InitiateResponse = Readonly<{
@@ -149,6 +150,16 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
       const auth = requireRegistered(session);
       if (!auth.ok) return auth;
 
+      // Determine target user ID - admins can specify a different user
+      let targetUserId = auth.value.userId;
+      if (req.targetUserId && typeof req.targetUserId === "string" && req.targetUserId.trim() !== "") {
+        // Only allow admins to specify target user ID
+        if (session.role !== "admin") {
+          return err("UNAUTHORIZED_ACTION", "Only admins can upload media for other users.");
+        }
+        targetUserId = req.targetUserId.trim();
+      }
+
       const kindRes = validateKind(req.kind);
       if (!kindRes.ok) return kindRes;
       const kind = kindRes.value;
@@ -163,7 +174,7 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
       if (sizeBytes > max) return err("MEDIA_TOO_LARGE", "Media is too large.", { maxSizeBytes: max });
 
       const mediaId = randomUUID();
-      const objectKey = objectKeyFor(auth.value.userId, mediaId, mimeType);
+      const objectKey = objectKeyFor(targetUserId, mediaId, mimeType);
       const expiresInSeconds = 60 * 5;
 
       const uploadUrl = await deps.storage.presignPutObject({
@@ -175,8 +186,9 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
 
       const record: MediaRecord = {
         mediaId,
-        userId: auth.value.userId,
+        userId: targetUserId,
         kind,
+        mimeType,
         mimeType,
         sizeBytes,
         objectKey,
@@ -197,11 +209,15 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
 
       const media = await deps.repo.getById(id);
       if (!media) return err("INVALID_INPUT", "Unknown media.");
-      if (media.userId !== auth.value.userId) return err("UNAUTHORIZED_ACTION", "Not allowed.");
+      
+      // Allow admins to complete uploads for any user, otherwise check ownership
+      if (session.role !== "admin" && media.userId !== auth.value.userId) {
+        return err("UNAUTHORIZED_ACTION", "Not allowed.");
+      }
 
       // Profile attachment is part of completion; fail early to avoid marking media as uploaded
       // when profile state cannot be updated.
-      const profile = await deps.profileRepo.getByUserId(auth.value.userId);
+      const profile = await deps.profileRepo.getByUserId(media.userId);
       if (!profile) return err("PROFILE_NOT_FOUND", "Profile not found.");
 
       const head = await deps.storage.headObject({ bucket, key: media.objectKey });

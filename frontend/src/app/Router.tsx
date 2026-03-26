@@ -6760,7 +6760,8 @@ function SettingsPanel({
           const initiated = await api.initiateMediaUpload(session.sessionToken, {
             kind: "photo_main",
             mimeType: adminCreateMainPhotoFile.type || "image/jpeg",
-            sizeBytes: adminCreateMainPhotoFile.size
+            sizeBytes: adminCreateMainPhotoFile.size,
+            targetUserId: userId
           });
           
           const handledLocally = await uploadToLocalSignedUrl(initiated.uploadUrl, adminCreateMainPhotoFile, adminCreateMainPhotoFile.type || "image/jpeg");
@@ -6786,7 +6787,8 @@ function SettingsPanel({
           const initiated = await api.initiateMediaUpload(session.sessionToken, {
             kind: "photo_gallery",
             mimeType: file.type || "image/jpeg",
-            sizeBytes: file.size
+            sizeBytes: file.size,
+            targetUserId: userId
           });
           
           const handledLocally = await uploadToLocalSignedUrl(initiated.uploadUrl, file, file.type || "image/jpeg");
@@ -6812,27 +6814,28 @@ function SettingsPanel({
       const profileData: any = {
         displayName: adminCreateProfileDisplayName.trim(),
         age,
-        bio: adminCreateProfileBio.trim() || ""
+        bio: adminCreateProfileBio.trim() || "",
+        stats: {}
       };
       
       // Add physical stats
       if (adminCreateProfileHeightInches.trim()) {
-        profileData.heightInches = parseInt(adminCreateProfileHeightInches.trim());
+        profileData.stats.heightInches = parseInt(adminCreateProfileHeightInches.trim());
       }
       if (adminCreateProfileWeightLbs.trim()) {
-        profileData.weightLbs = parseInt(adminCreateProfileWeightLbs.trim());
+        profileData.stats.weightLbs = parseInt(adminCreateProfileWeightLbs.trim());
       }
       if (adminCreateProfileRace.trim()) {
-        profileData.race = adminCreateProfileRace.trim();
+        profileData.stats.race = adminCreateProfileRace.trim();
       }
       if (adminCreateProfileCockSizeInches.trim()) {
-        profileData.cockSizeInches = parseFloat(adminCreateProfileCockSizeInches.trim());
+        profileData.stats.cockSizeInches = parseFloat(adminCreateProfileCockSizeInches.trim());
       }
       if (adminCreateProfileCutStatus) {
-        profileData.cutStatus = adminCreateProfileCutStatus;
+        profileData.stats.cutStatus = adminCreateProfileCutStatus;
       }
       if (adminCreateProfilePosition) {
-        profileData.position = adminCreateProfilePosition;
+        profileData.stats.position = adminCreateProfilePosition;
       }
       profileData.discreetMode = adminCreateProfileDiscreetMode;
       

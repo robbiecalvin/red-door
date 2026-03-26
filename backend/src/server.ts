@@ -787,7 +787,8 @@ async function main(): Promise<void> {
     const result = await mediaService.initiateUpload(sessionResult.value, {
       kind: (req.body as any)?.kind,
       mimeType: (req.body as any)?.mimeType,
-      sizeBytes: (req.body as any)?.sizeBytes
+      sizeBytes: (req.body as any)?.sizeBytes,
+      targetUserId: (req.body as any)?.targetUserId
     });
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({
@@ -1296,12 +1297,45 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const banned = bannedUserIds();
-    const active = presenceService.listActivePresence().filter((row) => {
+    
+    // Get active presence
+    const activePresence = presenceService.listActivePresence().filter((row) => {
       if (!row.key.startsWith("user:")) return true;
       const userId = row.key.slice("user:".length).trim();
       return !banned.has(userId);
     });
-    return res.status(200).json({ presence: active });
+    
+    // Get users with travel mode enabled
+    const allProfiles = await profileRepo.listAll();
+    const travelModeUsers = allProfiles.filter((profile) => {
+      return profile.travelMode?.enabled === true && 
+             profile.travelMode.lat !== undefined && 
+             profile.travelMode.lng !== undefined &&
+             !banned.has(profile.userId);
+    }).map((profile) => ({
+      key: `user:${profile.userId}`,
+      userType: "registered" as const,
+      userId: profile.userId,
+      lat: profile.travelMode!.lat!,
+      lng: profile.travelMode!.lng!,
+      status: "Travel mode",
+      updatedAtMs: profile.updatedAtMs
+    }));
+    
+    // Combine and deduplicate (active presence takes precedence)
+    const presenceMap = new Map<string, typeof activePresence[0]>();
+    
+    // Add travel mode users first
+    for (const user of travelModeUsers) {
+      presenceMap.set(user.key, user);
+    }
+    
+    // Add active presence (overwrites travel mode users if they have active presence)
+    for (const presence of activePresence) {
+      presenceMap.set(presence.key, presence);
+    }
+    
+    return res.status(200).json({ presence: Array.from(presenceMap.values()) });
   });
 
   // Matching

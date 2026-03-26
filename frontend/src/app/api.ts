@@ -4332,7 +4332,7 @@ export function apiClient(basePath = "/api"): Readonly<{
     },
     async initiateMediaUpload(
       sessionToken: string,
-      payload: Readonly<{ kind: MediaKind; mimeType: string; sizeBytes: number }>
+      payload: Readonly<{ kind: MediaKind; mimeType: string; sizeBytes: number; targetUserId?: string }>
     ): Promise<InitiateMediaUploadResponse> {
       const res = await fetch(`${basePath}/profile/media/initiate`, {
         method: "POST",
