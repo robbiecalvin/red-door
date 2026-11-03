@@ -39,19 +39,16 @@ function escapeHtml(s: string): string {
 }
 
 function defaultRasterStyle(): Record<string, unknown> {
-  // Keyless token-free dark basemap prioritized for reliability across environments.
+  // Public OpenStreetMap tiles do not require an API key.
   return {
     version: 8,
     sources: {
       basemap: {
         type: "raster",
-        tiles: [
-          "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-          "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-          "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        ],
+        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
         tileSize: 256,
-        attribution: "© OpenStreetMap contributors © CARTO"
+        maxzoom: 19,
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       }
     },
     layers: [
