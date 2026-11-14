@@ -120,15 +120,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent-deep); }
 .rd-board-panel { border: 1px solid var(--line); background: var(--surface); border-radius: 20px; overflow: hidden; }
 .rd-board-panel .rd-empty-state { min-height: 240px; }
-/* Dark map controls and popups; the basemap itself uses CARTO Dark Matter. */
-.rd-maplibre .maplibregl-ctrl-group { background: #1e1e21; border: 1px solid #ffffff24; border-radius: 12px; box-shadow: 0 4px 16px #0005; overflow: hidden; }
+/* Comfortable touch targets with the light basemap's default control colors. */
+.rd-maplibre .maplibregl-ctrl-group { border-radius: 12px; overflow: hidden; }
 .rd-maplibre .maplibregl-ctrl-group button { width: 44px; height: 44px; }
-.rd-maplibre .maplibregl-ctrl-group button + button { border-top-color: #ffffff18; }
-.rd-maplibre .maplibregl-ctrl-group button:hover { background: #303034; }
-.rd-maplibre .maplibregl-ctrl-icon { filter: invert(1); }
-.rd-maplibre .maplibregl-popup-content { background: #1e1e21; color: #f5f4f5; border-radius: 12px; box-shadow: 0 8px 24px #0006; }
-.rd-maplibre .maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: #1e1e21; }
-.rd-maplibre .maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: #1e1e21; }
-.rd-maplibre .maplibregl-ctrl-attrib { background: #141416e6; color: #c7c5cc; }
-.rd-maplibre .maplibregl-ctrl-attrib a { color: #c7c5cc; }
-.rd-maplibre .maplibregl-ctrl-attrib-button { filter: invert(1); }
