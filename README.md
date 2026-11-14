@@ -382,3 +382,9 @@ Based on `git log -n 30 --oneline`:
 - Product docs mark Date/Hybrid frontend scope as reserved, while backend services/routes include mode/matching/date-feed logic. Keep product-vs-implementation alignment explicit during future changes.
 - `npm run build` currently warns about large chunks (MapLibre bundle) but build succeeds.
 - Security advisories are currently transitive dependency issues and may require dependency-major decisions to fully remediate.
+
+## Red Door Plus
+
+Plus adds travel mode, advanced filters, saved searches, expanded favorites/pins and media limits, private albums, read receipts, and the existing three-person group chat flow for **CAD $7.99/month**. New registrations can use `THEREDDOORLAUNCH` for complimentary access through December 31, 2026 (Pacific time), without a card or automatic renewal. Redemption expires January 1, 2027.
+
+See [Plus subscription setup and behavior](docs/plus-subscriptions.md) for limits, Stripe backend configuration, promotion expiry, privacy rules, and deployment validation. Live purchases require Stripe credentials and a configured CAD monthly price on the backend host.

@@ -1,3 +1,5 @@
+import { PlusPanel } from "./PlusPanel";
+import { LAUNCH_END_MS, hasPlus } from "../../../shared/plus";
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiClient, type ServiceError, type Session } from "./api";
@@ -325,6 +327,8 @@ export function App(): React.ReactElement {
   const [password, setPassword] = useState<string>("");
   const [phoneE164, setPhoneE164] = useState<string>("");
   const [registerDisplayName, setRegisterDisplayName] = useState<string>("");
+  const [promoCode, setPromoCode] = useState("");
+  const [plusOpen, setPlusOpen] = useState(false);
   const [registerAge, setRegisterAge] = useState<string>("");
   const [verificationCode, setVerificationCode] = useState<string>("");
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string>("");
@@ -616,7 +620,7 @@ export function App(): React.ReactElement {
     setLastError(null);
     setAuthInfo("");
     try {
-      await api.register(email, password, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {} });
+      await api.register(email, password, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode });
       setProfileSetupDraft((prev) => ({
         ...prev,
         displayName: normalizedDisplayName,
@@ -908,6 +912,18 @@ export function App(): React.ReactElement {
     setFilterPanelOpen(false);
   }, [activeTab]);
 
+  useEffect(() => {
+    const open = () => setPlusOpen(true);
+    window.addEventListener("rd:open-plus", open);
+    return () => window.removeEventListener("rd:open-plus", open);
+  }, []);
+  useEffect(() => {
+    if (!session) return;
+    const refresh = () => { void api.getSession(session.sessionToken).then(r => setSession(r.session)).catch(() => {}); };
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    return () => { clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, [api, session?.sessionToken]);
   const topAvatar = topAvatarUrl ?? avatarForSeed(session?.userId ?? session?.sessionToken ?? "guest");
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
   const showBottomNav = Boolean(session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking);
@@ -915,13 +931,14 @@ export function App(): React.ReactElement {
 
   return (
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav" : ""}`}>
+      {plusOpen ? <PlusPanel api={api} session={session} onClose={() => setPlusOpen(false)} /> : null}
       {session ? (
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
             {session.ageVerified === true ? (
               <div className="rd-topbar-session">
                 <div className="rd-brand" aria-label="Red Door">
-                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Red Door</div>
+                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Red Door</div><button type="button" className="rd-plus-badge" onClick={() => setPlusOpen(true)} aria-label="Open Red Door Plus">{session && hasPlus(session) ? "PLUS" : "+"}</button>
                 </div>
                 <button
                   type="button"
@@ -1112,6 +1129,9 @@ export function App(): React.ReactElement {
                         </label>
                       ) : null}
 
+                      {authView === "register" ? (
+                        <label className="rd-field"><span className="rd-label">Promo code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" />{Date.now() < LAUNCH_END_MS ? <span className="rd-launch-offer">Use <strong>THEREDDOORLAUNCH</strong> for complimentary Plus through December 31, 2026. Redeem before January 1, 2027, Pacific time. No card required; no automatic renewal.</span> : null}</label>
+                      ) : null}
                       {authView === "register" ? (
                         <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
                           Password must be at least 6 characters for this web build.

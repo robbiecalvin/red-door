@@ -54,9 +54,11 @@ function parseStoredUser(row: Record<string, unknown>): StoredUser | null {
   return {
     id,
     email,
+    plusData: row.plus_data as StoredUser["plusData"],
     phoneE164: asNullableString(row.phone_e164),
     userType: asUserType(row.user_type),
     tier: asTier(row.tier),
+    plusExpiresAtMs: row.plus_expires_at_ms == null ? undefined : asNumber(row.plus_expires_at_ms),
     role: asRole(row.role),
     ageVerified: asBoolean(row.age_verified),
     emailVerified: asBoolean(row.email_verified),
@@ -113,7 +115,7 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
         pool.query(
           `SELECT id, email, phone_e164, user_type, tier, role, age_verified, email_verified, banned_at_ms, banned_reason,
                   verification_code_salt_b64, verification_code_hash_b64, verification_code_expires_at_ms,
-                  password_salt_b64, password_hash_b64, created_at_ms
+                  password_salt_b64, password_hash_b64, created_at_ms, plus_expires_at_ms, plus_data
            FROM auth_users`
         ),
         pool.query(
@@ -147,11 +149,11 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
             `INSERT INTO auth_users (
               id, email, phone_e164, user_type, tier, role, age_verified, email_verified, banned_at_ms, banned_reason,
               verification_code_salt_b64, verification_code_hash_b64, verification_code_expires_at_ms,
-              password_salt_b64, password_hash_b64, created_at_ms
+              password_salt_b64, password_hash_b64, created_at_ms, plus_expires_at_ms, plus_data
             ) VALUES (
               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
               $11, $12, $13,
-              $14, $15, $16
+              $14, $15, $16, $17, $18::jsonb
             )
             ON CONFLICT (id) DO UPDATE SET
               email = EXCLUDED.email,
@@ -168,7 +170,8 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
               verification_code_expires_at_ms = EXCLUDED.verification_code_expires_at_ms,
               password_salt_b64 = EXCLUDED.password_salt_b64,
               password_hash_b64 = EXCLUDED.password_hash_b64,
-              created_at_ms = EXCLUDED.created_at_ms`,
+              created_at_ms = EXCLUDED.created_at_ms,
+              plus_expires_at_ms = EXCLUDED.plus_expires_at_ms, plus_data = EXCLUDED.plus_data`,
             [
               user.id,
               user.email,
@@ -185,7 +188,7 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
               user.verificationCodeExpiresAtMs,
               user.passwordSaltB64,
               user.passwordHashB64,
-              user.createdAtMs
+              user.createdAtMs, user.plusExpiresAtMs ?? null, JSON.stringify(user.plusData ?? {})
             ]
           );
         }

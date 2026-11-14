@@ -1,3 +1,4 @@
+import { hasPlus, launchGrant, type PlusData } from "../../../shared/plus";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -38,6 +39,8 @@ export type StoredUser = Readonly<{
   phoneE164: string | null;
   userType: Exclude<UserType, "guest">;
   tier: SubscriptionTier;
+  plusExpiresAtMs?: number;
+  plusData?: PlusData;
   role?: UserRole;
   ageVerified: boolean;
   emailVerified: boolean;
@@ -55,6 +58,7 @@ export type Session = Readonly<{
   sessionToken: string;
   userType: UserType;
   tier: SubscriptionTier;
+  plusExpiresAtMs?: number;
   role?: UserRole;
   mode: Mode;
   userId?: string;
@@ -82,7 +86,7 @@ export type GuestSessionResult = Readonly<{
 
 export type AuthService = Readonly<{
   createGuestSession(): Result<GuestSessionResult>;
-  register(email: string, password: string, phoneE164: string): Result<RegisterResult>;
+  register(email: string, password: string, phoneE164: string, promoCode?: string): Result<RegisterResult>;
   verifyEmail(email: string, code: string): Result<VerifyEmailResult>;
   resendVerificationCode(email: string): Result<RegisterResult>;
   login(email: string, password: string): Result<VerifyEmailResult>;
@@ -96,6 +100,8 @@ export type AuthService = Readonly<{
   banUser(userId: unknown, reason: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">>;
   unbanUser(userId: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">>;
   adminCreateUser(email: string, password: string, phoneE164: string | null, userType: UserType, tier: SubscriptionTier, role: UserRole): Result<StoredUser>;
+  getUser(userId: string): StoredUser | undefined;
+  updatePlus(userId: string, update: { tier?: SubscriptionTier; plusExpiresAtMs?: number; plusData?: PlusData }): Result<StoredUser>;
   snapshotState(): AuthStateSnapshot;
 }>;
 
@@ -292,6 +298,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         phoneE164: typeof c.phoneE164 === "string" ? c.phoneE164 : null,
         userType: c.userType,
         tier: c.tier,
+        plusExpiresAtMs: typeof c.plusExpiresAtMs === "number" ? c.plusExpiresAtMs : undefined,
+        plusData: c.plusData && typeof c.plusData === "object" ? c.plusData as PlusData : undefined,
         role: c.role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "user",
         ageVerified: c.ageVerified === true,
         emailVerified: c.emailVerified,
@@ -409,7 +417,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     const session: Session = {
       sessionToken,
       userType: user.userType,
-      tier: user.tier,
+      tier: hasPlus(user, issuedAtMs) ? "premium" : "free",
+      plusExpiresAtMs: user.plusExpiresAtMs,
       role: normalizeRole(user.role),
       mode: "cruise",
       userId: user.id,
@@ -471,8 +480,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         notifyStateChanged();
         return banned as Result<Session>;
       }
-      if (normalizeRole(existing.role) !== normalizeRole(user.role)) {
-        const refreshed: Session = { ...existing, role: normalizeRole(user.role) };
+      const tier = hasPlus(user, now) ? "premium" : "free";
+      if (existing.tier !== tier || existing.plusExpiresAtMs !== user.plusExpiresAtMs || normalizeRole(existing.role) !== normalizeRole(user.role)) {
+        const refreshed: Session = { ...existing, tier, plusExpiresAtMs: user.plusExpiresAtMs, role: normalizeRole(user.role) };
         sessionsByToken.set(sessionToken, refreshed);
         return ok(refreshed);
       }
@@ -487,7 +497,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       return ok({ session });
     },
 
-    register(email: string, password: string, phoneE164: string): Result<RegisterResult> {
+    register(email: string, password: string, phoneE164: string, promoCode?: string): Result<RegisterResult> {
       if (typeof email !== "string" || !isLikelyValidEmail(email)) {
         return err("UNAUTHORIZED_ACTION", "Invalid email.");
       }
@@ -515,6 +525,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return err("UNAUTHORIZED_ACTION", "Email already registered.");
       }
 
+      let plusExpiresAtMs: number | undefined;
+      try { plusExpiresAtMs = launchGrant(promoCode, nowMs()); }
+      catch (e) { return err("UNAUTHORIZED_ACTION", (e as Error).message); }
       const salt = crypto.randomBytes(PASSWORD_SALT_BYTES);
       const hash = hashPassword(password, salt);
 
@@ -524,7 +537,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         email: normalizedEmail,
         phoneE164: normalizedPhone.length > 0 ? normalizedPhone : null,
         userType: "registered",
-        tier: "free",
+        tier: plusExpiresAtMs ? "premium" : "free",
+        plusExpiresAtMs,
         role: adminEmails.has(normalizedEmail) ? "admin" : "user",
         ageVerified: false,
         // Web build currently runs without verification-code UX; treat new registrations as verified.
@@ -850,6 +864,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     },
 
     adminCreateUser(email: string, password: string, phoneE164: string | null, userType: UserType, tier: SubscriptionTier, role: UserRole): Result<StoredUser> {
+      if (userType !== "registered" && userType !== "subscriber") return err("UNAUTHORIZED_ACTION", "A stored account must be registered or subscribed.");
       if (typeof email !== "string" || !isLikelyValidEmail(email)) {
         return err("UNAUTHORIZED_ACTION", "Invalid email.");
       }
@@ -897,6 +912,15 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       return ok(user);
     },
 
+    getUser(userId: string) { return usersById.get(userId); },
+    updatePlus(userId, update) {
+      const user = usersById.get(userId);
+      if (!user) return err("USER_NOT_FOUND", "Account not found.");
+      const next: StoredUser = { ...user, ...update };
+      usersById.set(userId, next); usersByEmail.set(next.email, next);
+      persistUsers(); notifyStateChanged();
+      return ok(next);
+    },
     snapshotState(): AuthStateSnapshot {
       return snapshotStateInternal();
     }

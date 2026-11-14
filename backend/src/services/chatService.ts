@@ -1,3 +1,4 @@
+import { hasPlus } from "../../../shared/plus";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -34,6 +35,8 @@ export type Session = Readonly<{
   mode: Mode;
   userId?: string;
   ageVerified?: boolean;
+  tier?: "free" | "premium";
+  plusExpiresAtMs?: number;
 }>;
 
 export type ChatMessage = Readonly<{
@@ -390,6 +393,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
 
   return {
     sendMessage(session: Session, input: SendMessageInput): Result<ChatMessage> {
+      if (typeof input?.text === "string" && /^GROUP_INVITE_(REQUEST|ACCEPT)\|/.test(input.text) && !hasPlus(session, nowMs())) return err("UNAUTHORIZED_ACTION", "Group chats require Red Door Plus.");
       const sessionValid = validateSession(session);
       if (!sessionValid.ok) return sessionValid;
 
@@ -531,7 +535,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       return ok(
         list.map((m) => {
           if (m.fromKey !== fromKey) return m;
-          const readAtMs = otherReadAtMs >= m.createdAtMs ? otherReadAtMs : undefined;
+          const readAtMs = hasPlus(session, nowMs()) && otherReadAtMs >= m.createdAtMs ? otherReadAtMs : undefined;
           return { ...m, deliveredAtMs: m.deliveredAtMs ?? m.createdAtMs, readAtMs };
         })
       );

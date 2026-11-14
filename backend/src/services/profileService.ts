@@ -1,3 +1,4 @@
+import { hasPlus, limits } from "../../../shared/plus";
 import { containsDisallowedKidVariation } from "./contentPolicy";
 
 export type ErrorCode = "ANONYMOUS_FORBIDDEN" | "AGE_GATE_REQUIRED" | "INVALID_INPUT" | "PROFILE_NOT_FOUND" | "PROFILE_HIDDEN";
@@ -56,6 +57,9 @@ export type SessionLike = Readonly<{
   sessionToken?: string;
   userId?: string;
   ageVerified: boolean;
+  tier?: "free" | "premium";
+  plusExpiresAtMs?: number;
+  role?: "user" | "admin";
 }>;
 
 export type ProfileUpdate = Readonly<{
@@ -272,6 +276,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
       const discreetMode = update.discreetMode === undefined ? existing?.discreetMode === true : update.discreetMode === true;
       let travelMode = existing?.travelMode;
       if (update.travelMode !== undefined) {
+        if ((update.travelMode as any)?.enabled === true && !hasPlus(session)) return err("INVALID_INPUT", "Travel mode requires Red Door Plus.");
         if (!isObject(update.travelMode)) return err("INVALID_INPUT", "travelMode must be an object.");
         const enabled = (update.travelMode as Record<string, unknown>).enabled === true;
         const latRaw = (update.travelMode as Record<string, unknown>).lat;
@@ -354,6 +359,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
         nextMain = mainId;
       }
 
+      if (nextGallery.length > limits(session).gallery) return err("INVALID_INPUT", `Your plan allows ${limits(session).gallery} gallery photos.`);
       const next: Profile = {
         ...existing,
         galleryMediaIds: nextGallery,

@@ -115,6 +115,8 @@ export async function ensurePostgresSchema(pool: Pool): Promise<void> {
       expires_at_ms BIGINT NOT NULL
     )
   `);
+  await pool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS plus_expires_at_ms BIGINT`);
+  await pool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS plus_data JSONB`);
   await pool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'`);
   await pool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS banned_at_ms BIGINT`);
   await pool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS banned_reason TEXT`);

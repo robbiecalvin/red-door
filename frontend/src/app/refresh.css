@@ -123,3 +123,16 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent-deep); 
 /* Comfortable touch targets with the light basemap's default control colors. */
 .rd-maplibre .maplibregl-ctrl-group { border-radius: 12px; overflow: hidden; }
 .rd-maplibre .maplibregl-ctrl-group button { width: 44px; height: 44px; }
+.rd-plus-backdrop { position: fixed; inset: 0; z-index: 120; background: #000b; display: grid; place-items: center; padding: 12px; }
+.rd-plus-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 24px; width: min(100%, 560px); max-height: calc(100dvh - 24px); overflow: auto; overscroll-behavior: contain; }
+.rd-plus-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rd-plus-panel h1 { font-size: 36px; letter-spacing: -1.5px; margin: 16px 0 8px; }
+.rd-plus-panel h1 span { color: var(--accent); }
+.rd-plus-price { font-size: 30px; font-weight: 700; margin: 0; }.rd-plus-price span { font-size: 14px; color: var(--muted); font-weight: 400; }
+.rd-plus-features { padding: 0; list-style: none; display: grid; gap: 12px; margin: 24px 0; }.rd-plus-features li { display: flex; gap: 12px; }.rd-plus-features li span { color: var(--accent); }
+.rd-plus-small { font-size: 12px; color: var(--muted); line-height: 1.7; }.rd-plus-status { padding: 16px; border-radius: 12px; border: 1px solid #e52d4040; background: #e52d4010; }
+.rd-plus-album { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 12px; display: grid; gap: 12px; }.rd-plus-album h2 { margin: 12px 0 0; font-size: 20px; }.rd-plus-album p { margin: 0; color: var(--muted); font-size: 13px; }
+.rd-private-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }.rd-private-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 12px; }.rd-private-grid button { width: 100%; font-size: 11px; }
+.rd-plus-gate { padding: 14px; border: 1px solid #e52d4030; border-radius: 12px; background: #e52d400a; color: var(--muted); display: grid; gap: 10px; font-size: 13px; }
+.rd-launch-offer { margin: 16px 0; padding: 12px; background: #e52d400c; border: 1px solid #e52d4028; border-radius: 12px; font-size: 12px; color: #c9c5ce; }.rd-launch-offer strong { color: var(--accent); }
+.rd-plus-badge { font-size: 10px; padding: 3px 7px; background: #e52d4015; color: var(--accent); border: 1px solid #e52d4030; border-radius: 6px; letter-spacing: .05em; }

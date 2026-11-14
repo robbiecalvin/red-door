@@ -1,3 +1,4 @@
+import { hasPlus, limits, launchGrant, type PlusData, type SavedSearch } from "../../../shared/plus";
 export type ServiceError = Readonly<{
   code: string;
   message: string;
@@ -8,6 +9,7 @@ export type Session = Readonly<{
   sessionToken: string;
   userType: "guest" | "registered" | "subscriber";
   tier: "free" | "premium";
+  plusExpiresAtMs?: number;
   role?: "user" | "admin";
   mode: "cruise" | "date" | "hybrid";
   userId?: string;
@@ -35,6 +37,11 @@ export type RegisterResponse = Readonly<{
   verificationRequired: true;
 }>;
 
+export type PlusStatus = {
+  active: boolean; expiresAtMs?: number; limits: ReturnType<typeof limits>;
+  savedSearches: SavedSearch[]; pinnedKeys: string[]; privateMediaIds: string[];
+  albumSharedWith: string[]; billingConfigured: boolean; hasBillingAccount: boolean;
+};
 export type GuestResponse = Readonly<{ session: Session }>;
 
 export type EarlyAccessSignup = Readonly<{
@@ -125,6 +132,7 @@ export type ProfileUpdatePayload = Readonly<{
 }>;
 
 export type RegistrationProfileInput = Readonly<{
+  promoCode?: string;
   displayName: string;
   age: number;
   stats?: ProfileUpdatePayload["stats"];
@@ -139,7 +147,7 @@ export type ProfileUpdate = Readonly<{
   travelMode?: unknown;
 }>;
 
-export type MediaKind = "photo_main" | "photo_gallery" | "video";
+export type MediaKind = "photo_main" | "photo_gallery" | "photo_private" | "video";
 
 export type InitiateMediaUploadResponse = Readonly<{
   mediaId: string;
@@ -2041,6 +2049,8 @@ type LocalUser = Readonly<{
   verified: boolean;
   userType: "registered" | "subscriber";
   tier: "free" | "premium";
+  plusExpiresAtMs?: number;
+  plusData?: PlusData;
 }>;
 
 type LocalEarlyAccessSignup = Readonly<{
@@ -2366,7 +2376,8 @@ function requireSession(state: LocalState, sessionToken: string): Session {
   if (!session) {
     throw { code: "SESSION_NOT_FOUND", message: "Session not found." } as ServiceError;
   }
-  return session;
+  const user = session.userId ? state.usersById[session.userId] : undefined;
+  return user ? { ...session, tier: hasPlus(user) ? "premium" : "free", plusExpiresAtMs: user.plusExpiresAtMs } : session;
 }
 
 function requireUserSession(state: LocalState, sessionToken: string): Session {
@@ -2504,6 +2515,14 @@ export async function uploadToLocalSignedUrl(uploadUrl: string, file: Blob, mime
 }
 
 function createLocalApiClient(): Readonly<{
+  getPlus(sessionToken: string): Promise<PlusStatus>;
+  savePlusPreferences(sessionToken: string, data: PlusData): Promise<{ ok: true }>;
+  getPrivateAlbum(sessionToken: string, userId: string): Promise<{ photos: { mediaId: string; downloadUrl: string }[]; expiresInSeconds: number }>;
+  startSubscription(sessionToken: string): Promise<{ url: string }>;
+  manageSubscription(sessionToken: string): Promise<{ url: string }>;
+  adminCreateUser(sessionToken: string, userData: Readonly<{ email: string; password: string; phoneE164?: string; userType: "guest" | "registered" | "subscriber"; tier: "free" | "premium"; role: "user" | "admin" }>): Promise<{ user: AdminUserSummary }>;
+  adminGetProfile(sessionToken: string, userId: string): Promise<{ profile: UserProfile }>;
+  adminUpsertProfile(sessionToken: string, userId: string, payload: ProfileUpdate): Promise<{ profile: UserProfile }>;
   createGuest(): Promise<GuestResponse>;
   requestEarlyAccessSignup(name: string, email: string): Promise<{ signup: EarlyAccessSignup }>;
   validateMembershipCode(membershipCode: string): Promise<{ valid: true; signup: EarlyAccessSignup }>;
@@ -2567,7 +2586,7 @@ function createLocalApiClient(): Readonly<{
   ): Promise<{ profile: UserProfile }>;
   initiateMediaUpload(
     sessionToken: string,
-    payload: Readonly<{ kind: MediaKind; mimeType: string; sizeBytes: number }>
+    payload: Readonly<{ kind: MediaKind; mimeType: string; sizeBytes: number; targetUserId?: string }>
   ): Promise<InitiateMediaUploadResponse>;
   completeMediaUpload(sessionToken: string, mediaId: string): Promise<{ media: unknown }>;
   getFavorites(sessionToken: string): Promise<{ favorites: ReadonlyArray<string> }>;
@@ -2639,6 +2658,27 @@ function createLocalApiClient(): Readonly<{
   const feeCents = 499;
 
   return {
+    async getPlus(token) {
+      const state = readState(), session = requireUserSession(state, token);
+      const data = state.usersById[session.userId!]?.plusData ?? {};
+      return { active: hasPlus(session), expiresAtMs: session.plusExpiresAtMs, limits: limits(session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: false, hasBillingAccount: false };
+    },
+    async savePlusPreferences(token, data) {
+      const state = readState(), session = requireUserSession(state, token), user = state.usersById[session.userId!];
+      if (data.savedSearches && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Saved searches require Red Door Plus." };
+      if ((data.pinnedKeys?.length ?? 0) > limits(session).pins || (data.privateMediaIds?.length ?? 0) > limits(session).privateAlbum) throw { code: "PLUS_REQUIRED", message: "Your plan limit has been reached." };
+      for (const id of data.privateMediaIds ?? []) { const m = state.mediaById[id]; if (!m || m.ownerUserId !== user.id || m.kind !== "photo_private") throw { message: "Invalid private media." }; }
+      const allowed = { savedSearches: data.savedSearches ?? user.plusData?.savedSearches, pinnedKeys: data.pinnedKeys ?? user.plusData?.pinnedKeys, privateMediaIds: data.privateMediaIds ?? user.plusData?.privateMediaIds, albumSharedWith: data.albumSharedWith ?? user.plusData?.albumSharedWith };
+      writeState({ ...state, usersById: { ...state.usersById, [user.id]: { ...user, plusData: { ...user.plusData, ...allowed } } } }); return { ok: true };
+    },
+    async getPrivateAlbum(token, userId) {
+      const state = readState(), session = requireUserSession(state, token), owner = state.usersById[userId];
+      const me = actorKeyForSession(session);
+      if (!owner || ((state.blockedByActorKey[me] ?? []).includes(`user:${userId}`) || (state.blockedByActorKey[`user:${userId}`] ?? []).includes(me)) || (userId !== session.userId && !owner.plusData?.albumSharedWith?.includes(session.userId!))) throw { code: "FORBIDDEN", message: "This album has not been shared with you." };
+      return { photos: (owner.plusData?.privateMediaIds ?? []).flatMap(id => { const media = state.mediaById[id]; return media?.dataUrl ? [{ mediaId: id, downloadUrl: media.dataUrl }] : []; }), expiresInSeconds: 60 };
+    },
+    async startSubscription() { throw { message: "Purchases require the live backend and Stripe configuration." }; },
+    async manageSubscription() { throw { message: "Billing management requires the live backend." }; },
     async createGuest(): Promise<GuestResponse> {
       const sessionToken = randomId("session");
       const session: Session = {
@@ -2700,6 +2740,9 @@ function createLocalApiClient(): Readonly<{
       if (state.userIdByEmail[normalizedEmail]) {
         throw { code: "EMAIL_IN_USE", message: "Email already registered." } as ServiceError;
       }
+      let plusExpiresAtMs: number | undefined;
+      try { plusExpiresAtMs = launchGrant(profile.promoCode, nowMs()); }
+      catch(e) { throw { code: "INVALID_PROMO", message: (e as Error).message }; }
       const userId = randomId("user");
       const user: LocalUser = {
         id: userId,
@@ -2708,7 +2751,8 @@ function createLocalApiClient(): Readonly<{
         phoneE164,
         verified: true,
         userType: "registered",
-        tier: "free"
+        tier: plusExpiresAtMs ? "premium" : "free",
+        plusExpiresAtMs
       };
       writeState({
         ...state,
@@ -2734,7 +2778,8 @@ function createLocalApiClient(): Readonly<{
       const session: Session = {
         sessionToken,
         userType: verifiedUser.userType,
-        tier: verifiedUser.tier,
+        tier: hasPlus(verifiedUser) ? "premium" : "free",
+        plusExpiresAtMs: verifiedUser.plusExpiresAtMs,
         role: roleForLocalEmail(normalizedEmail),
         mode: "hybrid",
         userId,
@@ -2780,7 +2825,8 @@ function createLocalApiClient(): Readonly<{
       const session: Session = {
         sessionToken,
         userType: user.userType,
-        tier: user.tier,
+        tier: hasPlus(user) ? "premium" : "free",
+        plusExpiresAtMs: user.plusExpiresAtMs,
         role: roleForLocalEmail(normalizedEmail),
         mode: "hybrid",
         userId,
@@ -2929,6 +2975,7 @@ function createLocalApiClient(): Readonly<{
       const state = readState();
       const session = requireSession(state, sessionToken);
       const fromKey = actorKeyForSession(session);
+      if (/^GROUP_INVITE_(REQUEST|ACCEPT)\|/.test(text) && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Group chats require Red Door Plus." };
       const normalizedToKey = normalizeChatPeerKey(toKey);
       if (containsDisallowedKidVariation(text)) {
         throw { code: "UNAUTHORIZED_ACTION", message: "Message rejected." } as ServiceError;
@@ -2959,7 +3006,7 @@ function createLocalApiClient(): Readonly<{
         .filter((m) => m.chatKind === chatKind)
         .filter((m) => (isSpotThread ? m.toKey === peer : (m.fromKey === me && m.toKey === peer) || (m.fromKey === peer && m.toKey === me)))
         .sort((a, b) => a.createdAtMs - b.createdAtMs);
-      return { messages: clone(messages) };
+      return { messages: clone(messages.map(m => ({ ...m, readAtMs: hasPlus(session) ? m.readAtMs : undefined }))) };
     },
     async listChatThreads(
       sessionToken: string,
@@ -3133,11 +3180,13 @@ function createLocalApiClient(): Readonly<{
     },
     async getPublicMediaUrl(mediaId: string): Promise<{ downloadUrl: string }> {
       const state = readState();
+      if (state.mediaById[mediaId]?.kind === "photo_private") throw { code: "FORBIDDEN", message: "Private album access required." };
       return { downloadUrl: resolveMediaDataUrl(state, mediaId) };
     },
     async upsertMyProfile(sessionToken: string, payload: ProfileUpdatePayload): Promise<{ profile: UserProfile }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
+      if (payload.travelMode?.enabled && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Travel mode requires Red Door Plus." };
       const userId = session.userId as string;
       const previous = state.profilesByUserId[userId];
       const next = createProfileFromInput(userId, payload, previous);
@@ -3179,11 +3228,12 @@ function createLocalApiClient(): Readonly<{
     },
     async initiateMediaUpload(
       sessionToken: string,
-      payload: Readonly<{ kind: MediaKind; mimeType: string; sizeBytes: number }>
+      payload: Readonly<{ kind: MediaKind; mimeType: string; sizeBytes: number; targetUserId?: string }>
     ): Promise<InitiateMediaUploadResponse> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
       const userId = session.userId as string;
+      if (payload.kind === "video" && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Profile videos require Red Door Plus." };
       const mediaId = randomId("media");
       const objectKey = `profile/${userId}/${mediaId}`;
       const rec: LocalMediaRecord = {
@@ -3213,6 +3263,7 @@ function createLocalApiClient(): Readonly<{
       const session = requireUserSession(state, sessionToken);
       const userId = session.userId as string;
       const media = state.mediaById[mediaId];
+      if (media?.kind === "photo_private") throw { code: "FORBIDDEN", message: "Private album access required." };
       if (!media || !media.uploaded || !media.dataUrl) {
         throw { code: "MEDIA_UPLOAD_INCOMPLETE", message: "Upload incomplete." } as ServiceError;
       }
@@ -3229,6 +3280,7 @@ function createLocalApiClient(): Readonly<{
           updatedAtMs: nowMs()
         };
       } else if (media.kind === "photo_gallery") {
+        if (!existingProfile.galleryMediaIds.includes(mediaId) && existingProfile.galleryMediaIds.length >= limits(session).gallery) throw { code: "PLUS_REQUIRED", message: "Gallery limit reached. Upgrade to Plus for 12 photos." };
         const hasMedia = existingProfile.galleryMediaIds.includes(mediaId);
         nextProfile = {
           ...existingProfile,
@@ -3236,6 +3288,7 @@ function createLocalApiClient(): Readonly<{
           updatedAtMs: nowMs()
         };
       } else if (media.kind === "video") {
+        if (!hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Profile videos require Red Door Plus." };
         nextProfile = {
           ...existingProfile,
           videoMediaId: mediaId,
@@ -3265,6 +3318,7 @@ function createLocalApiClient(): Readonly<{
       if (current.has(targetUserId)) {
         current.delete(targetUserId);
       } else {
+        if (current.size >= limits(session).favorites) throw { code: "PLUS_REQUIRED", message: "Favorite limit reached. Upgrade to Plus for 100 favorites." };
         current.add(targetUserId);
         isFavorite = true;
       }
@@ -3666,9 +3720,9 @@ function createLocalApiClient(): Readonly<{
         id: userId,
         email: normalizedEmail,
         password: userData.password,
-        phoneE164: userData.phoneE164 || null,
+        phoneE164: userData.phoneE164 || "",
         verified: true,
-        userType: userData.userType,
+        userType: userData.userType === "subscriber" ? "subscriber" : "registered",
         tier: userData.tier
       };
       writeState({
@@ -3679,7 +3733,7 @@ function createLocalApiClient(): Readonly<{
       const summary: AdminUserSummary = {
         id: userId,
         email: normalizedEmail,
-        userType: userData.userType,
+        userType: userData.userType === "subscriber" ? "subscriber" : "registered",
         tier: userData.tier,
         role: userData.role,
         ageVerified: true,
@@ -3690,31 +3744,31 @@ function createLocalApiClient(): Readonly<{
       };
       return { user: summary };
     },
-    async adminGetProfile(sessionToken: string, userId: string): Promise<{ profile: Profile }> {
+    async adminGetProfile(sessionToken: string, userId: string): Promise<{ profile: UserProfile }> {
       const state = readState();
       requireAdminSession(state, sessionToken);
       const profile = state.profilesByUserId[userId];
       if (!profile) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
       return { profile: clone(profile) };
     },
-    async adminUpsertProfile(sessionToken: string, userId: string, profileData: ProfileUpdate): Promise<{ profile: Profile }> {
+    async adminUpsertProfile(sessionToken: string, userId: string, profileData: ProfileUpdate): Promise<{ profile: UserProfile }> {
       const state = readState();
       requireAdminSession(state, sessionToken);
       const existing = state.profilesByUserId[userId];
       const displayName = typeof profileData.displayName === "string" ? profileData.displayName.trim() : (existing?.displayName || "");
       const age = typeof profileData.age === "number" ? profileData.age : (existing?.age || 25);
       const bio = typeof profileData.bio === "string" ? profileData.bio.trim() : (existing?.bio || "");
-      const stats = profileData.stats || existing?.stats || {};
+      const stats = (profileData.stats || existing?.stats || {}) as UserProfile["stats"];
       const discreetMode = profileData.discreetMode === true;
       const travelMode = profileData.travelMode || existing?.travelMode;
-      const profile: Profile = {
+      const profile: UserProfile = {
         userId,
         displayName,
         age,
         bio,
         stats,
         discreetMode,
-        travelMode,
+        travelMode: travelMode as UserProfile["travelMode"],
         mainPhotoMediaId: existing?.mainPhotoMediaId,
         galleryMediaIds: existing?.galleryMediaIds || [],
         videoMediaId: existing?.videoMediaId,
@@ -3911,6 +3965,14 @@ function createLocalApiClient(): Readonly<{
 }
 
 export function apiClient(basePath = "/api"): Readonly<{
+  getPlus(sessionToken: string): Promise<PlusStatus>;
+  savePlusPreferences(sessionToken: string, data: PlusData): Promise<{ ok: true }>;
+  getPrivateAlbum(sessionToken: string, userId: string): Promise<{ photos: { mediaId: string; downloadUrl: string }[]; expiresInSeconds: number }>;
+  startSubscription(sessionToken: string): Promise<{ url: string }>;
+  manageSubscription(sessionToken: string): Promise<{ url: string }>;
+  adminCreateUser(sessionToken: string, userData: Readonly<{ email: string; password: string; phoneE164?: string; userType: "guest" | "registered" | "subscriber"; tier: "free" | "premium"; role: "user" | "admin" }>): Promise<{ user: AdminUserSummary }>;
+  adminGetProfile(sessionToken: string, userId: string): Promise<{ profile: UserProfile }>;
+  adminUpsertProfile(sessionToken: string, userId: string, payload: ProfileUpdate): Promise<{ profile: UserProfile }>;
   createGuest(): Promise<GuestResponse>;
   requestEarlyAccessSignup(name: string, email: string): Promise<{ signup: EarlyAccessSignup }>;
   validateMembershipCode(membershipCode: string): Promise<{ valid: true; signup: EarlyAccessSignup }>;
@@ -3974,7 +4036,7 @@ export function apiClient(basePath = "/api"): Readonly<{
   ): Promise<{ profile: UserProfile }>;
   initiateMediaUpload(
     sessionToken: string,
-    payload: Readonly<{ kind: MediaKind; mimeType: string; sizeBytes: number }>
+    payload: Readonly<{ kind: MediaKind; mimeType: string; sizeBytes: number; targetUserId?: string }>
   ): Promise<InitiateMediaUploadResponse>;
   completeMediaUpload(sessionToken: string, mediaId: string): Promise<{ media: unknown }>;
   getFavorites(sessionToken: string): Promise<{ favorites: ReadonlyArray<string> }>;
@@ -4054,6 +4116,11 @@ export function apiClient(basePath = "/api"): Readonly<{
   }
 
   return {
+    async getPlus(token) { return readJsonOrThrow(await fetch(`${basePath}/plus`, { headers: headers(token) })) as Promise<PlusStatus>; },
+    async savePlusPreferences(token, data) { return readJsonOrThrow(await fetch(`${basePath}/plus/preferences`, { method: "PUT", headers: headers(token), body: JSON.stringify(data) })) as Promise<{ ok: true }>; },
+    async getPrivateAlbum(token, userId) { return readJsonOrThrow(await fetch(`${basePath}/plus/albums/${encodeURIComponent(userId)}`, { headers: headers(token) })) as Promise<{ photos: { mediaId: string; downloadUrl: string }[]; expiresInSeconds: number }>; },
+    async startSubscription(token) { return readJsonOrThrow(await fetch(`${basePath}/billing/checkout`, { method: "POST", headers: headers(token) })) as Promise<{ url: string }>; },
+    async manageSubscription(token) { return readJsonOrThrow(await fetch(`${basePath}/billing/portal`, { method: "POST", headers: headers(token) })) as Promise<{ url: string }>; },
     async createGuest(): Promise<GuestResponse> {
       const res = await fetch(`${basePath}/auth/guest`, { method: "POST" });
       return (await readJsonOrThrow(res)) as GuestResponse;
@@ -4078,7 +4145,7 @@ export function apiClient(basePath = "/api"): Readonly<{
       const res = await fetch(`${basePath}/auth/register`, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ email, password, phoneE164, displayName: profile.displayName, age: profile.age, stats: profile.stats ?? {} })
+        body: JSON.stringify({ email, password, phoneE164, promoCode: profile.promoCode, displayName: profile.displayName, age: profile.age, stats: profile.stats ?? {} })
       });
       return (await readJsonOrThrow(res)) as RegisterResponse;
     },
@@ -4542,20 +4609,20 @@ export function apiClient(basePath = "/api"): Readonly<{
       });
       return (await readJsonOrThrow(res)) as { user: AdminUserSummary };
     },
-    async adminGetProfile(sessionToken: string, userId: string): Promise<{ profile: Profile }> {
+    async adminGetProfile(sessionToken: string, userId: string): Promise<{ profile: UserProfile }> {
       const res = await fetch(`${basePath}/admin/profiles/${encodeURIComponent(userId)}`, {
         method: "GET",
         headers: headers(sessionToken)
       });
-      return (await readJsonOrThrow(res)) as { profile: Profile };
+      return (await readJsonOrThrow(res)) as { profile: UserProfile };
     },
-    async adminUpsertProfile(sessionToken: string, userId: string, profileData: ProfileUpdate): Promise<{ profile: Profile }> {
+    async adminUpsertProfile(sessionToken: string, userId: string, profileData: ProfileUpdate): Promise<{ profile: UserProfile }> {
       const res = await fetch(`${basePath}/admin/profiles/${encodeURIComponent(userId)}`, {
         method: "PUT",
         headers: headers(sessionToken),
         body: JSON.stringify(profileData)
       });
-      return (await readJsonOrThrow(res)) as { profile: Profile };
+      return (await readJsonOrThrow(res)) as { profile: UserProfile };
     },
     async adminListCruisingSpots(sessionToken: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
       const res = await fetch(`${basePath}/admin/cruise-spots`, {

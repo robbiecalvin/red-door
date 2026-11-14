@@ -1,3 +1,4 @@
+import { limits } from "../../../shared/plus";
 export type ErrorCode = "ANONYMOUS_FORBIDDEN" | "AGE_GATE_REQUIRED" | "INVALID_INPUT";
 
 export type ServiceError = Readonly<{
@@ -76,6 +77,7 @@ export function createFavoritesService(): Readonly<{
         favorites.delete(target);
         isFavorite = false;
       } else {
+        if (favorites.size >= limits(session).favorites) return err("INVALID_INPUT", `Your plan allows ${limits(session).favorites} favorites. Upgrade to Plus for more.`);
         favorites.add(target);
         isFavorite = true;
       }

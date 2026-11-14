@@ -1,3 +1,6 @@
+import { hasPlus, limits } from "../../../shared/plus";
+import { openPlus } from "./PlusPanel";
+import { SavedSearches } from "./SavedSearches";
 import { Icon, type IconName } from "./Icon";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -494,7 +497,7 @@ function CruiseSurface({
     spots: true,
     groups: true
   });
-  const [travelCenter, setTravelCenter] = useState<{ lat: number; lng: number } | null>(() => readTravelCenter());
+  const [travelCenter, setTravelCenter] = useState<{ lat: number; lng: number } | null>(() => hasPlus(session) ? readTravelCenter() : null);
   const [travelPickerArmed, setTravelPickerArmed] = useState<boolean>(false);
   const { state: presenceState, lastErrorMessage: realtimeError } = useCruisePresence({ wsUrl: wsProxyUrl(), sessionToken: session.sessionToken });
   const presence = useMemo(() => Array.from(presenceState.byKey.values()), [presenceState.byKey]);
@@ -1079,6 +1082,7 @@ function CruiseSurface({
 
   async function handleTravelLocationSelected(coords: { lat: number; lng: number }): Promise<void> {
     if (!travelPickerArmed) return;
+    if (!hasPlus(session)) { openPlus(); return; }
     const lat = Number(coords.lat.toFixed(6));
     const lng = Number(coords.lng.toFixed(6));
     const confirmed = window.confirm(
@@ -1201,7 +1205,7 @@ function CruiseSurface({
       height={isMobile ? "100%" : "calc(100dvh - 62px)"}
       visible
       travelPickerArmed={travelPickerArmed}
-      onToggleTravelPicker={() => setTravelPickerArmed((prev) => !prev)}
+      onToggleTravelPicker={() => { if (!hasPlus(session)) { openPlus(); return; } setTravelPickerArmed((prev) => !prev); }}
       onTravelLocationSelected={(coords) => void handleTravelLocationSelected(coords)}
     />
   );
@@ -1220,7 +1224,7 @@ function CruiseSurface({
         height={"100%"}
         visible={mobileTab === "map"}
         travelPickerArmed={travelPickerArmed}
-        onToggleTravelPicker={() => setTravelPickerArmed((prev) => !prev)}
+        onToggleTravelPicker={() => { if (!hasPlus(session)) { openPlus(); return; } setTravelPickerArmed((prev) => !prev); }}
         onTravelLocationSelected={(coords) => void handleTravelLocationSelected(coords)}
       />
     </div>
@@ -1750,6 +1754,7 @@ function CruiseChat({
       if (onlineStatusFilter === "offline" && p.isOnline) return false;
       if (hasChatHistoryOnly && !conversationMetaByPeerKey[p.key]) return false;
       if (hasPicturesOnly && !p.hasPicture) return false;
+      if (!hasPlus(session)) return true;
       if (Number.isFinite(minAge) && (typeof p.age !== "number" || p.age < (minAge as number))) return false;
       if (Number.isFinite(maxAge) && (typeof p.age !== "number" || p.age > (maxAge as number))) return false;
 
@@ -1775,6 +1780,7 @@ function CruiseChat({
       return a.key.localeCompare(b.key);
     });
   }, [
+    session.tier, session.plusExpiresAtMs,
     baseCards,
     favorites,
     favoritesOnly,
@@ -1878,7 +1884,7 @@ function CruiseChat({
         const res = await api.sendChat(session.sessionToken, chatKind, normalizedToKey, text, media);
         const msg = (res as any)?.message as ChatMessage;
         const next: ChatMessage[] = [msg];
-        if (chatKind === "cruise" && thirdMemberKey) {
+        if (chatKind === "cruise" && thirdMemberKey && hasPlus(session)) {
           try {
             const copy = await api.sendChat(session.sessionToken, chatKind, normalizePeerKey(thirdMemberKey), text, media);
             const copyMsg = (copy as any)?.message as ChatMessage;
@@ -2458,6 +2464,7 @@ function CruiseChat({
   }, [api, me, session.sessionToken]);
 
   async function addThirdMember(): Promise<void> {
+    if (!hasPlus(session)) { openPlus(); return; }
     if (!thirdCandidateKey.trim()) return;
     if (!peerKey.trim()) {
       setLastError("Select a user first.");
@@ -2480,6 +2487,7 @@ function CruiseChat({
   }
 
   async function acceptInvite(inviteId: string, inviterKey: string, primaryPeerKey: string): Promise<void> {
+    if (!hasPlus(session)) { openPlus(); return; }
     try {
       await api.sendChat(session.sessionToken, "cruise", inviterKey, `${GROUP_INVITE_ACCEPT_PREFIX}${inviteId}|${me}|${primaryPeerKey}`);
       setPendingInviteNotifs((prev) => prev.filter((n) => n.inviteId !== inviteId));
@@ -2619,6 +2627,7 @@ function CruiseChat({
         ) : null}
         {groupStatus ? <div style={{ color: "#ff7a88", fontSize: 12 }}>{groupStatus}</div> : null}
         <ChatWindow
+          readReceipts={hasPlus(session)}
           chatKind={channelToChatKind(channel)}
           peerKey={peerKey}
           currentUserKey={me}
@@ -2770,7 +2779,7 @@ function CruiseChat({
                   </label>
                 </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+              <fieldset disabled={!hasPlus(session)} style={{ border: 0, padding: 0, margin: 0, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, opacity: hasPlus(session) ? 1 : .45 }}><legend className="rd-label">Advanced filters · Plus</legend>
                 <input style={fieldStyle()} placeholder="Min age" value={filterMinAge} onChange={(e) => setFilterMinAge(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Max age" value={filterMaxAge} onChange={(e) => setFilterMaxAge(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Race" value={filterRace} onChange={(e) => setFilterRace(e.target.value)} />
@@ -2791,7 +2800,8 @@ function CruiseChat({
                   <option value="bottom">Bottom</option>
                   <option value="side">Side</option>
                 </select>
-              </div>
+              </fieldset>
+              <SavedSearches api={api} session={session} filters={{ filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition, favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter }} onApply={f => { setFilterMinAge((typeof f.filterMinAge === "string" ? f.filterMinAge : "")); setFilterMaxAge((typeof f.filterMaxAge === "string" ? f.filterMaxAge : "")); setFilterRace((typeof f.filterRace === "string" ? f.filterRace : "")); setFilterCutStatus((f.filterCutStatus === "cut" || f.filterCutStatus === "uncut" ? f.filterCutStatus : "")); setFilterMinHeight((typeof f.filterMinHeight === "string" ? f.filterMinHeight : "")); setFilterMaxHeight((typeof f.filterMaxHeight === "string" ? f.filterMaxHeight : "")); setFilterMinWeight((typeof f.filterMinWeight === "string" ? f.filterMinWeight : "")); setFilterMaxWeight((typeof f.filterMaxWeight === "string" ? f.filterMaxWeight : "")); setFilterMinCockSize((typeof f.filterMinCockSize === "string" ? f.filterMinCockSize : "")); setFilterMaxCockSize((typeof f.filterMaxCockSize === "string" ? f.filterMaxCockSize : "")); setFilterPosition((f.filterPosition === "top" || f.filterPosition === "bottom" || f.filterPosition === "side" ? f.filterPosition : "")); setFavoritesOnly(f.favoritesOnly === true); setHasChatHistoryOnly(f.hasChatHistoryOnly === true); setHasPicturesOnly(f.hasPicturesOnly === true); setOnlineStatusFilter((f.onlineStatusFilter === "online" || f.onlineStatusFilter === "offline" ? f.onlineStatusFilter : "all")) }} />
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                 <button type="button" style={buttonSecondary(false)} onClick={clearGridFilters}>RESET</button>
                 <button type="button" style={buttonPrimary(false)} onClick={() => setFiltersOpen(false)}>DONE</button>
@@ -3173,6 +3183,7 @@ function DateChat({
         </div>
       </div>
       <ChatWindow
+          readReceipts={hasPlus(session)}
         chatKind={channelToChatKind(channel)}
         peerKey={peerKey}
         currentUserKey={meKey}
@@ -3283,7 +3294,7 @@ function ThreadsPanel({
         return new Set();
       }
     };
-    setPinnedKeys(parseSet(safeLocalStorageGet(pinnedStorageKey)));
+    if (session.userId) void api.getPlus(session.sessionToken).then(data => setPinnedKeys(new Set(data.pinnedKeys))).catch(() => {});
     setDeletedKeys(parseSet(safeLocalStorageGet(deletedStorageKey)));
   }, [deletedStorageKey, pinnedStorageKey]);
 
@@ -3615,7 +3626,7 @@ function ThreadsPanel({
           }
         }
         setMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
-        if (chatKind === "cruise" && thirdMemberKey) {
+        if (chatKind === "cruise" && thirdMemberKey && hasPlus(session)) {
           try {
             const copy = await api.sendChat(session.sessionToken, chatKind, thirdMemberKey, text, media);
             const copyMsg = (copy as any)?.message as ChatMessage;
@@ -3644,6 +3655,7 @@ function ThreadsPanel({
   );
 
   async function sendThirdInvite(): Promise<void> {
+    if (!hasPlus(session)) { openPlus(); return; }
     if (!selectedPeerKey || !thirdCandidateKey) return;
     if (!rows.some((row) => row.key === thirdCandidateKey)) {
       setLastError("You can only add a third user you have previously messaged.");
@@ -3670,12 +3682,13 @@ function ThreadsPanel({
   }
 
   function togglePinThread(key: string): void {
-    setPinnedKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    const next = new Set(pinnedKeys);
+    if (next.has(key)) next.delete(key);
+    else {
+      if (next.size >= limits(session).pins) { openPlus(); return; }
+      next.add(key);
+    }
+    void api.savePlusPreferences(session.sessionToken, { pinnedKeys: [...next] }).then(() => setPinnedKeys(next)).catch(e => setLastError(normalizeErrorMessage(e)));
   }
 
   function deleteSelectedThreads(): void {
@@ -3731,6 +3744,7 @@ function ThreadsPanel({
         </div>
         {threadView === "messages" ? (
           <ChatWindow
+          readReceipts={hasPlus(session)}
             chatKind={selectedChatKind}
             peerKey={selectedPeerKey}
             currentUserKey={meKey}
@@ -4846,6 +4860,7 @@ function PublicPostings({
       </div>
       {spotThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13, padding: "8px 10px" }}>Loading thread...</div> : null}
       <ChatWindow
+          readReceipts={hasPlus(session)}
         chatKind="cruise"
         peerKey={selectedSpotThreadKey}
         currentUserKey={myActorKey}
@@ -5157,6 +5172,7 @@ function PublicPostings({
                 </div>
                 {adThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13 }}>Loading chat...</div> : null}
                 <ChatWindow
+          readReceipts={hasPlus(session)}
                   chatKind="date"
                   peerKey={selectedAdThreadKey}
                   currentUserKey={myActorKey}
@@ -5208,6 +5224,7 @@ function PublicPostings({
                 <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", fontSize: 14 }}>{selectedGroup.groupDetails ?? selectedGroup.body}</div>
                 {groupThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13 }}>Loading board...</div> : null}
                 <ChatWindow
+          readReceipts={hasPlus(session)}
                   chatKind="date"
                   peerKey={selectedGroupThreadKey}
                   currentUserKey={myActorKey}
@@ -5728,6 +5745,7 @@ function PromotedProfilesPanel({
               </div>
               {promotedThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13 }}>Loading chat...</div> : null}
               <ChatWindow
+          readReceipts={hasPlus(session)}
                 chatKind="date"
                 peerKey={`user:${selectedListing.userId}`}
                 currentUserKey={myActorKey}
@@ -6339,12 +6357,12 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
                 disabled={saving}
                 onSelect={setVideoFile}
               />
-              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("video", videoFile)}>
-                UPLOAD VIDEO
+              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => { if (!hasPlus(session)) { openPlus(); return; } void upload("video", videoFile); }}>
+                {hasPlus(session) ? "UPLOAD VIDEO" : "UNLOCK PROFILE VIDEO · PLUS"}
               </button>
             </div>
           </div>
-          <div style={{ color: "#b9bec9", fontSize: 13 }}>Gallery count: {galleryIds.length}</div>
+          <div style={{ color: "#b9bec9", fontSize: 13 }}>Gallery: {galleryIds.length} / {limits(session).gallery} photos</div>
           {!galleryIds.length ? (
             <div style={{ color: "#b9bec9", fontSize: 13 }}>No gallery photos uploaded yet.</div>
           ) : (

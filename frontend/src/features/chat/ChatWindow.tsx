@@ -46,6 +46,7 @@ function fallbackAuthorLabel(actorKey: string): string {
 }
 
 export function ChatWindow({
+  readReceipts = false,
   chatKind,
   peerKey,
   currentUserKey,
@@ -60,6 +61,7 @@ export function ChatWindow({
   presentation,
   authorLabelForKey
 }: Readonly<{
+  readReceipts?: boolean;
   chatKind: ChatKind;
   peerKey: string;
   currentUserKey: string;
@@ -522,7 +524,7 @@ export function ChatWindow({
                 {!boardMode ? <div style={{ fontSize: 10, color: "#AAAAAA" }}>{formatTime(m.createdAtMs)}</div> : null}
                 {mine && !boardMode ? (
                   <div style={{ fontSize: 10, color: "#ff99a3" }}>
-                    {typeof m.readAtMs === "number" ? "Read" : typeof m.deliveredAtMs === "number" ? "Delivered" : ""}
+                    {readReceipts && typeof m.readAtMs === "number" ? "Read" : typeof m.deliveredAtMs === "number" ? "Delivered" : ""}
                   </div>
                 ) : null}
               </div>

@@ -1,3 +1,5 @@
+import { hasPlus, limits, type PlusData, type SavedSearch } from "../../shared/plus";
+import { stripeRequest, verifyStripeEvent, assertPlusPrice, signAlbumAccess, validAlbumAccess } from "./services/subscriptionService";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -387,12 +389,14 @@ async function main(): Promise<void> {
   let initialAuthState: AuthStateSnapshot | undefined;
   let initialChatState: ChatPersistenceState | undefined;
   let authPersistQueue: Promise<void> = Promise.resolve();
+  let authPersistenceError: unknown = null;
   let chatPersistQueue: Promise<void> = Promise.resolve();
   const queueAuthStateSave = (state: AuthStateSnapshot): void => {
     if (!authStateRepo) return;
     authPersistQueue = authPersistQueue
-      .then(() => authStateRepo.saveState(state))
+      .then(async () => { await authStateRepo.saveState(state); authPersistenceError = null; })
       .catch((e: unknown) => {
+        authPersistenceError = e;
         const message = e instanceof Error ? e.message : String(e);
         console.error(`[RedDoor] Failed to persist auth state: ${message}`);
       });
@@ -518,6 +522,37 @@ async function main(): Promise<void> {
     }
     next();
   });
+  app.post("/billing/webhook", express.raw({ type: "application/json", limit: "256kb" }), async (req, res) => {
+    if (!process.env.STRIPE_WEBHOOK_SECRET) return res.status(503).json({ message: "Billing is not configured." });
+    let event: any;
+    try { event = verifyStripeEvent(req.body, String(req.headers["stripe-signature"] ?? ""), process.env.STRIPE_WEBHOOK_SECRET); }
+    catch { return res.status(400).json({ message: "Invalid webhook signature." }); }
+    if (!["checkout.session.completed", "invoice.paid", "customer.subscription.updated", "customer.subscription.deleted"].includes(event.type)) return res.json({ received: true });
+    try {
+      const object = event.data.object;
+      const subscriptionId = object.object === "subscription" ? object.id : object.subscription ?? object.parent?.subscription_details?.subscription;
+      if (typeof subscriptionId !== "string") return res.json({ received: true });
+      // Retrieve canonical current state: replays and out-of-order events cannot extend access.
+      const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(subscriptionId)}?expand[]=items.data.price`);
+      const userId = subscription.metadata?.userId;
+      const user = typeof userId === "string" ? authService.getUser(userId) : undefined;
+      if (!user) return res.status(400).json({ message: "Unknown subscription account." });
+      const price = subscription.items?.data?.[0]?.price;
+      assertPlusPrice(price);
+      if (price.id !== process.env.STRIPE_PLUS_PRICE_ID) return res.status(400).json({ message: "Unexpected subscription price." });
+      const plusData = { ...user.plusData, stripeCustomerId: String(subscription.customer), stripeSubscriptionId: subscription.id };
+      const periodEnd = Number(subscription.current_period_end) * 1000;
+      if (subscription.status === "active" && Number.isFinite(periodEnd)) {
+        authService.updatePlus(userId, { tier: "premium", plusExpiresAtMs: Math.max(user.plusExpiresAtMs ?? 0, periodEnd), plusData });
+      } else {
+        // Cancellation stops renewal; already paid or complimentary time remains available.
+        authService.updatePlus(userId, { plusData });
+      }
+      await authPersistQueue;
+      if (authPersistenceError) throw new Error("Subscription persistence failed.");
+      return res.json({ received: true });
+    } catch { return res.status(502).json({ message: "Unable to synchronize subscription. Retry webhook delivery." }); }
+  });
   app.use(express.json({ limit: "8kb" }));
 
   app.get("/health", (_req, res) => {
@@ -562,6 +597,7 @@ async function main(): Promise<void> {
       return res.status(400).json({ code: "INVALID_INPUT", message: "Missing object key." });
     }
     const key = decodeURIComponent(encodedKey);
+    if (key.startsWith("private-profiles/")) return res.status(403).end();
     const stored = localStorage.getObject(key);
     if (!stored) {
       return res.status(404).json({ code: "NOT_FOUND", message: "Object not found." });
@@ -610,6 +646,7 @@ async function main(): Promise<void> {
         return res.status(400).json({ code: "INVALID_INPUT", message: "Missing object key." });
       }
       const key = decodeURIComponent(encodedKey);
+    if (key.startsWith("private-profiles/")) return res.status(403).end();
       const stored = await pgStorage.getObject(key);
       if (!stored) {
         return res.status(404).json({ code: "NOT_FOUND", message: "Object not found." });
@@ -641,6 +678,121 @@ async function main(): Promise<void> {
     return sessionResult.value;
   }
 
+  function plusUser(req: express.Request, res: express.Response) {
+    const session = authService.getSession(getSessionToken(req) ?? "");
+    if (!session.ok) { sendError(res, session.error); return null; }
+    if (!session.value.userId || session.value.userType === "guest" || !session.value.ageVerified) {
+      res.status(403).json({ code: "UNAUTHORIZED_ACTION", message: "Register and verify your age to use this feature." }); return null;
+    }
+    const user = authService.getUser(session.value.userId);
+    return user ? { user, session: session.value } : null;
+  }
+  const premiumError = (res: express.Response) => res.status(402).json({ code: "PLUS_REQUIRED", message: "This feature is included with Red Door Plus (CAD $7.99/month)." });
+
+  app.get("/plus", (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    const data = actor.user.plusData ?? {};
+    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.user.plusExpiresAtMs, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET && process.env.STRIPE_PLUS_PRICE_ID && process.env.PUBLIC_APP_URL), hasBillingAccount: Boolean(data.stripeCustomerId) });
+  });
+  app.put("/plus/preferences", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    const data: PlusData = { ...actor.user.plusData };
+    if (req.body.savedSearches !== undefined) {
+      if (!hasPlus(actor.session)) return premiumError(res);
+      const searches = req.body.savedSearches;
+      if (!Array.isArray(searches) || searches.length > 10 || searches.some((x: any) => typeof x?.name !== "string" || x.name.length > 60 || !x.name.trim() || !x.filters || typeof x.filters !== "object" || Array.isArray(x.filters) || Object.entries(x.filters).some(([k,v]) => k.length > 40 || !(typeof v === "boolean" || typeof v === "string" && v.length <= 100)))) return res.status(400).json({ message: "Invalid saved searches (maximum 10)." });
+      data.savedSearches = searches as SavedSearch[];
+    }
+    for (const key of ["pinnedKeys", "privateMediaIds", "albumSharedWith"] as const) {
+      if (req.body[key] === undefined) continue;
+      const values = req.body[key];
+      const max = key === "pinnedKeys" ? limits(actor.session).pins : key === "privateMediaIds" ? limits(actor.session).privateAlbum : 100;
+      if (!Array.isArray(values) || values.length > max || values.some((x: any) => typeof x !== "string" || !x.trim() || x.length > 200)) return res.status(400).json({ code: "PLUS_REQUIRED", message: `Limit for ${key}: ${max}.` });
+      if (key === "privateMediaIds") for (const id of values) {
+        const media = await mediaRepo.getById(id);
+        if (!media || media.userId !== actor.user.id || media.kind !== "photo_private" || !media.uploadedAtMs) return res.status(403).json({ message: "Invalid private album media." });
+      }
+      data[key] = [...new Set(values)] as string[];
+    }
+    authService.updatePlus(actor.user.id, { plusData: data });
+    await authPersistQueue;
+    if (authPersistenceError) return res.status(503).json({ message: "Unable to save preferences. Please retry." });
+    return res.json({ ok: true });
+  });
+  app.get("/plus/albums/:userId", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    const owner = authService.getUser(req.params.userId);
+    const blocked = blockService.isBlocked(`user:${actor.user.id}`, `user:${req.params.userId}`);
+    if (!owner || blocked || (owner.id !== actor.user.id && !owner.plusData?.albumSharedWith?.includes(actor.user.id))) return res.status(403).json({ message: "This album has not been shared with you." });
+    const mediaIds = owner.plusData?.privateMediaIds ?? [];
+    const photos = [];
+    for (const id of mediaIds) {
+      const media = await mediaRepo.getById(id);
+      if (!media || media.kind !== "photo_private" || media.userId !== owner.id) continue;
+      const expires = Date.now() + 60_000;
+      const signature = signAlbumAccess(jwtSecret!, owner.id, actor.user.id, id, expires);
+      const url = `/plus/albums/${encodeURIComponent(owner.id)}/photos/${encodeURIComponent(id)}?viewer=${encodeURIComponent(actor.user.id)}&expires=${expires}&signature=${signature}`;
+      photos.push({ mediaId: id, downloadUrl: absolutizeStorageUrl(req, url) });
+    }
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ photos, expiresInSeconds: 60 });
+  });
+  app.get("/plus/albums/:userId/photos/:mediaId", async (req, res) => {
+    const owner = authService.getUser(req.params.userId);
+    const viewer = typeof req.query.viewer === "string" ? req.query.viewer : "";
+    const user = authService.getUser(viewer);
+    const expires = Number(req.query.expires);
+    const signature = String(req.query.signature ?? "");
+    if (!owner || !user || !user.ageVerified || user.bannedAtMs || owner.bannedAtMs || !validAlbumAccess(jwtSecret!, owner.id, viewer, req.params.mediaId, expires, signature) || blockService.isBlocked(`user:${owner.id}`, `user:${viewer}`) || (owner.id !== viewer && !owner.plusData?.albumSharedWith?.includes(viewer)) || !owner.plusData?.privateMediaIds?.includes(req.params.mediaId)) return res.status(403).end();
+    const media = await mediaRepo.getById(req.params.mediaId);
+    if (!media || media.kind !== "photo_private" || media.userId !== owner.id) return res.status(404).end();
+    res.setHeader("Cache-Control", "no-store"); res.setHeader("Referrer-Policy", "no-referrer");
+    if (mediaStorageMode === "s3") {
+      const url = await mediaStorage.presignGetObject({ bucket: s3Bucket, key: media.objectKey, expiresInSeconds: Math.max(1, Math.floor((expires - Date.now()) / 1000)) });
+      return res.redirect(url);
+    }
+    const object = mediaStorageMode === "local" ? (mediaStorage as LocalObjectStorage).getObject(media.objectKey) : await (mediaStorage as PostgresObjectStorage).getObject(media.objectKey);
+    if (!object) return res.status(404).end();
+    res.setHeader("Content-Type", object.mimeType); return res.send(object.data);
+  });
+  app.post("/billing/checkout", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    try {
+      if (hasPlus(actor.session)) return res.status(409).json({ message: "You already have Plus. Manage your subscription or wait until your complimentary access ends." });
+      const appUrl = process.env.PUBLIC_APP_URL;
+      const priceId = process.env.STRIPE_PLUS_PRICE_ID;
+      if (!appUrl || !priceId || !process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(503).json({ message: "Subscriptions are not available for purchase yet." });
+      if (!/^https:\/\//.test(appUrl)) throw new Error("Configure a secure public app URL.");
+      if (actor.user.plusData?.stripeSubscriptionId) {
+        const existing = await stripeRequest(`subscriptions/${encodeURIComponent(actor.user.plusData.stripeSubscriptionId)}`);
+        if (!["canceled", "incomplete_expired"].includes(existing.status)) return res.status(409).json({ message: "Manage your existing subscription before starting another." });
+      }
+      const priorCheckoutId = actor.user.plusData?.stripeCheckoutSessionId;
+      if (priorCheckoutId) {
+        const prior = await stripeRequest(`checkout/sessions/${encodeURIComponent(priorCheckoutId)}`);
+        if (prior.status === "open") return res.json({ url: prior.url });
+        if (prior.status === "complete" && !actor.user.plusData?.stripeSubscriptionId) return res.status(409).json({ message: "Payment is being confirmed. Refresh your subscription status shortly." });
+      }
+      const price = await stripeRequest(`prices/${encodeURIComponent(priceId)}`); assertPlusPrice(price);
+      const params = new URLSearchParams({ mode: "subscription", "line_items[0][price]": priceId, "line_items[0][quantity]": "1", "subscription_data[metadata][userId]": actor.user.id, client_reference_id: actor.user.id, success_url: appUrl + "?billing=success", cancel_url: appUrl + "?billing=cancelled" });
+      if (actor.user.plusData?.stripeCustomerId) params.set("customer", actor.user.plusData.stripeCustomerId);
+      else params.set("customer_email", actor.user.email);
+      const checkout = await stripeRequest("checkout/sessions", params, `reddoor-plus:${actor.user.id}:${priorCheckoutId ?? "initial"}`);
+      const latestUser = authService.getUser(actor.user.id)!;
+      authService.updatePlus(actor.user.id, { plusData: { ...latestUser.plusData, stripeCheckoutSessionId: checkout.id } });
+      await authPersistQueue;
+      if (authPersistenceError) return res.status(503).json({ message: "Unable to save checkout. Please retry." });
+      return res.json({ url: checkout.url });
+    } catch (e) { return res.status(502).json({ message: (e as Error).message }); }
+  });
+  app.post("/billing/portal", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    const customer = actor.user.plusData?.stripeCustomerId;
+    if (!customer || !process.env.PUBLIC_APP_URL) return res.status(400).json({ message: "No billing account is attached to this profile." });
+    try { const portal = await stripeRequest("billing_portal/sessions", new URLSearchParams({ customer, return_url: process.env.PUBLIC_APP_URL })); return res.json({ url: portal.url }); }
+    catch (e) { return res.status(502).json({ message: (e as Error).message }); }
+  });
+
   // Auth
   app.post("/auth/guest", (_req, res) => {
     const result = authService.createGuestSession();
@@ -652,7 +804,7 @@ async function main(): Promise<void> {
     const email = (req.body as any)?.email;
     const password = (req.body as any)?.password;
     const phoneE164 = (req.body as any)?.phoneE164;
-    const result = authService.register(email, password, phoneE164);
+    const result = authService.register(email, password, phoneE164, (req.body as any)?.promoCode);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json(result.value);
   });
@@ -1292,7 +1444,7 @@ async function main(): Promise<void> {
     return res.status(200).json({ presence: result.value });
   });
 
-  app.get("/presence/active", (req, res) => {
+  app.get("/presence/active", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);

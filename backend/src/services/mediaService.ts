@@ -1,8 +1,9 @@
+import { hasPlus, limits } from "../../../shared/plus";
 import { createHash, randomUUID } from "node:crypto";
 
 import type { ProfileRepository, SessionLike } from "./profileService";
 
-export type MediaKind = "photo_main" | "photo_gallery" | "video";
+export type MediaKind = "photo_main" | "photo_gallery" | "photo_private" | "video";
 
 export type ErrorCode =
   | "ANONYMOUS_FORBIDDEN"
@@ -97,7 +98,7 @@ function asInt(v: unknown): number | null {
 }
 
 function validateKind(v: unknown): Result<MediaKind> {
-  if (v === "photo_main" || v === "photo_gallery" || v === "video") return ok(v);
+  if (v === "photo_main" || v === "photo_gallery" || v === "photo_private" || v === "video") return ok(v);
   return err("INVALID_INPUT", "Invalid media kind.");
 }
 
@@ -131,9 +132,9 @@ function extensionForMime(mimeType: string): string {
   return "bin";
 }
 
-function objectKeyFor(userId: string, mediaId: string, mimeType: string): string {
+function objectKeyFor(userId: string, mediaId: string, mimeType: string, kind: MediaKind): string {
   const ext = extensionForMime(mimeType);
-  return `profiles/${userId}/${mediaId}.${ext}`;
+  return `${kind === "photo_private" ? "private-profiles" : "profiles"}/${userId}/${mediaId}.${ext}`;
 }
 
 export function createMediaService(deps: MediaServiceDeps): Readonly<{
@@ -163,6 +164,7 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
       const kindRes = validateKind(req.kind);
       if (!kindRes.ok) return kindRes;
       const kind = kindRes.value;
+      if (kind === "video" && !hasPlus(session)) return err("UNAUTHORIZED_ACTION", "Profile videos require Red Door Plus.");
 
       const mimeRes = validateMimeType(kind, req.mimeType);
       if (!mimeRes.ok) return mimeRes;
@@ -174,7 +176,7 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
       if (sizeBytes > max) return err("MEDIA_TOO_LARGE", "Media is too large.", { maxSizeBytes: max });
 
       const mediaId = randomUUID();
-      const objectKey = objectKeyFor(targetUserId, mediaId, mimeType);
+      const objectKey = objectKeyFor(targetUserId, mediaId, mimeType, kind);
       const expiresInSeconds = 60 * 5;
 
       const uploadUrl = await deps.storage.presignPutObject({
@@ -188,7 +190,6 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
         mediaId,
         userId: targetUserId,
         kind,
-        mimeType,
         mimeType,
         sizeBytes,
         objectKey,
@@ -229,15 +230,18 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
         return err("MEDIA_TOO_LARGE", "Media is too large.", { maxSizeBytes: max });
       }
 
+      if (media.kind === "video" && !hasPlus(session)) return err("UNAUTHORIZED_ACTION", "Profile videos require Red Door Plus.");
+      if (media.kind === "photo_gallery" && !profile.galleryMediaIds.includes(id) && profile.galleryMediaIds.length >= limits(session).gallery) return err("UNAUTHORIZED_ACTION", `Your plan allows ${limits(session).gallery} gallery photos.`);
       const sha256 = createHash("sha256").update(media.objectKey).digest("hex");
       const uploadedAtMs = nowMs();
       await deps.repo.markUploaded(id, uploadedAtMs, sha256);
 
       const updatedAtMs = nowMs();
       const updated = (() => {
+        if (media.kind === "photo_private") return profile;
         if (media.kind === "photo_main") return { ...profile, mainPhotoMediaId: id, updatedAtMs };
         if (media.kind === "video") return { ...profile, videoMediaId: id, updatedAtMs };
-        const nextGallery = Array.from(new Set([...(profile.galleryMediaIds ?? []), id])).slice(0, 7);
+        const nextGallery = Array.from(new Set([...(profile.galleryMediaIds ?? []), id])).slice(0, limits(session).gallery);
         return { ...profile, galleryMediaIds: nextGallery, updatedAtMs };
       })();
 
@@ -265,6 +269,7 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
       const id = asString(mediaId);
       if (!id) return err("INVALID_INPUT", "mediaId is required.");
       const media = await deps.repo.getById(id);
+      if (media?.kind === "photo_private") return err("UNAUTHORIZED_ACTION", "Private media requires album access.");
       if (!media) return err("INVALID_INPUT", "Unknown media.");
       if (!media.uploadedAtMs) return err("MEDIA_UPLOAD_INCOMPLETE", "Upload is not complete.");
       const downloadUrl = await deps.storage.presignGetObject({ bucket, key: media.objectKey, expiresInSeconds: 60 * 10 });

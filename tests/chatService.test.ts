@@ -725,7 +725,7 @@ describe("chatService", () => {
     const svc = createChatService({ nowMs: () => now, rateLimitPerMinute: 100 });
 
     const sent = svc.sendMessage(
-      { sessionToken: "s_a", userType: "guest", mode: "cruise", ageVerified: true },
+      { sessionToken: "s_a", userType: "registered", tier: "premium", userId: "a", mode: "cruise", ageVerified: true },
       { chatKind: "cruise", toKey: "session:s_b", text: "hello" }
     );
     expect(sent.ok).toBe(true);
@@ -736,12 +736,12 @@ describe("chatService", () => {
     const read = svc.markRead(
       { sessionToken: "s_b", userType: "guest", mode: "cruise", ageVerified: true },
       "cruise",
-      "session:s_a"
+      "user:a"
     );
     expect(read.ok).toBe(true);
 
     const listed = svc.listMessages(
-      { sessionToken: "s_a", userType: "guest", mode: "cruise", ageVerified: true },
+      { sessionToken: "s_a", userType: "registered", tier: "premium", userId: "a", mode: "cruise", ageVerified: true },
       "cruise",
       "session:s_b"
     );
