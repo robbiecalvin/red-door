@@ -3,10 +3,8 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./app/App";
 import "./app/styles.css";
+import "./app/refresh.css";
 import "maplibre-gl/dist/maplibre-gl.css";
-import "@fontsource/monoton/400.css";
-import "@fontsource/rajdhani/400.css";
-import "@fontsource/rajdhani/600.css";
 
 type ErrorBoundaryState = Readonly<{ error: Error | null }>;
 

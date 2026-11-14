@@ -1,3 +1,4 @@
+import { Icon, type IconName } from "./Icon";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -30,11 +31,6 @@ import placeholderB from "../assets/reddoor-placeholder-2.svg";
 import placeholderC from "../assets/reddoor-placeholder-3.svg";
 import mapSpotIcon from "../assets/map-spot-icon.svg";
 import mapGroupIcon from "../assets/map-group-icon.svg";
-import iconChatGrid from "../assets/icons/chatgrid.png";
-import iconInbox from "../assets/icons/inbox.png";
-import iconFavorites from "../assets/icons/favorites.png";
-import iconSpots from "../assets/icons/cruisingspots.png";
-import iconGroups from "../assets/icons/groups.png";
 
 type Api = ReturnType<typeof apiClient>;
 
@@ -77,69 +73,19 @@ type ProfileDraft = Readonly<{
 }>;
 
 function cardStyle(): React.CSSProperties {
-  return {
-    background:
-      "radial-gradient(560px 240px at 10% 0%, rgba(255,46,63,0.24), transparent 58%), radial-gradient(460px 200px at 100% 0%, rgba(162,20,35,0.2), transparent 58%), linear-gradient(180deg, rgba(15,4,7,0.86), rgba(5,3,6,0.9))",
-    border: "1px solid rgba(255,70,90,0.34)",
-    borderRadius: 20,
-    padding: 16,
-    boxShadow:
-      "inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 0 1px rgba(255,36,56,0.14), 0 18px 34px rgba(0,0,0,0.42)"
-  };
+  return { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 20, padding: 20, boxShadow: "0 16px 48px #0003" };
 }
 
 function buttonPrimary(disabled: boolean): React.CSSProperties {
-  return {
-    background: disabled
-      ? "linear-gradient(180deg, rgba(92, 92, 92, 0.7), rgba(60, 60, 60, 0.7))"
-      : "linear-gradient(180deg, #ff4c60 0%, #f1102b 45%, #c60017 100%)",
-    border: "1px solid rgba(255,95,110,0.64)",
-    color: disabled ? "#999999" : "#FFFFFF",
-    padding: "12px 20px",
-    borderRadius: 12,
-    fontSize: 16,
-    fontWeight: 700,
-    letterSpacing: "0.06em",
-    cursor: disabled ? "not-allowed" : "pointer",
-    textTransform: "uppercase",
-    boxShadow: disabled
-      ? "none"
-      : "inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -10px 16px rgba(120,0,18,0.26), 0 12px 24px rgba(198,0,24,0.32)"
-  };
+  return { background: disabled ? "#303034" : "var(--accent-deep)", border: "1px solid transparent", color: "#fff", padding: "12px 18px", minHeight: 44, borderRadius: 12, fontSize: 14, fontWeight: 650, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1 };
 }
 
 function buttonSecondary(disabled: boolean): React.CSSProperties {
-  return {
-    background: "linear-gradient(180deg, rgba(20, 8, 12, 0.88), rgba(8, 5, 8, 0.9))",
-    border: "1px solid rgba(255,95,110,0.36)",
-    color: "#ff8e99",
-    padding: "12px 18px",
-    borderRadius: 12,
-    fontSize: 16,
-    fontWeight: 700,
-    letterSpacing: "0.05em",
-    cursor: disabled ? "not-allowed" : "pointer",
-    textTransform: "uppercase",
-    opacity: disabled ? 0.6 : 1,
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 10px 18px rgba(0,0,0,0.28)"
-  };
+  return { ...buttonPrimary(disabled), background: "var(--surface-raised)", border: "1px solid var(--line)", color: "var(--ink)" };
 }
 
 function fieldStyle(): React.CSSProperties {
-  return {
-    background: "linear-gradient(180deg, rgba(8,8,12,0.96), rgba(4,4,8,0.98))",
-    color: "#ffffff",
-    border: "1px solid rgba(255,80,98,0.22)",
-    borderRadius: 14,
-    padding: "13px 14px",
-    fontSize: 17,
-    lineHeight: 1.25,
-    width: "100%",
-    boxSizing: "border-box",
-    minWidth: 0,
-    boxShadow:
-      "inset 0 1px 0 rgba(255,255,255,0.05), inset 0 -10px 18px rgba(0,0,0,0.2), 0 7px 14px rgba(0,0,0,0.22)"
-  };
+  return { background: "#0e0e10", color: "var(--ink)", border: "1px solid var(--line)", borderRadius: 12, padding: "13px 14px", fontSize: 16, lineHeight: 1.4, minHeight: 48, width: "100%", boxSizing: "border-box", minWidth: 0, boxShadow: "none" };
 }
 
 function toUserKey(userId: string): string {
@@ -2780,11 +2726,11 @@ function CruiseChat({
               maxHeight: "calc(100dvh - 90px)",
               overflow: "auto",
               border: "1px solid rgba(255,95,110,0.56)",
-              background: "linear-gradient(180deg, rgba(20,6,11,0.98), rgba(8,3,5,0.98))"
+              background: "var(--surface)"
             }}
           >
             <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>FILTER USERS</div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>Find your people</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} />
@@ -2854,10 +2800,11 @@ function CruiseChat({
           </div>
         </div>
       ) : null}
-      <div style={{ display: "grid", gap: 0 }}>
-          <div style={{ display: "grid", gap: 0, gridTemplateColumns: chatGridColumns, justifyContent: isMobile ? "stretch" : "space-between" }}>
+      <div className="rd-discover-grid">
+          <div className="rd-section-heading"><div><div className="rd-eyebrow">MAKE A CONNECTION</div><h1>Explore nearby</h1><p>New faces. Shared interests. Your kind of company.</p></div></div>
+          <div style={{ display: "grid", gap: 10, gridTemplateColumns: chatGridColumns, justifyContent: isMobile ? "stretch" : "space-between" }}>
             {gridCards.length === 0 ? (
-              <div style={{ color: "#b9bec9", fontSize: 13, padding: 12, gridColumn: "1 / -1" }}>No users match current filters.</div>
+              <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name="user" /></span><h2>A little quiet here.</h2><p>No one matches your filters right now.<br />Try opening things up to find more connections.</p><button type="button" className="rd-btn" onClick={() => setFiltersOpen(true)}>Adjust filters</button></div>
             ) : (
               gridCards.map((p) => (
                 <button
@@ -2867,7 +2814,8 @@ function CruiseChat({
                   style={{
                     background: "rgba(0,0,0,0.5)",
                     border: (unreadByPeerKey[p.key] ?? 0) > 0 ? "2px solid rgba(255,48,71,0.98)" : "1px solid rgba(255,58,77,0.1)",
-                    borderRadius: 0,
+                    borderRadius: 14,
+                    overflow: "hidden",
                     padding: 0,
                     display: "grid",
                     gap: 0,
@@ -2884,7 +2832,7 @@ function CruiseChat({
                         }
                       }}
                       alt="User avatar"
-                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #ff7f8c" }}
+                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "none" }}
                     />
                     {p.isOnline ? (
                       <span
@@ -3850,7 +3798,7 @@ function ThreadsPanel({
 
   return (
     <div style={{ display: "grid", gap: 0, marginInline: 0, marginBlock: 0 }}>
-      <div style={{ position: compact ? "sticky" : "static", top: 0, zIndex: 3, background: "rgba(16,6,10,0.94)", borderBottom: "1px solid rgba(255,122,136,0.24)", padding: "8px 10px" }}>
+      <div style={{ position: compact ? "sticky" : "static", top: 0, zIndex: 3, background: "var(--surface)", borderBottom: "1px solid rgba(255,122,136,0.24)", padding: "8px 10px" }}>
         <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "nowrap" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap" }}>
             <button type="button" style={{ ...(unreadOnly ? buttonPrimary(false) : buttonSecondary(false)), whiteSpace: "nowrap" }} onClick={() => setUnreadOnly((prev) => !prev)}>
@@ -3880,9 +3828,7 @@ function ThreadsPanel({
         </div>
       </div>
       {visibleRows.length === 0 ? (
-        <div style={{ color: "#b9bec9", fontSize: 14, padding: 14 }}>
-          {mode === "pinned" ? "No pinned conversations yet." : "No conversations yet."}
-        </div>
+        <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name={mode === "pinned" ? "star" : "message"} /></span><h2>{mode === "pinned" ? "Keep your favorites close." : "Every connection starts with hello."}</h2><p>{mode === "pinned" ? "Pin a conversation to find it here." : "Your conversations will appear here once you start chatting."}</p></div>
       ) : (
         visibleRows.map((row) => (
           <button
@@ -4798,7 +4744,7 @@ function PublicPostings({
                           <img
                             src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
                             alt={`${title} posting`}
-                            style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #ff7f8c" }}
+                            style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "none" }}
                           />
                         </div>
                         <div style={{ padding: 8, display: "grid", gap: 6 }}>
@@ -5006,7 +4952,7 @@ function PublicPostings({
                     <img
                       src={spot.photoMediaId ? (mediaUrlById[spot.photoMediaId] ?? avatarForKey(spot.spotId)) : avatarForKey(spot.spotId)}
                       alt="Cruising spot"
-                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "1px solid #ff7f8c" }}
+                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "none" }}
                     />
                   </div>
                   <div style={{ padding: "10px 12px", display: "grid", gap: 8 }}>
@@ -5045,13 +4991,11 @@ function PublicPostings({
 
     return (
       <div style={{ display: "grid", gap: 10 }}>
-        <div style={{ border: "1px solid rgba(255,122,131,0.45)", background: "rgba(17,6,10,0.84)", borderRadius: 14, overflow: "hidden" }}>
-          <div style={{ padding: "8px 10px", borderBottom: "1px solid rgba(255,122,131,0.28)", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", fontSize: 13 }}>
-            Public Ads Board
-          </div>
+        <div className="rd-board-panel">
+          <div className="rd-section-heading"><div><div className="rd-eyebrow">WHAT’S HAPPENING</div><h1>The board</h1><p>A moment, a plan, an open invitation.</p></div><Icon name="board" /></div>
           <div style={{ maxHeight: "calc(100dvh - 260px)", overflowY: "auto", padding: 8, display: "grid", gap: 10 }}>
             {adBoardRows.length === 0 ? (
-              <div style={{ color: "#9eb0c9", fontSize: 14 }}>No ads in the last 12 hours.</div>
+              <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name="board" /></span><h2>Set something in motion.</h2><p>No posts in the last 12 hours. Share what you’re up to and start a conversation.</p></div>
             ) : (
               adBoardRows.map((row) => {
                 const profile = publicProfilesByUserId[row.authorUserId];
@@ -5189,7 +5133,7 @@ function PublicPostings({
                 style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedAdId === p.postingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
               >
                 <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Ad media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #ff7f8c" }} />
+                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Ad media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "none" }} />
                 </div>
                 <div style={{ padding: 8, display: "grid", gap: 4 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
@@ -5244,7 +5188,7 @@ function PublicPostings({
                 style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedGroupId === p.postingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
               >
                 <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Group media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #ff7f8c" }} />
+                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Group media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "none" }} />
                 </div>
                 <div style={{ padding: 8, display: "grid", gap: 4 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
@@ -5295,7 +5239,7 @@ function PublicPostings({
               style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedSpotId === spot.spotId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
             >
               <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                <img src={spot.photoMediaId ? (mediaUrlById[spot.photoMediaId] ?? avatarForKey(spot.spotId)) : avatarForKey(spot.spotId)} alt="Cruising spot" style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #ff7f8c" }} />
+                <img src={spot.photoMediaId ? (mediaUrlById[spot.photoMediaId] ?? avatarForKey(spot.spotId)) : avatarForKey(spot.spotId)} alt="Cruising spot" style={{ width: "100%", height: "100%", objectFit: "cover", border: "none" }} />
               </div>
               <div style={{ padding: 8, display: "grid", gap: 4 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{spot.name}</div>
@@ -5739,7 +5683,7 @@ function PromotedProfilesPanel({
               style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedListingId === listing.listingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
             >
               <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                <img src={avatarUrlByUserId[listing.userId] ?? avatarForKey(`user:${listing.userId}`)} alt={`${listing.displayName} profile`} style={{ width: "100%", height: "100%", objectFit: "cover", border: "1px solid #ff7f8c" }} />
+                <img src={avatarUrlByUserId[listing.userId] ?? avatarForKey(`user:${listing.userId}`)} alt={`${listing.displayName} profile`} style={{ width: "100%", height: "100%", objectFit: "cover", border: "none" }} />
               </div>
               <div style={{ padding: 8, display: "grid", gap: 4 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{listing.title}</div>
@@ -6004,7 +5948,7 @@ function StyledFilePicker({
           border: "1px solid rgba(255,58,77,0.35)",
           borderRadius: 12,
           padding: 8,
-          background: "linear-gradient(180deg, rgba(8,8,12,0.96), rgba(4,4,8,0.98))"
+          background: "#0e0e10"
         }}
       >
         <input
@@ -6253,7 +6197,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
     <div style={{ display: "grid", gap: 12, gridTemplateColumns: profileIsMobile ? "1fr" : "1fr 1fr", alignItems: "start" }}>
       <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>PROFILE SETTINGS</div>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>Your profile</div>
           {session.userType === "guest" ? (
             <div style={{ color: "#b9bec9", fontSize: 13 }}>
               Guest profile data is temporary and clears on logout.
@@ -6281,7 +6225,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
 
       <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
         <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>ABOUT YOU</div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>About you</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span className="rd-label">Display Name</span>
@@ -7417,10 +7361,10 @@ export function Router({
             left: 0,
             right: 0,
             top: 0,
-            bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
+            bottom: "calc(73px + env(safe-area-inset-bottom, 0px))",
             zIndex: 51,
             borderTop: "1px solid rgba(255, 95, 104, 0.48)",
-            background: "linear-gradient(180deg, rgba(24, 3, 8, 0.98), rgba(7, 2, 5, 0.98))",
+            background: "#111113",
             boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",
             display: "grid",
             gridTemplateRows: "auto minmax(0, 1fr)",
@@ -7429,18 +7373,21 @@ export function Router({
         >
           <div style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 6px)", borderBottom: "1px solid rgba(255, 95, 104, 0.28)" }}>
             <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(255, 129, 138, 0.7)" }} />
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, overflowX: "hidden", padding: "0 10px 8px" }}>
+            <div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR CONNECTIONS</div><h1>Inbox</h1></div><Icon name="message" /></div>
+            <div className="rd-inbox-tabs">
               {[
-                { id: "chat-grid" as const, label: "Chat Grid", icon: iconChatGrid },
-                { id: "threads" as const, label: "Inbox Threads", icon: iconInbox },
-                { id: "pinned" as const, label: "Pinned Chats", icon: iconFavorites },
-                { id: "spots" as const, label: "Cruising Spots", icon: iconSpots },
-                { id: "groups" as const, label: "Groups", icon: iconGroups }
+                { id: "chat-grid" as const, label: "Chat Grid", icon: "grid" as IconName },
+                { id: "threads" as const, label: "Inbox Threads", icon: "message" as IconName },
+                { id: "pinned" as const, label: "Pinned Chats", icon: "star" as IconName },
+                { id: "spots" as const, label: "Cruising Spots", icon: "map" as IconName },
+                { id: "groups" as const, label: "Groups", icon: "groups" as IconName }
               ].map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
                   aria-label={tab.label}
+                  aria-pressed={mobileInboxTab === tab.id}
+                  className="rd-inbox-tab"
                   style={{
                     border: 0,
                     background: "transparent",
@@ -7457,7 +7404,7 @@ export function Router({
                   }}
                   onClick={() => setMobileInboxTab(tab.id)}
                 >
-                  <img src={tab.icon} alt="" className="rd-ui-icon" style={{ width: 34, height: 34 }} />
+                  <Icon name={tab.icon} className="rd-ui-icon" /><span>{tab.label}</span>
                 </button>
               ))}
             </div>
@@ -7520,10 +7467,10 @@ export function Router({
             left: 0,
             right: 0,
             top: 0,
-            bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
+            bottom: "calc(73px + env(safe-area-inset-bottom, 0px))",
             zIndex: 51,
             borderTop: "1px solid rgba(255, 95, 104, 0.48)",
-            background: "linear-gradient(180deg, rgba(24, 3, 8, 0.98), rgba(7, 2, 5, 0.98))",
+            background: "#111113",
             boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",
             display: "grid",
             gridTemplateRows: "auto minmax(0, 1fr)",

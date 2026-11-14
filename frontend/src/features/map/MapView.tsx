@@ -39,19 +39,21 @@ function escapeHtml(s: string): string {
 }
 
 function defaultRasterStyle(): Record<string, unknown> {
-  // Public OpenStreetMap tiles do not require an API key.
+  // CARTO Dark Matter keeps streets and labels readable on a dark basemap.
+  // Public raster tiles do not require an API key.
   return {
     version: 8,
     sources: {
       basemap: {
         type: "raster",
-        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tiles: ["https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"],
         tileSize: 256,
         maxzoom: 19,
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
       }
     },
     layers: [
+      { id: "background", type: "background", paint: { "background-color": "#09090b" } },
       {
         id: "basemap",
         type: "raster",

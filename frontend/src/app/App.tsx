@@ -5,16 +5,7 @@ import { isVerificationRequiredError } from "./authUi";
 import placeholderA from "../assets/reddoor-placeholder-1.svg";
 import placeholderB from "../assets/reddoor-placeholder-2.svg";
 import placeholderC from "../assets/reddoor-placeholder-3.svg";
-import welcomeDoorImage from "../assets/appbackground.png";
-import iconMap from "../assets/icons/map.png";
-import iconInbox from "../assets/icons/inbox.png";
-import iconAds from "../assets/icons/ads.png";
-import iconFilter from "../assets/icons/filter.png";
-import iconSettings from "../assets/icons/settings.png";
-import iconProfile from "../assets/icons/profile.png";
-import iconSubmissions from "../assets/icons/submissions.png";
-import iconPromoted from "../assets/icons/promoted.png";
-import iconLogout from "../assets/icons/logout.png";
+import { Icon } from "./Icon";
 
 type AuthView = "guest" | "register" | "login";
 type TopTab = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted";
@@ -930,7 +921,7 @@ export function App(): React.ReactElement {
             {session.ageVerified === true ? (
               <div className="rd-topbar-session">
                 <div className="rd-brand" aria-label="Red Door">
-                  <div className="rd-name">Red Door</div>
+                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Red Door</div>
                 </div>
                 <button
                   type="button"
@@ -943,10 +934,10 @@ export function App(): React.ReactElement {
                 </button>
                 <div className="rd-top-actions">
                   <button type="button" className="rd-btn rd-icon-only-btn" onClick={toggleTopFilterPanel} aria-label="Open filter controls">
-                    <img src={iconFilter} alt="" className="rd-ui-icon" />
+                    <Icon name="filter" className="rd-ui-icon" />
                   </button>
                   <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => setTopMenuOpen((prev) => !prev)} aria-label="Open account functions">
-                    <img src={iconSettings} alt="" className="rd-ui-icon" />
+                    <Icon name="settings" className="rd-ui-icon" />
                   </button>
                 </div>
               </div>
@@ -957,19 +948,19 @@ export function App(): React.ReactElement {
       {session && session.ageVerified === true && topMenuOpen ? (
         <div className="rd-top-collapse" role="dialog" aria-label="Account functions">
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); openSelfProfilePreview(); }} aria-label="Open profile preview">
-            <img src={iconProfile} alt="" className="rd-ui-icon" />
+            <Icon name="user" className="rd-ui-icon" />
           </button>
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("settings"); }} aria-label="Open settings">
-            <img src={iconSettings} alt="" className="rd-ui-icon" />
+            <Icon name="settings" className="rd-ui-icon" />
           </button>
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("submissions"); }} aria-label="Open submissions">
-            <img src={iconSubmissions} alt="" className="rd-ui-icon" />
+            <Icon name="book" className="rd-ui-icon" />
           </button>
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("promoted"); }} aria-label="Open promoted">
-            <img src={iconPromoted} alt="" className="rd-ui-icon" />
+            <Icon name="star" className="rd-ui-icon" />
           </button>
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); void onLogout(); }} aria-label="Log out">
-            <img src={iconLogout} alt="" className="rd-ui-icon" />
+            <Icon name="logout" className="rd-ui-icon" />
           </button>
         </div>
       ) : null}
@@ -982,19 +973,19 @@ export function App(): React.ReactElement {
             <>
               <section className="rd-card rd-home-hero" aria-label="Welcome to Red Door">
                 <div className="rd-card-body">
-                  <div className="rd-home-image-wrap">
-                    <img src={welcomeDoorImage} alt="Red Door welcome" className="rd-home-image" />
-                  </div>
-                  <div className="rd-home-title">Red Door</div>
-                  <div className="rd-home-tagline">Welcome to the Red Door adult gay social network for men</div>
-                  <div className="rd-home-copy">Anonymous cruising, instant chat, map discovery, and private profiles when you choose.</div>
+                  <div className="rd-welcome-brand"><span className="rd-door-mark" aria-hidden="true" />RED DOOR<span className="rd-adult-badge">18+</span></div>
+                  <div className="rd-home-art" aria-hidden="true"><div className="rd-door-frame"><div className="rd-door-panel" /></div><span className="rd-art-caption">A little curiosity. A new connection.</span></div>
+                  <div className="rd-eyebrow">YOUR WORLD. YOUR RULES.</div>
+                  <h1 className="rd-home-title">Good company.<br /><span>Closer than you think.</span></h1>
+                  <p className="rd-home-copy">A space for gay men to explore, chat, and connect. Step inside and see who’s nearby.</p>
+                  <div className="rd-welcome-features"><span><Icon name="map" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
                 </div>
               </section>
 
-              <section className={`rd-card ${isMobile ? "rd-auth-hero" : ""}`} aria-label="Authentication">
+              <section className="rd-card rd-auth-hero" aria-label="Authentication">
                 <div className="rd-card-head">
-                  <div className="rd-card-title">Access</div>
-                  <div className="rd-card-sub">Cruise allows guests</div>
+                  <div className="rd-card-title">Make yourself at home.</div>
+                  <div className="rd-card-sub">Your next connection starts here.</div>
                 </div>
 
                 <div className="rd-tabs" role="tablist" aria-label="Authentication tabs">
@@ -1007,7 +998,7 @@ export function App(): React.ReactElement {
                     role="tab"
                     aria-selected={authView === "guest"}
                   >
-                    Anon Login
+                    Guest
                   </button>
                   <button
                     type="button"
@@ -1035,7 +1026,7 @@ export function App(): React.ReactElement {
 
                 <div className="rd-card-body">
                   <div style={{ color: "var(--muted)", marginBottom: 12 }}>
-                    Cruise Mode supports anonymous sessions. Date and Hybrid require a registered identity.
+                    Browse Cruise anonymously, or create an account for a more personal experience.
                   </div>
                   {lastError ? (
                     <div
@@ -1064,10 +1055,12 @@ export function App(): React.ReactElement {
                   {authView === "guest" ? (
                     <div className="rd-row">
                       <button type="button" className="rd-btn primary" onClick={() => void createGuest()} disabled={busy} aria-label="Create guest session">
-                        Anon Login
+                        Step inside →
                       </button>
                     </div>
                   ) : null}
+
+                  <p className="rd-auth-note"><Icon name="shield" />For adults 18 and over. You choose what to share.</p>
 
                   {authView === "register" || authView === "login" ? (
                     <form
@@ -1338,8 +1331,9 @@ export function App(): React.ReactElement {
             className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`}
             onClick={() => setTabAndRoute("discover", "map")}
             aria-label="Discover map"
+            aria-current={activeTab === "discover" ? "page" : undefined}
           >
-            <img src={iconMap} alt="" className="rd-ui-icon rd-mobile-nav-image" />
+            <Icon name="map" className="rd-ui-icon rd-mobile-nav-image" /><span>Explore</span>
           </button>
           <button
             type="button"
@@ -1352,8 +1346,9 @@ export function App(): React.ReactElement {
               setTabAndRoute("threads");
             }}
             aria-label="Inbox overlay"
+            aria-current={activeTab === "threads" ? "page" : undefined}
           >
-            <img src={iconInbox} alt="" className="rd-ui-icon rd-mobile-nav-image" />
+            <Icon name="message" className="rd-ui-icon rd-mobile-nav-image" /><span>Inbox</span>
             {unreadChatCount > 0 ? <span className="rd-mobile-nav-badge">{unreadChatCount > 99 ? "99+" : unreadChatCount}</span> : null}
           </button>
           <div className="rd-mobile-nav-spacer" aria-hidden="true" />
@@ -1368,8 +1363,9 @@ export function App(): React.ReactElement {
               setTabAndRoute("ads");
             }}
             aria-label="Public ads board"
+            aria-current={activeTab === "ads" ? "page" : undefined}
           >
-            <img src={iconAds} alt="" className="rd-ui-icon rd-mobile-nav-image" />
+            <Icon name="board" className="rd-ui-icon rd-mobile-nav-image" /><span>Board</span>
           </button>
         </nav>
       ) : null}
