@@ -1,5 +1,5 @@
 import { hasPlus, limits, type PlusData, type SavedSearch } from "../../shared/plus";
-import { stripeRequest, verifyStripeEvent, assertPlusPrice, signAlbumAccess, validAlbumAccess } from "./services/subscriptionService";
+import { stripeRequest, verifyStripeEvent, assertPlusPrice, signAlbumAccess, validAlbumAccess, billingConfiguration, inspectBilling } from "./services/subscriptionService";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -523,9 +523,9 @@ async function main(): Promise<void> {
     next();
   });
   app.post("/billing/webhook", express.raw({ type: "application/json", limit: "256kb" }), async (req, res) => {
-    if (!process.env.STRIPE_WEBHOOK_SECRET) return res.status(503).json({ message: "Billing is not configured." });
+    if (!process.env.STRIPE_WEBHOOK_SECRET?.trim()) return res.status(503).json({ message: "Billing is not configured." });
     let event: any;
-    try { event = verifyStripeEvent(req.body, String(req.headers["stripe-signature"] ?? ""), process.env.STRIPE_WEBHOOK_SECRET); }
+    try { event = verifyStripeEvent(req.body, String(req.headers["stripe-signature"] ?? ""), process.env.STRIPE_WEBHOOK_SECRET.trim()); }
     catch { return res.status(400).json({ message: "Invalid webhook signature." }); }
     if (!["checkout.session.completed", "invoice.paid", "customer.subscription.updated", "customer.subscription.deleted"].includes(event.type)) return res.json({ received: true });
     try {
@@ -539,7 +539,7 @@ async function main(): Promise<void> {
       if (!user) return res.status(400).json({ message: "Unknown subscription account." });
       const price = subscription.items?.data?.[0]?.price;
       assertPlusPrice(price);
-      if (price.id !== process.env.STRIPE_PLUS_PRICE_ID) return res.status(400).json({ message: "Unexpected subscription price." });
+      if (price.id !== process.env.STRIPE_PLUS_PRICE_ID?.trim()) return res.status(400).json({ message: "Unexpected subscription price." });
       const plusData = { ...user.plusData, stripeCustomerId: String(subscription.customer), stripeSubscriptionId: subscription.id };
       const periodEnd = Number(subscription.current_period_end) * 1000;
       if (subscription.status === "active" && Number.isFinite(periodEnd)) {
@@ -689,10 +689,16 @@ async function main(): Promise<void> {
   }
   const premiumError = (res: express.Response) => res.status(402).json({ code: "PLUS_REQUIRED", message: "This feature is included with Red Door Plus (CAD $7.99/month)." });
 
+  app.get("/admin/billing/health", async (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    res.setHeader("Cache-Control", "no-store");
+    const diagnostic = await inspectBilling();
+    return res.json(diagnostic);
+  });
   app.get("/plus", (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const data = actor.user.plusData ?? {};
-    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.user.plusExpiresAtMs, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET && process.env.STRIPE_PLUS_PRICE_ID && process.env.PUBLIC_APP_URL), hasBillingAccount: Boolean(data.stripeCustomerId) });
+    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.user.plusExpiresAtMs, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: billingConfiguration().configured, hasBillingAccount: Boolean(data.stripeCustomerId) });
   });
   app.put("/plus/preferences", async (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
@@ -759,9 +765,9 @@ async function main(): Promise<void> {
     const actor = plusUser(req, res); if (!actor) return;
     try {
       if (hasPlus(actor.session)) return res.status(409).json({ message: "You already have Plus. Manage your subscription or wait until your complimentary access ends." });
-      const appUrl = process.env.PUBLIC_APP_URL;
-      const priceId = process.env.STRIPE_PLUS_PRICE_ID;
-      if (!appUrl || !priceId || !process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(503).json({ message: "Subscriptions are not available for purchase yet." });
+      const appUrl = process.env.PUBLIC_APP_URL?.trim();
+      const priceId = process.env.STRIPE_PLUS_PRICE_ID?.trim();
+      if (!billingConfiguration().configured || !appUrl || !priceId) return res.status(503).json({ message: "Subscriptions are not available for purchase yet." });
       if (!/^https:\/\//.test(appUrl)) throw new Error("Configure a secure public app URL.");
       if (actor.user.plusData?.stripeSubscriptionId) {
         const existing = await stripeRequest(`subscriptions/${encodeURIComponent(actor.user.plusData.stripeSubscriptionId)}`);
@@ -789,7 +795,7 @@ async function main(): Promise<void> {
     const actor = plusUser(req, res); if (!actor) return;
     const customer = actor.user.plusData?.stripeCustomerId;
     if (!customer || !process.env.PUBLIC_APP_URL) return res.status(400).json({ message: "No billing account is attached to this profile." });
-    try { const portal = await stripeRequest("billing_portal/sessions", new URLSearchParams({ customer, return_url: process.env.PUBLIC_APP_URL })); return res.json({ url: portal.url }); }
+    try { const portal = await stripeRequest("billing_portal/sessions", new URLSearchParams({ customer, return_url: process.env.PUBLIC_APP_URL.trim() })); return res.json({ url: portal.url }); }
     catch (e) { return res.status(502).json({ message: (e as Error).message }); }
   });
 

@@ -37,6 +37,10 @@ export type RegisterResponse = Readonly<{
   verificationRequired: true;
 }>;
 
+export type BillingHealth = {
+  configuration: { configured: boolean; missing: string[]; publicUrlValid: boolean };
+  stripeConnection: "unconfigured" | "ok" | "error"; priceValid: boolean; mode?: "test" | "live"; issue?: string;
+};
 export type PlusStatus = {
   active: boolean; expiresAtMs?: number; limits: ReturnType<typeof limits>;
   savedSearches: SavedSearch[]; pinnedKeys: string[]; privateMediaIds: string[];
@@ -2515,6 +2519,7 @@ export async function uploadToLocalSignedUrl(uploadUrl: string, file: Blob, mime
 }
 
 function createLocalApiClient(): Readonly<{
+  getBillingHealth(sessionToken: string): Promise<BillingHealth>;
   getPlus(sessionToken: string): Promise<PlusStatus>;
   savePlusPreferences(sessionToken: string, data: PlusData): Promise<{ ok: true }>;
   getPrivateAlbum(sessionToken: string, userId: string): Promise<{ photos: { mediaId: string; downloadUrl: string }[]; expiresInSeconds: number }>;
@@ -2658,6 +2663,7 @@ function createLocalApiClient(): Readonly<{
   const feeCents = 499;
 
   return {
+    async getBillingHealth() { throw { message: "Billing checks require the deployed backend. This browser is running in local demo mode." }; },
     async getPlus(token) {
       const state = readState(), session = requireUserSession(state, token);
       const data = state.usersById[session.userId!]?.plusData ?? {};
@@ -3965,6 +3971,7 @@ function createLocalApiClient(): Readonly<{
 }
 
 export function apiClient(basePath = "/api"): Readonly<{
+  getBillingHealth(sessionToken: string): Promise<BillingHealth>;
   getPlus(sessionToken: string): Promise<PlusStatus>;
   savePlusPreferences(sessionToken: string, data: PlusData): Promise<{ ok: true }>;
   getPrivateAlbum(sessionToken: string, userId: string): Promise<{ photos: { mediaId: string; downloadUrl: string }[]; expiresInSeconds: number }>;
@@ -4116,6 +4123,7 @@ export function apiClient(basePath = "/api"): Readonly<{
   }
 
   return {
+    async getBillingHealth(token) { return readJsonOrThrow(await fetch(`${basePath}/admin/billing/health`, { headers: headers(token) })) as Promise<BillingHealth>; },
     async getPlus(token) { return readJsonOrThrow(await fetch(`${basePath}/plus`, { headers: headers(token) })) as Promise<PlusStatus>; },
     async savePlusPreferences(token, data) { return readJsonOrThrow(await fetch(`${basePath}/plus/preferences`, { method: "PUT", headers: headers(token), body: JSON.stringify(data) })) as Promise<{ ok: true }>; },
     async getPrivateAlbum(token, userId) { return readJsonOrThrow(await fetch(`${basePath}/plus/albums/${encodeURIComponent(userId)}`, { headers: headers(token) })) as Promise<{ photos: { mediaId: string; downloadUrl: string }[]; expiresInSeconds: number }>; },

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { apiClient, uploadToLocalSignedUrl, type Session, type PlusStatus, type PublicProfile } from "./api";
+import { apiClient, uploadToLocalSignedUrl, type Session, type PlusStatus, type PublicProfile, type BillingHealth } from "./api";
 import { PLUS_FEATURES, type PlusData } from "../../../shared/plus";
 
 type Api = ReturnType<typeof apiClient>;
@@ -7,6 +7,8 @@ export function openPlus(): void { window.dispatchEvent(new Event("rd:open-plus"
 export function PlusPanel({ api, session, onClose }: { api: Api; session: Session | null; onClose(): void }): React.ReactElement {
   const panelRef = useRef<HTMLElement>(null);
   const [status, setStatus] = useState<PlusStatus | null>(null);
+  const [billingHealth, setBillingHealth] = useState<BillingHealth | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [people, setPeople] = useState<ReadonlyArray<PublicProfile>>([]);
@@ -29,7 +31,8 @@ export function PlusPanel({ api, session, onClose }: { api: Api; session: Sessio
   useEffect(() => {
     let cancelled = false;
     if (registered) {
-      void refresh().catch(e => !cancelled && setError(e.message));
+      setLoading(true);
+      void refresh().catch(e => !cancelled && setError(e.message)).finally(() => !cancelled && setLoading(false));
       void api.getPublicProfiles().then(r => { if (!cancelled) setPeople(r.profiles.filter(p => p.userId !== session?.userId)); });
     }
     // Clear temporary media links after their authorization window ends.
@@ -68,7 +71,10 @@ export function PlusPanel({ api, session, onClose }: { api: Api; session: Sessio
       <h1>Red Door <span>Plus</span></h1><p className="rd-plus-price">$7.99 <span>CAD / month</span></p>
       <ul className="rd-plus-features">{PLUS_FEATURES.map(feature => <li key={feature}><span aria-hidden="true">✓</span>{feature}</li>)}</ul>
       <p className="rd-plus-small">Basic discovery, direct messaging, blocking, reporting, and essential privacy controls stay free. Cruise messages still expire within 72 hours.</p>
-      {status?.active ? <div className="rd-plus-status">Plus is active{status.expiresAtMs ? ` until ${new Date(status.expiresAtMs).toLocaleString("en-CA", { timeZone: "America/Vancouver", dateStyle: "medium", timeStyle: "short" })} Pacific` : ""}.<br /><small>Complimentary access ends automatically. No automatic charge without a Stripe subscription.</small></div> : <button className="rd-btn primary" disabled={busy || !registered || !status?.billingConfigured} onClick={() => void run(async () => { const r = await api.startSubscription(session!.sessionToken); window.location.assign(r.url); })}>Subscribe for CAD $7.99/month</button>}
+      {status?.active ? <div className="rd-plus-status">Plus is active{status.expiresAtMs ? ` until ${new Date(status.expiresAtMs).toLocaleString("en-CA", { timeZone: "America/Vancouver", dateStyle: "medium", timeStyle: "short" })} Pacific` : ""}.<br /><small>Complimentary access ends automatically. No automatic charge without a Stripe subscription.</small></div> : <button className="rd-btn primary" disabled={busy || !registered || !status?.billingConfigured} onClick={() => void run(async () => { const r = await api.startSubscription(session!.sessionToken); window.location.assign(r.url); })}>{loading ? "Checking subscription…" : "Subscribe for CAD $7.99/month"}</button>}
+      {!status?.active && registered && !status?.billingConfigured ? <div className="rd-plus-gate" role="status">{loading ? "Checking payment availability…" : "Checkout is unavailable because the app has not confirmed its payment connection."}<button className="rd-btn" disabled={busy || loading} onClick={() => void run(refresh)}>Refresh payment status</button></div> : null}
+      {error ? <p className="rd-error" role="alert">{error}</p> : null}
+      {session?.role === "admin" ? <div className="rd-plus-gate"><strong>Admin payment connection</strong><button className="rd-btn" disabled={busy} onClick={() => void run(async () => { setBillingHealth(await api.getBillingHealth(session.sessionToken)); await refresh(); })}>Check Stripe connection</button>{billingHealth ? <div><p>Backend configuration: {billingHealth.configuration.configured ? "Complete" : "Incomplete"}</p>{billingHealth.configuration.missing.length ? <p>Missing on backend: {billingHealth.configuration.missing.join(", ")}</p> : null}{!billingHealth.configuration.publicUrlValid ? <p>PUBLIC_APP_URL must be a valid HTTPS URL.</p> : null}<p>Stripe connection: {billingHealth.stripeConnection}</p><p>CAD $7.99 monthly price: {billingHealth.priceValid ? "Verified" : "Not verified"}{billingHealth.mode ? ` (${billingHealth.mode} mode)` : ""}</p>{billingHealth.issue ? <p>{billingHealth.issue}</p> : null}<small>This checks configuration and reads the price; it does not create a subscription or charge a card. Webhook delivery still needs a separate Stripe test.</small></div> : null}</div> : null}
       {!registered ? <p className="rd-plus-small">Create an account and verify your age to access Plus.</p> : !status?.billingConfigured ? <p className="rd-plus-small">Paid subscriptions will be available once billing is connected.</p> : null}
       {status?.hasBillingAccount ? <button className="rd-btn" disabled={busy} onClick={() => void run(async () => { const r = await api.manageSubscription(session!.sessionToken); window.location.assign(r.url); })}>Manage or cancel subscription</button> : null}
       <p className="rd-plus-small">Paid subscriptions renew monthly until canceled. Manage cancellation through the billing portal.</p>
@@ -85,7 +91,6 @@ export function PlusPanel({ api, session, onClose }: { api: Api; session: Sessio
         <button className="rd-btn" disabled={!albumOwner || busy} onClick={() => void run(async () => { setViewerPhotos((await api.getPrivateAlbum(session!.sessionToken, albumOwner)).photos); })}>Open shared album</button>
         <div className="rd-private-grid">{viewerPhotos.map(photo => <img key={photo.mediaId} src={photo.downloadUrl} alt="Shared private photo" />)}</div>
       </div> : null}
-      {error ? <p className="rd-error" role="alert">{error}</p> : null}
     </section>
   </div>;
 }

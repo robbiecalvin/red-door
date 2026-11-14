@@ -55,3 +55,9 @@ Private photos use a separate `photo_private` media kind and `private-profiles/`
 - Browser checks exercise main-page registration with the launch code, active Plus, saved-search save/apply and layouts at 320, 390, 768 and 1440 pixels.
 
 The browser-local API is a development/demo mode stored on the same device. It mirrors feature gates but is not a production authentication or billing authority. Production must use the backend API.
+
+## When Subscribe appears to do nothing
+
+Checkout stays disabled until the registered, age-verified account has loaded backend status and the backend reports complete billing configuration. The Plus panel now shows a reason and a Refresh payment status control. Existing complimentary/paid Plus access intentionally prevents another subscription purchase.
+
+An administrator can open Plus → Check Stripe connection. This makes a read-only request to `/admin/billing/health`, reports missing variable names (never values), validates the public HTTPS URL, reads the configured Stripe price, checks CAD 799 cents monthly, and identifies test/live mode. It does not start Checkout or charge a card. Only administrators may access the endpoint. A successful check does not prove webhook signing/delivery; verify those in Stripe separately. API keys and price IDs must belong to the same Stripe account and mode.

@@ -16,7 +16,7 @@ export function verifyStripeEvent(raw: Buffer, signature: string, secret: string
 }
 
 export async function stripeRequest(path: string, body?: URLSearchParams, idempotencyKey?: string): Promise<any> {
-  const secret = process.env.STRIPE_SECRET_KEY;
+  const secret = process.env.STRIPE_SECRET_KEY?.trim();
   if (!secret) throw new Error("Billing is not configured yet.");
   const response = await fetch(`https://api.stripe.com/v1/${path}`, {
     method: body ? "POST" : "GET",
@@ -24,7 +24,15 @@ export async function stripeRequest(path: string, body?: URLSearchParams, idempo
     body, signal: AbortSignal.timeout(15000)
   });
   const result = await response.json() as any;
-  if (!response.ok) throw new Error("The billing provider could not complete this request. Please try again.");
+  if (!response.ok) {
+    // Return fixed messages, never Stripe's raw response (which can contain customer data).
+    const message = response.status === 401 ? "Stripe rejected the backend API key. Check the configured secret key."
+      : response.status === 403 ? "Stripe denied this request. Check the API key permissions and account status."
+      : response.status === 404 ? "Stripe could not find the configured billing resource. Check that the price and API key belong to the same account and test/live mode."
+      : response.status === 429 ? "Stripe is temporarily busy. Please try again shortly."
+      : "The billing provider could not complete this request. Please try again.";
+    throw new Error(message);
+  }
   return result;
 }
 export function assertPlusPrice(price: any): void {
@@ -39,4 +47,28 @@ export function signAlbumAccess(secret: string, owner: string, viewer: string, m
 export function validAlbumAccess(secret: string, owner: string, viewer: string, mediaId: string, expires: number, signature: string, now = Date.now()): boolean {
   if (!Number.isSafeInteger(expires) || expires <= now || expires > now + 60_000 || !/^[a-f0-9]{64}$/.test(signature)) return false;
   return crypto.timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(signAlbumAccess(secret, owner, viewer, mediaId, expires), "hex"));
+}
+
+const BILLING_VARIABLES = ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PLUS_PRICE_ID", "PUBLIC_APP_URL"] as const;
+export function billingConfiguration(env: NodeJS.ProcessEnv = process.env) {
+  const missing = BILLING_VARIABLES.filter(name => !env[name]?.trim());
+  let publicUrlValid = false;
+  try { publicUrlValid = new URL(env.PUBLIC_APP_URL?.trim() ?? "").protocol === "https:"; } catch { /* Invalid configuration. */ }
+  return { configured: missing.length === 0 && publicUrlValid, missing, publicUrlValid };
+}
+
+export async function inspectBilling() {
+  const configuration = billingConfiguration();
+  const result: { configuration: ReturnType<typeof billingConfiguration>; stripeConnection: "unconfigured" | "ok" | "error"; priceValid: boolean; mode?: "live" | "test"; issue?: string } = {
+    configuration, stripeConnection: "unconfigured", priceValid: false
+  };
+  if (!process.env.STRIPE_SECRET_KEY?.trim() || !process.env.STRIPE_PLUS_PRICE_ID?.trim()) return result;
+  try {
+    const price = await stripeRequest(`prices/${encodeURIComponent(process.env.STRIPE_PLUS_PRICE_ID.trim())}`);
+    result.stripeConnection = "ok";
+    result.mode = price.livemode ? "live" : "test";
+    try { assertPlusPrice(price); result.priceValid = true; }
+    catch (e) { result.issue = (e as Error).message; }
+  } catch (e) { result.stripeConnection = "error"; result.issue = (e as Error).message; }
+  return result;
 }

@@ -115,3 +115,36 @@ describe("Stripe requests", () => {
     } finally { global.fetch = oldFetch; if (previous === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = previous; }
   });
 });
+
+describe("Billing configuration diagnostics", () => {
+  it("Given missing or whitespace-only variables When checked Then identifies names without exposing values", async () => {
+    const { billingConfiguration } = await import("../backend/src/services/subscriptionService");
+    expect(billingConfiguration({})).toEqual({ configured: false, missing: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PLUS_PRICE_ID", "PUBLIC_APP_URL"], publicUrlValid: false });
+    const env = { STRIPE_SECRET_KEY: "sensitive", STRIPE_WEBHOOK_SECRET: "secret", STRIPE_PLUS_PRICE_ID: "price_1", PUBLIC_APP_URL: "https://example.com/" };
+    expect(billingConfiguration(env).configured).toBe(true);
+    expect(billingConfiguration({ ...env, PUBLIC_APP_URL: "http://example.com" }).configured).toBe(false);
+    expect(billingConfiguration({ ...env, STRIPE_WEBHOOK_SECRET: "  " }).missing).toEqual(["STRIPE_WEBHOOK_SECRET"]);
+    expect(JSON.stringify(billingConfiguration(env))).not.toContain("sensitive");
+  });
+  it("Given a matching or mismatched price When an admin checks Stripe Then reports readiness without making a payment", async () => {
+    const { inspectBilling } = await import("../backend/src/services/subscriptionService");
+    const saved = { ...process.env }, oldFetch = global.fetch;
+    try {
+      process.env.STRIPE_SECRET_KEY = "test-only"; process.env.STRIPE_WEBHOOK_SECRET = "test-only";
+      process.env.STRIPE_PLUS_PRICE_ID = "price_test"; process.env.PUBLIC_APP_URL = "https://example.com/";
+      const price = { active: true, unit_amount: 799, currency: "cad", recurring: { interval: "month", interval_count: 1 }, livemode: false };
+      const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => price }); global.fetch = mock;
+      expect(await inspectBilling()).toMatchObject({ stripeConnection: "ok", priceValid: true, mode: "test" });
+      expect(mock).toHaveBeenCalledWith("https://api.stripe.com/v1/prices/price_test", expect.objectContaining({ method: "GET" }));
+      mock.mockResolvedValue({ ok: true, json: async () => ({ ...price, currency: "usd" }) });
+      expect(await inspectBilling()).toMatchObject({ stripeConnection: "ok", priceValid: false, issue: "Configure an active CAD $7.99 monthly Stripe price." });
+      mock.mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: { message: "do not show" } }) });
+      const health = await inspectBilling(); expect(health.stripeConnection).toBe("error"); expect(health.issue).toContain("test/live mode"); expect(health.issue).not.toContain("do not show");
+      mock.mockResolvedValue({ ok: false, status: 401, json: async () => ({}) });
+      expect((await inspectBilling()).issue).toContain("API key");
+    } finally {
+      global.fetch = oldFetch;
+      for (const name of ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PLUS_PRICE_ID", "PUBLIC_APP_URL"]) { if (saved[name] === undefined) delete process.env[name]; else process.env[name] = saved[name]; }
+    }
+  });
+});
