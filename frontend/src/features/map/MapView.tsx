@@ -149,6 +149,9 @@ export function MapView({
         if (!runtimeRef.current) {
           runtimeRef.current = await loadMapLibre();
         }
+        // A route change or StrictMode cleanup can run while the import awaits.
+        // Only the current effect may create a map in this container.
+        if (cancelled || !containerRef.current || mapRef.current) return;
         const ml = runtimeRef.current;
 
         const map = new ml.Map({

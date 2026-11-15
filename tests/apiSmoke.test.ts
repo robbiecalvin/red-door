@@ -1,7 +1,7 @@
 import { mdSignature, validMdSignature } from "../backend/src/services/mdBridge";
 import { WebSocket } from "ws";
 import { createAuthService } from "../backend/src/services/authService";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -45,6 +45,21 @@ async function webhook(type: string, id: string, valid = true) {
   return fetch(base + "/billing/webhook", { method: "POST", headers: { "content-type": "application/json", "stripe-signature": `t=${timestamp},v1=${valid ? mac : "0".repeat(64)}` }, body: raw });
 }
 let admin: { token: string; id: string }, alice: { token: string; id: string }, bob: { token: string; id: string };
+let backendCwd: string | undefined;
+async function startBackend(){
+  backend = spawn(process.execPath, ["--import", require.resolve("tsx"), "--import", path.resolve(__dirname, "fixtures/stripe-fetch.mjs"), path.resolve(__dirname, "../backend/src/server.ts")], {
+    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", SMTP_HOST: "", TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
+  });
+  let startup = ""; backend.stderr?.on("data", chunk => { startup += chunk; });
+  let ready = false;
+  for (let n = 0; n < 100; n++) {
+    if (backend.exitCode !== null) throw new Error(`Backend exited during smoke startup: ${startup}`);
+    try { ready = (await fetch(base + "/health")).ok; } catch { /* Wait for actual readiness. */ }
+    if (ready) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (!ready) throw new Error("Backend did not become ready in 10 seconds.");
+}
 beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "reddoor-api-smoke-"));
   const seed = createAuthService({ jwtSecret: "smoke-only-test-key", userStoreFilePath: path.join(root, "backend/.data/auth-users.json"), skipEmailVerification: true });
@@ -75,18 +90,7 @@ beforeAll(async () => {
   });
   stub.listen(0, "127.0.0.1"); await once(stub, "listening");
   const port = await freePort(); base = `http://127.0.0.1:${port}`;
-  backend = spawn(process.execPath, ["--import", require.resolve("tsx"), "--import", path.resolve(__dirname, "fixtures/stripe-fetch.mjs"), path.resolve(__dirname, "../backend/src/server.ts")], {
-    cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: String(port), JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", SMTP_HOST: "", TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
-  });
-  let startup = ""; backend.stderr?.on("data", chunk => { startup += chunk; });
-  let ready = false;
-  for (let n = 0; n < 100; n++) {
-    if (backend.exitCode !== null) throw new Error(`Backend exited during smoke startup: ${startup}`);
-    try { ready = (await fetch(base + "/health")).ok; } catch { /* Wait for actual readiness. */ }
-    if (ready) break;
-    await new Promise(r => setTimeout(r, 100));
-  }
-  if (!ready) throw new Error("Backend did not become ready in 10 seconds.");
+  await startBackend();
   admin = await account("admin"); alice = await account("alice", true); bob = await account("bob", true);
 });
 afterAll(async () => {
@@ -274,7 +278,11 @@ describe("Core API and payment lifecycle smoke checks", () => {
     const member=await request("/members/me",{intent:"chatting",intentHours:1,interests:["Coffee","Hiking"],prompts:[{prompt:"Ask me about…",answer:"My favorite trail"}]},alice.token,"PUT");
     expect(member.preferences.intentExpiresAtMs).toBeGreaterThan(Date.now());
     const profile=await request(`/profile/public/${alice.id}`);expect(profile.profile.member.interests).toEqual(["Coffee","Hiking"]);expect(profile.profile.member.intent).toBe("chatting");expect(profile.profile.member.hideLocation).toBeUndefined();
+    const observer=new WebSocket(base.replace("http:","ws:"));await once(observer,"open");const hello=once(observer,"message");observer.send(JSON.stringify({type:"auth",payload:{sessionToken:alice.token}}));await hello;
+    const removed=once(observer,"message");
     await request("/members/me",{hideProfile:true},bob.token,"PUT");
+    const removal=JSON.parse(String((await removed)[0]));observer.terminate();expect(removal).toEqual({type:"presence_removed",payload:{key:`user:${bob.id}`,hideProfile:true}});
+
     await request("/members/me",{hideProfile:false},bob.token,"PUT");
     await request("/members/me",{discovery:{intent:"",interest:"Coffee",verifiedOnly:false}},bob.token,"PUT",402);
   });
@@ -371,6 +379,58 @@ describe("Core API and payment lifecycle smoke checks", () => {
     await request("/block",{targetKey:`user:${provider.id}`},buyer.token);expect((await mdRequest("/integrations/md/inbox",{linkId:link.linkId,providerId:data.providerId})).threads).toHaveLength(0);await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token,undefined,403);await request("/unblock",{targetKey:`user:${provider.id}`},buyer.token);
     await mdRequest("/integrations/md/chat/revoke",{grantId:"md-grant-one",providerId:data.providerId});mdReceiptRevoked=true;await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token,undefined,403);
     await request("/md/account/key",{acknowledge:true},provider.token);expect((await request("/md/discover",{lat:49.28,lng:-123.12},buyer.token)).providers).toHaveLength(0);await mdRequest("/integrations/md/link",data,403);
+  });
+
+  it("Given launch diagnostics When accessed by admins Then reports actual configuration and never treats connection checks as launch approval",async()=>{
+    await request("/admin/launch/health",undefined,undefined,undefined,401);
+    await request("/admin/launch/health",undefined,bob.token,undefined,403);
+    const health=await request("/admin/launch/health",undefined,admin.token);
+    expect(health.checks.stripe.status).toBe("passed");expect(health.checks.smtp.status).toBe("needs_configuration");expect(health.checks.storage.status).toBe("needs_configuration");expect(health.automatedChecksPassed).toBe(false);expect(health.launchApproved).toBe(false);
+    expect(JSON.stringify(health)).not.toContain(WEBHOOK_SECRET);expect(JSON.stringify(health)).not.toContain(MD_SECRET);
+    const cli=await new Promise<{code:number|null;output:string}>(resolve=>{const child=spawn(process.execPath,[path.resolve(__dirname,"../scripts/check-launch.mjs"),"--api-url",base,"--site-url",base,"--allow-local"],{env:{...process.env,REDDOOR_ADMIN_SESSION_TOKEN:admin.token}});let output="";child.stdout.on("data",chunk=>{output+=chunk;});child.on("exit",code=>resolve({code,output}));});
+    const cliReport=JSON.parse(cli.output);expect(cliReport.checks.apiHealth.status).toBe("passed");expect(cliReport.checks.smtp.status).toBe("needs_configuration");expect(cli.code).toBe(1);expect(cli.output).not.toContain(admin.token);
+
+  });
+  it("Given persisted accounts and private state When the backend restarts and an offline backup is restored Then preserves entitlements, messages, safety, media and favorites",async()=>{
+    const member=await account("restore-member",false,"REDDOORLAUNCH"),peer=await account("restore-peer");
+    await request("/profile/me",{displayName:"Restore Member",age:29,bio:"Restore drill"},member.token,"PUT");
+    await request("/members/me",{hideProfile:true,interests:["Coffee"]},member.token,"PUT");
+    await request("/favorites/toggle",{targetUserId:peer.id},member.token);
+    const sent=await request("/chat/send",{chatKind:"cruise",toKey:`user:${peer.id}`,text:"Persistent private conversation"},member.token);
+    const plan=await request("/community/plans",{title:"Restore drill meetup",description:"A public coffee meetup",city:"Vancouver",venue:"Public café",category:"Coffee",startsAtMs:Date.now()+3600000,endsAtMs:Date.now()+7200000},member.token);await request(`/community/plans/${plan.id}/rsvp`,{join:true},peer.token);
+
+    await request("/report/user",{targetKey:`user:${peer.id}`,reason:"Restore drill safety report"},member.token);
+    await request("/block",{targetKey:`user:${peer.id}`},member.token);
+    const key=await request("/md/account/key",{acknowledge:true},member.token);expect(key.key).toMatch(/^rd_link_/);
+    const nonce=crypto.randomUUID();await mdRequest("/integrations/md/status",{linkId:"restore-check",providerId:"restore-check"},200,nonce);
+    const bytes=Buffer.from("restore drill media"),upload=await request("/profile/media/initiate",{kind:"photo_main",mimeType:"image/png",sizeBytes:bytes.length},member.token);
+    expect((await fetch(upload.uploadUrl,{method:"PUT",headers:{"content-type":"image/png"},body:bytes})).status).toBe(200);await request("/profile/media/complete",{mediaId:upload.mediaId},member.token);
+    async function assertRestored(){
+      // Local-file mode persists accounts but intentionally requires a new login after restart.
+      await request("/session",undefined,member.token,undefined,401);
+      for(const identity of [member,peer,admin]){const email=identity===member?"restore-member@example.com":identity===peer?"restore-peer@example.com":"smoke-admin@example.com";const login=await request("/auth/login",{email,password:"Smoke-test123!"});identity.token=login.session.sessionToken;expect(login.session.ageVerified).toBe(true);}
+      expect((await request("/session",undefined,member.token)).session.userId).toBe(member.id);
+      const plus=await request("/plus",undefined,member.token);expect(plus.active).toBe(true);expect(plus.redeemedPromoCodes).toContain("REDDOORLAUNCH");expect(plus.providerTutorialPending).toBe(true);
+      expect((await request("/profile/me",undefined,member.token)).profile.displayName).toBe("Restore Member");
+      expect((await request("/members/me",undefined,member.token)).preferences.hideProfile).toBe(true);
+      expect((await request("/favorites",undefined,member.token)).favorites).toContain(peer.id);
+      const plans=await request("/community/plans?city=Vancouver",undefined,member.token);expect(plans.plans.find((p:any)=>p.id===plan.id).attendeeCount).toBe(2);
+      const renewal=await request("/auth/login",{email:"renewal-enrollment@example.com",password:"Smoke-test123!"}),billing=await request("/plus",undefined,renewal.session.sessionToken);expect(billing.hasPaymentMethod).toBe(true);expect(billing.autoRenew).toBe(false);
+      expect((await customWebhook("checkout.session.completed",setupCheckout,"evt_restore_setup_replay")).status).toBe(200);expect((await request("/plus",undefined,renewal.session.sessionToken)).autoRenew).toBe(false);expect(scheduleCreates).toBe(1);
+
+      expect((await request("/md/account",undefined,member.token)).hasKey).toBe(true);
+      expect((await request("/admin/safety-reports",undefined,admin.token)).reports.some((r:any)=>r.reason==="Restore drill safety report")).toBe(true);
+      await request("/chat/send",{chatKind:"cruise",toKey:`user:${member.id}`,text:"Blocked after restore"},peer.token,undefined,403);
+      const media=await request(`/media/public/${upload.mediaId}/url`);expect(Buffer.from(await (await fetch(media.downloadUrl)).arrayBuffer())).toEqual(bytes);
+      await mdRequest("/integrations/md/status",{linkId:"restore-check",providerId:"restore-check"},409,nonce);
+    }
+    backend.kill("SIGTERM");await once(backend,"exit");await startBackend();await assertRestored();
+    await request("/unblock",{targetKey:`user:${peer.id}`},member.token);expect((await request(`/chat/messages?chatKind=cruise&otherKey=user:${peer.id}`,undefined,member.token)).messages.some((m:any)=>m.messageId===sent.message.messageId)).toBe(true);await request("/block",{targetKey:`user:${peer.id}`},member.token);
+    backend.kill("SIGTERM");await once(backend,"exit");
+    const backup=path.join(root,"offline-backup"),restored=path.join(root,"restore-drill"),script=path.resolve(__dirname,"../scripts/backup.mjs");
+    function run(args:string[]){const result=spawnSync(process.execPath,[script,...args],{cwd:root,env:{...process.env,DATABASE_URL:"",NEON_DATABASE_URL:""},encoding:"utf8"});expect({status:result.status,error:result.stderr}).toEqual({status:0,error:""});}
+    run(["create","--source",path.join(root,"backend/.data"),"--backup",backup,"--offline"]);run(["verify","--backup",backup]);run(["restore-local","--backup",backup,"--target",path.join(restored,"backend/.data")]);
+    backendCwd=restored;await startBackend();await assertRestored();
   });
 
 });

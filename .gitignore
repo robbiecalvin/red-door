@@ -30,3 +30,8 @@ yarn-error.log*
 Screenshot *.png
 .tmp_*
 red-door-user-prompts.docx
+
+# Private operational snapshots
+backups/
+*.dump
+*.backup

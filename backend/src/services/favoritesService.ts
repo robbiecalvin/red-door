@@ -38,11 +38,14 @@ function requireRegistered(session: SessionLike): Result<{ userId: string }> {
   return ok({ userId: session.userId });
 }
 
-export function createFavoritesService(): Readonly<{
+export function createFavoritesService(deps: {
+  initialFavorites?: Record<string, readonly string[]>;
+  onStateChanged?: (favorites: Record<string, string[]>) => void;
+} = {}): Readonly<{
   list(session: SessionLike): Result<ReadonlyArray<string>>;
   toggle(session: SessionLike, targetUserId: unknown): Result<{ targetUserId: string; isFavorite: boolean; favorites: ReadonlyArray<string> }>;
 }> {
-  const byUser = new Map<string, Set<string>>();
+  const byUser = new Map<string, Set<string>>(Object.entries(deps.initialFavorites ?? {}).map(([id, favorites]) => [id, new Set(favorites)]));
 
   function getSet(userId: string): Set<string> {
     const existing = byUser.get(userId);
@@ -82,6 +85,7 @@ export function createFavoritesService(): Readonly<{
         isFavorite = true;
       }
 
+      deps.onStateChanged?.(Object.fromEntries(Array.from(byUser, ([id, values]) => [id, Array.from(values)])));
       return ok({ targetUserId: target, isFavorite, favorites: Array.from(favorites) });
     }
   };

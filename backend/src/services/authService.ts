@@ -260,7 +260,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       version: 1,
       users: Array.from(usersById.values())
     };
-    fs.writeFileSync(userStoreFilePath, JSON.stringify(payload), "utf8");
+    fs.writeFileSync(userStoreFilePath + ".tmp", JSON.stringify(payload), { mode: 0o600 });
+    fs.chmodSync(userStoreFilePath + ".tmp", 0o600);
+    fs.renameSync(userStoreFilePath + ".tmp", userStoreFilePath);
   }
 
   function loadUsers(): void {

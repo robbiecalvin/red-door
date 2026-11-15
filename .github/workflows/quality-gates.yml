@@ -31,5 +31,8 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Production-only backend startup
+        run: npm run test:production
+
       - name: Dependency vulnerability audit (high+)
         run: npm audit --omit=dev --audit-level=high

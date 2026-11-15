@@ -1,3 +1,4 @@
+import { installLaunchReadiness } from "./services/launchReadiness";
 import { installMdBridge } from "./services/mdBridge";
 import { scheduleParameters } from "./services/renewalEnrollment";
 import { createCommunityRepository } from "./repositories/communityRepository";
@@ -307,6 +308,11 @@ async function main(): Promise<void> {
         port: smtpPortRaw,
         secure: smtpSecure,
         requireTLS: !smtpSecure,
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000,
+        disableFileAccess: true,
+        disableUrlAccess: true,
         auth: {
           user: smtpUser.trim(),
           pass: smtpPass
@@ -376,7 +382,6 @@ async function main(): Promise<void> {
     console.warn("[RedDoor] Verification delivery is not configured; no code was sent.");
   };
 
-  const favoritesService = createFavoritesService();
   const publicPostingsService = createPublicPostingsService({
     persistenceFilePath: path.resolve(process.cwd(), "backend/.data/public-postings.json")
   });
@@ -400,23 +405,23 @@ async function main(): Promise<void> {
   let authPersistQueue: Promise<void> = Promise.resolve();
   let authPersistenceError: unknown = null;
   let chatPersistQueue: Promise<void> = Promise.resolve();
+  let chatPersistenceError: unknown = null;
   const queueAuthStateSave = (state: AuthStateSnapshot): void => {
     if (!authStateRepo) return;
     authPersistQueue = authPersistQueue
       .then(async () => { await authStateRepo.saveState(state); authPersistenceError = null; })
       .catch((e: unknown) => {
         authPersistenceError = e;
-        const message = e instanceof Error ? e.message : String(e);
-        console.error(`[RedDoor] Failed to persist auth state: ${message}`);
+        console.error("[RedDoor] Failed to persist auth state.");
       });
   };
   const queueChatStateSave = (state: ChatPersistenceState): void => {
     if (!chatStateRepo) return;
     chatPersistQueue = chatPersistQueue
-      .then(() => chatStateRepo.saveState(state))
+      .then(async () => { await chatStateRepo.saveState(state); chatPersistenceError = null; })
       .catch((e: unknown) => {
-        const message = e instanceof Error ? e.message : String(e);
-        console.error(`[RedDoor] Failed to persist chat state: ${message}`);
+        chatPersistenceError = e;
+        console.error("[RedDoor] Failed to persist chat state.");
       });
   };
   if (postgresPool) {
@@ -483,6 +488,8 @@ async function main(): Promise<void> {
   });
 
   const communityRepository = await createCommunityRepository(postgresPool);
+  let favoritesPersistence:Promise<unknown>=Promise.resolve(),favoritesPersistenceError:unknown=null;
+  const favoritesService=createFavoritesService({initialFavorites:await communityRepository.readSetting<Record<string,string[]>>("favorites"),onStateChanged:favorites=>{favoritesPersistence=communityRepository.update(s=>{s.settings.favorites=favorites;}).then(()=>{favoritesPersistenceError=null;}).catch(e=>{favoritesPersistenceError=e;});}});
   securedGuests=new Map(Object.entries(await communityRepository.setting<Record<string,number>>("securedGuests",()=>({}))).filter(([,expires])=>expires>Date.now()));
   persistGuests=()=>{for(const [id,expires] of securedGuests)if(expires<=Date.now())securedGuests.delete(id);const snapshot=Object.fromEntries(securedGuests);guestPersistQueue=communityRepository.update(s=>{s.settings.securedGuests=snapshot;}).then(()=>{guestPersistError=null;}).catch(e=>{guestPersistError=e;});};
   const initialSafety=await communityRepository.safety();
@@ -1177,12 +1184,14 @@ async function main(): Promise<void> {
     return res.status(200).json({ favorites: result.value });
   });
 
-  app.post("/favorites/toggle", (req, res) => {
+  app.post("/favorites/toggle", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const result = favoritesService.toggle(domainSession(sessionResult.value), (req.body as any)?.targetUserId);
     if (!result.ok) return sendError(res, result.error);
+    await favoritesPersistence;
+    if(favoritesPersistenceError)return res.status(503).json({message:"Unable to save favorites. Please refresh before retrying."});
     return res.status(200).json(result.value);
   });
 
@@ -1623,7 +1632,8 @@ async function main(): Promise<void> {
     }
   });
 
-  installMdBridge(app,{auth:authService,repository:communityRepository,member:plusUser,persist:async()=>{await authPersistQueue;if(authPersistenceError)throw new Error("Persistence unavailable");},blocked:(a,b)=>blockService.isBlocked(a,b),secret:process.env.MD_SHARED_SECRET?.trim() ?? "",keySecret:jwtSecret,appUrl:process.env.PUBLIC_APP_URL?.trim() || "https://thereddoor.app",notify:id=>pushService.notify(id,"md"),broadcast:(type,payload)=>safeBroadcast(gateway.broadcast,type,payload)});
+  const mdBridge = installMdBridge(app,{auth:authService,repository:communityRepository,member:plusUser,persist:async()=>{await authPersistQueue;if(authPersistenceError)throw new Error("Persistence unavailable");},blocked:(a,b)=>blockService.isBlocked(a,b),secret:process.env.MD_SHARED_SECRET?.trim() ?? "",keySecret:jwtSecret,appUrl:process.env.PUBLIC_APP_URL?.trim() || "https://thereddoor.app",notify:id=>pushService.notify(id,"md"),broadcast:(type,payload)=>safeBroadcast(gateway.broadcast,type,payload)});
+  installLaunchReadiness(app,{admin:requireAdminSession,databasePing:postgresPool?()=>postgresPool.query("SELECT 1"):undefined,verifyMail:emailSender?()=>emailSender.verify():undefined,mediaMode:mediaStorageMode,mdConfigured:mdBridge.configured,persistenceHealthy:()=>!authPersistenceError&&!chatPersistenceError&&!safetyPersistenceError&&!favoritesPersistenceError&&!guestPersistError&&!metricsWriteError});
   installMemberRoutes(app,{
     auth:authService,profiles:profileRepo,media:mediaRepo,storage:mediaStorage,bucket:s3Bucket || "local-dev-bucket",repository:communityRepository,
     privacyChanged:(key,hideProfile)=>safeBroadcast(gateway.broadcast,"presence_removed",{key,hideProfile}),
@@ -1982,7 +1992,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     clearInterval(metricsCleanupTimer);
     clearInterval(chatCleanupTimer);
-    await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue]);
+    await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue, guestPersistQueue, safetyPersistence, favoritesPersistence, communityRepository.flush()]);
     if (postgresPool) {
       await postgresPool.end();
     }

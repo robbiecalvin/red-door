@@ -45,9 +45,16 @@ MD's backend must implement the [integration contract](docs/md-integration-contr
 
 See [rollout validation and deployment notes](docs/community-rollout-validation.md).
 
+## Launch verification and recovery
+
+- `npm run launch:check` runs read-only checks against the current deployment; see [launch readiness and remaining hosted checks](docs/launch-readiness.md).
+- Administrators can inspect `/admin/launch/health` for database, SMTP, Stripe, MD and storage configuration without exposing secrets. Connection checks never claim the release is approved.
+- Favorites now persist across backend restarts. Offline backups include local state and, when configured, a PostgreSQL dump; an isolated restore drill verifies private conversations, media, entitlements and safety state.
+- MapLibre, Nodemailer, WebSocket and build dependencies were updated for security. The tested frontend/build versions are MapLibre 6 and Vite 6.
+
 ## Tech stack
 
-- Frontend: React 18, TypeScript, Vite 5, MapLibre GL
+- Frontend: React 18, TypeScript, Vite 6, MapLibre GL
 - Backend: Node.js, Express, WebSocket (`ws`), TypeScript (`tsx` runtime)
 - Data: In-memory + JSON persistence fallback, optional PostgreSQL (`pg`)
 - Media: Local object storage fallback, PostgreSQL object storage, or S3-compatible object storage

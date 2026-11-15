@@ -1,3 +1,4 @@
+import { AdminLaunchChecks } from "./AdminLaunchChecks";
 import { MdPanel, MdAccountSettings } from "./MdPanel";
 import { BillingSettings, PromoCodeForm } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
@@ -7294,7 +7295,7 @@ export function Router({
       {settingsSection === "privacy" ? <div className="rd-profile-settings-stack"><MemberPrivacy api={api} session={session}/><PrivacySettings api={api} session={session}/><PrivacyBlockList api={api} session={session}/></div> : null}
       {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings api={api} session={session} /></section> : null}
       {settingsSection === "membership" ? <div className="rd-profile-settings-stack"><PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /><BillingSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/></div> : null}
-      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><MdAccountSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
+      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><MdAccountSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
       </div>
     </div>
   );
