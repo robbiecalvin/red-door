@@ -38,7 +38,7 @@ function toMarkers(
     id: p.key,
     position: { lat: p.lat, lng: p.lng },
     color: "#C00000",
-    label: p.status ? `Presence: ${p.status}` : "Presence",
+    label: p.userType === "guest" ? "Anon" : p.status ? `Member: ${p.status}` : "Member",
     imageUrl: avatarByKey?.[p.key] ?? avatarForKey(p.key),
     onClick: onMarkerSelect ? () => onMarkerSelect(p.key) : undefined
   }));
@@ -139,7 +139,7 @@ export function CruiseMap({
   }, [geo]);
 
   return (
-    <section aria-label="Cruise mode map" style={{ background: "#000000", color: "#FFFFFF", fontFamily: "var(--ui)", display: "grid", gap: 8, height: "100%" }}>
+    <section aria-label="Cruise mode map" style={{ background: "#000000", color: "#FFFFFF", fontFamily: "var(--ui)", display: "flex", flexDirection: "column", gap: 0, minHeight: 0, height: "100%" }}>
       {banner ? (
         <div
           role="alert"
@@ -176,7 +176,7 @@ export function CruiseMap({
         </div>
       ) : null}
 
-      <div style={{ background: "#111111", border: 0, borderRadius: 0, overflow: "hidden", height: typeof height === "number" || typeof height === "string" ? height : 520, position: "relative" }}>
+      <div style={{ flex: 1, minHeight: 0, background: "#eeece8", border: 0, borderRadius: 0, overflow: "hidden", height: typeof height === "number" || typeof height === "string" ? height : 520, position: "relative" }}>
         <MapView
           initialView={view}
           markers={markers}

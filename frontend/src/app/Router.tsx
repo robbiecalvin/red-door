@@ -1,3 +1,7 @@
+import { displayNameForIdentity, isAnonymousIdentity } from "../../../shared/identity";
+import { Sheet } from "./Sheet";
+import { NotificationSettings } from "./NotificationSettings";
+import { MessageWorkspace } from "./MessageWorkspace";
 import { PrivacySettings } from "./PrivacySettings";
 import { hasPlus, limits } from "../../../shared/plus";
 import { openPlus } from "./PlusPanel";
@@ -212,12 +216,11 @@ function normalizePeerKey(rawKey: string): string {
 
 function displayNameForPeerKey(key: string): string {
   const normalized = normalizePeerKey(key);
-  if (!normalized) return "anon";
-  if (normalized.startsWith("session:")) return "anon";
-  if (normalized.startsWith("guest:")) return "anon";
-  if (normalized.startsWith("user:guest:")) return "anon";
-  if (normalized.startsWith("user:")) return normalized.slice("user:".length).trim() || "anon";
-  return normalized;
+  if (!normalized) return "Anon";
+  if (normalized.startsWith("session:")) return "Anon";
+  if (normalized.startsWith("guest:")) return "Anon";
+  if (normalized.startsWith("user:guest:")) return "Anon";
+  return "Member";
 }
 
 function isFireSignalText(text: string): boolean {
@@ -299,9 +302,10 @@ function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: 
 
 function formatDistanceLabel(distanceInMeters: number): string {
   if (!Number.isFinite(distanceInMeters) || distanceInMeters < 0) return "-";
-  if (distanceInMeters < 1_000) return `${Math.round(distanceInMeters)} m`;
-  if (distanceInMeters < 10_000) return `${(distanceInMeters / 1_000).toFixed(1)} km`;
-  return `${Math.round(distanceInMeters / 1_000)} km`;
+  if (distanceInMeters < 500) return "Within 500 m";
+  if (distanceInMeters < 1_000) return "Within 1 km";
+  if (distanceInMeters < 5_000) return "Within 5 km";
+  return "5+ km away";
 }
 
 function chatMessagesEqual(a: ReadonlyArray<ChatMessage>, b: ReadonlyArray<ChatMessage>): boolean {
@@ -444,12 +448,17 @@ function CruiseSurface({
   onOpenThreadRequested(key: string): void;
   onUnreadCountChange?(count: number): void;
 }>): React.ReactElement {
+  const [activeFilterCount, setActiveFilterCount] = useState(0);
+  const [filteredPeopleKeys, setFilteredPeopleKeys] = useState<ReadonlySet<string> | null>(null);
+  useEffect(() => { const update = (event: Event) => { const keys=(event as CustomEvent<{keys:string[] | null}>).detail.keys; setFilteredPeopleKeys(keys ? new Set(keys) : null); }; window.addEventListener("rd:people-filter", update); return () => window.removeEventListener("rd:people-filter", update); }, []);
+  useEffect(() => { const update = (event: Event) => setActiveFilterCount((event as CustomEvent<{count:number}>).detail.count); window.addEventListener("rd:filter-count", update); return () => window.removeEventListener("rd:filter-count", update); }, []);
   const [mobileTab, setMobileTab] = useState<MobileCruiseTab>(discoverScreen);
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
   const [selectedProfileKey, setSelectedProfileKey] = useState<string | null>(null);
   const [selfCoords, setSelfCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [snapshotPresence, setSnapshotPresence] = useState<ReadonlyArray<CruisePresenceUpdate>>([]);
   const [peerProfileByKey, setPeerProfileByKey] = useState<Record<string, { displayName?: string; age?: number }>>({});
+  const [profilesLoading, setProfilesLoading] = useState(true);
   const [publicProfiles, setPublicProfiles] = useState<ReadonlyArray<{
     userId: string;
     displayName: string;
@@ -720,7 +729,7 @@ function CruiseSurface({
         if (!cancelled) setPublicProfiles(list.profiles as any);
       } catch {
         if (!cancelled) setPublicProfiles([]);
-      }
+      } finally { if (!cancelled) setProfilesLoading(false); }
       if (session.userType === "guest") {
         if (!cancelled) {
           setFavorites(new Set());
@@ -1124,6 +1133,7 @@ function CruiseSurface({
     const hasSelf = mergedPresence.some((p) => p.key === meKey);
     const peoplePresence = mergedPresence.filter((row) => {
       if (row.key === meKey) return true;
+      if (filteredPeopleKeys && !filteredPeopleKeys.has(row.key)) return false;
       if (blockedKeys.has(row.key)) return false;
       if (row.key.startsWith("user:")) return visibleProfileKeys.has(row.key);
       return true;
@@ -1140,7 +1150,7 @@ function CruiseSurface({
       updatedAtMs: Date.now()
     };
     return [syntheticSelf, ...filteredPresence];
-  }, [blockedKeys, mapVisibility.people, meKey, mergedPresence, selfCoords, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter, visibleProfileKeys]);
+  }, [filteredPeopleKeys, blockedKeys, mapVisibility.people, meKey, mergedPresence, selfCoords, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter, visibleProfileKeys]);
 
   const avatarUrlByKey = useMemo(() => {
     const next: Record<string, string> = {};
@@ -1203,32 +1213,12 @@ function CruiseSurface({
       avatarByKey={avatarUrlByKey}
       additionalMarkers={mapOverlayMarkers}
       defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
-      height={isMobile ? "100%" : "calc(100dvh - 62px)"}
-      visible
+      height="100%"
+      visible={mobileTab === "map"}
       travelPickerArmed={travelPickerArmed}
       onToggleTravelPicker={() => { if (!hasPlus(session)) { openPlus(); return; } setTravelPickerArmed((prev) => !prev); }}
       onTravelLocationSelected={(coords) => void handleTravelLocationSelected(coords)}
     />
-  );
-
-  const mobileMapPanel = (
-    <div style={{ background: "#000", marginInline: 0, height: "100%" }}>
-      <CruiseMap
-        wsUrl={wsProxyUrl()}
-        sessionToken={session.sessionToken}
-        presenceUpdates={mapPresence}
-        realtimeErrorMessage={realtimeError}
-        onMarkerSelect={(key) => void openProfileByKey(key)}
-        avatarByKey={avatarUrlByKey}
-        additionalMarkers={mapOverlayMarkers}
-        defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
-        height={"100%"}
-        visible={mobileTab === "map"}
-        travelPickerArmed={travelPickerArmed}
-        onToggleTravelPicker={() => { if (!hasPlus(session)) { openPlus(); return; } setTravelPickerArmed((prev) => !prev); }}
-        onTravelLocationSelected={(coords) => void handleTravelLocationSelected(coords)}
-      />
-    </div>
   );
 
   const chatPanel = (
@@ -1246,6 +1236,7 @@ function CruiseSurface({
       selfCoords={selfCoords}
       peerProfileByKey={peerProfileByKey}
       discoverFilter={discoverFilter}
+      loading={profilesLoading}
       publicProfiles={visiblePublicProfiles}
       favorites={favorites}
       mediaUrlById={mediaUrlById}
@@ -1255,52 +1246,15 @@ function CruiseSurface({
   );
 
   return (
-    <div style={mobileTab === "map" ? { height: "100%" } : { display: "grid", gap: 8 }}>
-      {isMobile ? (
-        <>
-          {mobileTab === "map" ? mobileMapPanel : chatPanel}
-        </>
-      ) : (
-        <div style={mobileTab === "map" ? { display: "grid", height: "100%", alignItems: "stretch" } : { display: "grid", gap: 12, alignItems: "start" }}>
-          {mobileTab === "map" ? mapPanel : chatPanel}
-        </div>
-      )}
+    <div className={`rd-explore-surface ${mobileTab === "map" ? "is-map" : "is-people"}`}>
+      <div className="rd-explore-toolbar"><div><span className="rd-eyebrow">EXPLORE</span><strong>{travelCenter ? "Your travel location" : selfCoords ? "People nearby" : "Discover people"}</strong></div><div className="rd-view-switch" aria-label="Explore view"><button aria-pressed={mobileTab === "map"} onClick={() => onDiscoverScreenChange("map")}>Map</button><button aria-pressed={mobileTab === "chat"} onClick={() => onDiscoverScreenChange("chat")}>People</button></div><button className="rd-btn" onClick={() => window.dispatchEvent(new CustomEvent("rd:discover-control", {detail:{action:"open_filters"}}))}>Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button></div>
+      <div className="rd-explore-layout"><div className="rd-map-pane">{mobileTab === "map" ? mapPanel : null}</div><div className="rd-people-pane">{chatPanel}</div></div>
 
       {selectedProfileKey ? (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 80,
-            background: "rgba(0,0,0,0.72)",
-            display: "grid",
-            placeItems: isMobile ? "stretch" : "center",
-            padding: isMobile ? 0 : 14
-          }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="User profile"
-          onClick={() => setSelectedProfileKey(null)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={
-              isMobile
-                ? {
-                    width: "100%",
-                    height: "100dvh",
-                    overflow: "auto",
-                    background: "linear-gradient(180deg, rgba(7,8,10,0.98), rgba(2,2,4,0.98))",
-                    borderRadius: 0,
-                    border: "none",
-                    padding: "calc(env(safe-area-inset-top, 0px) + 56px) 12px calc(env(safe-area-inset-bottom, 0px) + 20px)"
-                  }
-                : { ...cardStyle(), width: "min(680px, 100%)", maxHeight: "86vh", overflow: "auto" }
-            }
-          >
+        <Sheet title="User profile" eyebrow="MAKE A CONNECTION" onClose={() => setSelectedProfileKey(null)}>
             <div style={{ display: "grid", gap: 14 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "106px 1fr auto", gap: 12, alignItems: "center" }}>
-                <div style={{ position: "relative", width: 106, height: 106 }}>
+              <div className="rd-profile-intro" style={{ display: "grid", gridTemplateColumns: "88px minmax(0,1fr)", gap: 14, alignItems: "center" }}>
+                <div style={{ position: "relative", width: 88, height: 88 }}>
                   <img
                     src={
                       selectedPublicProfile?.mainPhotoMediaId && mediaUrlById[selectedPublicProfile.mainPhotoMediaId]
@@ -1316,8 +1270,8 @@ function CruiseSurface({
                   <span style={{ position: "absolute", right: 4, bottom: 4, width: 14, height: 14, borderRadius: "50%", background: "#ff7a88", border: "2px solid #000" }} />
                 </div>
                 <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontSize: 22, fontWeight: 700 }}>{selectedPublicProfile?.displayName ?? selectedProfileKey}</div>
-                  <div style={{ color: "#ff7a88", fontSize: 14 }}>Instant Messaging Available</div>
+                  <div style={{ fontSize: 22, fontWeight: 700 }}>{displayNameForIdentity(selectedProfileKey, selectedPublicProfile?.displayName)}</div>
+                  <div style={{ color: "#ff7a88", fontSize: 14 }}>Open to a conversation</div>
                 </div>
                 <div style={{ display: "grid", gap: 8 }}>
                   {selectedPublicProfile && selectedPublicProfile.userId !== (session.userId ?? "") ? (
@@ -1484,8 +1438,7 @@ function CruiseSurface({
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </Sheet>
       ) : null}
       {selectedSpotId ? (
         <CruisingSpotModal
@@ -1586,6 +1539,7 @@ function CruisingSpotModal({
 }
 
 function CruiseChat({
+  loading = false,
   api,
   session,
   busy,
@@ -1607,6 +1561,7 @@ function CruiseChat({
   onAvatarLoadError,
   onUnreadCountChange
 }: Readonly<{
+  loading?: boolean;
   api: Api;
   session: Session;
   busy: boolean;
@@ -1705,12 +1660,12 @@ function CruiseChat({
     const next: Record<string, string> = {};
     for (const p of publicProfiles) {
       if (typeof p.displayName === "string" && p.displayName.trim()) {
-        next[chatKeyFromProfileUserId(p.userId)] = p.displayName;
+        next[chatKeyFromProfileUserId(p.userId)] = displayNameForIdentity(chatKeyFromProfileUserId(p.userId), p.displayName);
       }
     }
     for (const [key, profile] of Object.entries(peerProfileByKey)) {
       if (typeof profile.displayName === "string" && profile.displayName.trim()) {
-        next[key] = profile.displayName;
+        next[key] = displayNameForIdentity(key, profile.displayName);
       }
     }
     return next;
@@ -1726,7 +1681,7 @@ function CruiseChat({
           return {
             key,
             userId: p.userId,
-            displayName: p.displayName,
+            displayName: displayNameForIdentity(chatKeyFromProfileUserId(p.userId), p.displayName),
             age: p.age,
             stats: p.stats,
             meters: online && selfCoords ? Math.round(distanceMeters(selfCoords, { lat: online.lat, lng: online.lng })) : null,
@@ -2594,13 +2549,17 @@ function CruiseChat({
     return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
   }, []);
 
+  const activeFilterCount = [favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
+  useEffect(() => { window.dispatchEvent(new CustomEvent("rd:filter-count", {detail:{count:activeFilterCount}})); }, [activeFilterCount]);
+  useEffect(() => { window.dispatchEvent(new CustomEvent("rd:people-filter", {detail:{keys: activeFilterCount ? gridCards.map(card => card.key) : null}})); }, [activeFilterCount, gridCards]);
+
   if (view === "thread" && peerKey.trim()) {
     const peerLabel = displayNameByKey[peerKey] ?? peerProfileByKey[peerKey]?.displayName ?? displayNameForPeerKey(peerKey);
     return (
       <div style={{ display: "grid", gap: 0, marginInline: 0 }}>
         {pendingInviteNotifs.length > 0 ? (
           <div style={{ ...cardStyle(), display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>INVITE REQUESTS</div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>Chat invitations</div>
             {pendingInviteNotifs.map((invite) => (
               <div key={invite.inviteId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
                 <div style={{ color: "#ced3dc", fontSize: 13 }}>
@@ -2678,13 +2637,13 @@ function CruiseChat({
     );
   }
 
-  const chatGridColumns = isMobile ? "repeat(3, minmax(0, 1fr))" : "repeat(auto-fill, minmax(170px, 210px))";
+  const chatGridColumns = isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(auto-fill, minmax(155px, 1fr))";
 
   return (
     <div style={{ display: "grid", gap: 0, marginInline: 0 }}>
       {pendingInviteNotifs.length > 0 ? (
         <div style={{ ...cardStyle(), display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>INVITE REQUESTS</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>Chat invitations</div>
           {pendingInviteNotifs.map((invite) => (
             <div key={invite.inviteId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
               <div style={{ color: "#ced3dc", fontSize: 13 }}>
@@ -2711,36 +2670,7 @@ function CruiseChat({
         </div>
       ) : null}
       {groupStatus ? <div style={{ color: "#ff7a88", fontSize: 12 }}>{groupStatus}</div> : null}
-      {filtersOpen ? (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 82,
-            background: "rgba(0,0,0,0.72)",
-            display: "grid",
-            alignItems: "start",
-            justifyItems: "center",
-            padding: "calc(env(safe-area-inset-top, 0px) + 62px) 10px 10px"
-          }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Discover filters"
-          onClick={() => setFiltersOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              ...cardStyle(),
-              width: "min(860px, 100%)",
-              maxHeight: "calc(100dvh - 90px)",
-              overflow: "auto",
-              border: "1px solid rgba(255,95,110,0.56)",
-              background: "var(--surface)"
-            }}
-          >
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>Find your people</div>
+      {filtersOpen ? <Sheet title="Find your people" eyebrow="YOUR KIND OF COMPANY" onClose={() => setFiltersOpen(false)}><div className="rd-filter-fields">
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} />
@@ -2804,22 +2734,21 @@ function CruiseChat({
               </fieldset>
               <SavedSearches api={api} session={session} filters={{ filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition, favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter }} onApply={f => { setFilterMinAge((typeof f.filterMinAge === "string" ? f.filterMinAge : "")); setFilterMaxAge((typeof f.filterMaxAge === "string" ? f.filterMaxAge : "")); setFilterRace((typeof f.filterRace === "string" ? f.filterRace : "")); setFilterCutStatus((f.filterCutStatus === "cut" || f.filterCutStatus === "uncut" ? f.filterCutStatus : "")); setFilterMinHeight((typeof f.filterMinHeight === "string" ? f.filterMinHeight : "")); setFilterMaxHeight((typeof f.filterMaxHeight === "string" ? f.filterMaxHeight : "")); setFilterMinWeight((typeof f.filterMinWeight === "string" ? f.filterMinWeight : "")); setFilterMaxWeight((typeof f.filterMaxWeight === "string" ? f.filterMaxWeight : "")); setFilterMinCockSize((typeof f.filterMinCockSize === "string" ? f.filterMinCockSize : "")); setFilterMaxCockSize((typeof f.filterMaxCockSize === "string" ? f.filterMaxCockSize : "")); setFilterPosition((f.filterPosition === "top" || f.filterPosition === "bottom" || f.filterPosition === "side" ? f.filterPosition : "")); setFavoritesOnly(f.favoritesOnly === true); setHasChatHistoryOnly(f.hasChatHistoryOnly === true); setHasPicturesOnly(f.hasPicturesOnly === true); setOnlineStatusFilter((f.onlineStatusFilter === "online" || f.onlineStatusFilter === "offline" ? f.onlineStatusFilter : "all")) }} />
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                <button type="button" style={buttonSecondary(false)} onClick={clearGridFilters}>RESET</button>
-                <button type="button" style={buttonPrimary(false)} onClick={() => setFiltersOpen(false)}>DONE</button>
+                <button type="button" style={buttonSecondary(false)} onClick={clearGridFilters}>Reset</button>
+                <button type="button" style={buttonPrimary(false)} onClick={() => setFiltersOpen(false)}>Done</button>
               </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      </div></Sheet> : null}
       <div className="rd-discover-grid">
-          <div className="rd-section-heading"><div><div className="rd-eyebrow">MAKE A CONNECTION</div><h1>Explore nearby</h1><p>New faces. Shared interests. Your kind of company.</p></div></div>
+          <div className="rd-section-heading"><div><div className="rd-eyebrow">MAKE A CONNECTION</div><h1>Find your people</h1><p>{gridCards.length} {gridCards.length === 1 ? "person" : "people"} to discover</p></div></div>
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: chatGridColumns, justifyContent: isMobile ? "stretch" : "space-between" }}>
-            {gridCards.length === 0 ? (
+            {loading ? Array.from({length:6}, (_,i) => <div key={i} className="rd-profile-skeleton" aria-label="Loading profile" />) : gridCards.length === 0 ? (
               <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name="user" /></span><h2>A little quiet here.</h2><p>No one matches your filters right now.<br />Try opening things up to find more connections.</p><button type="button" className="rd-btn" onClick={() => setFiltersOpen(true)}>Adjust filters</button></div>
             ) : (
               gridCards.map((p) => (
                 <button
                   key={p.key}
+                  className="rd-person-card"
+                  aria-label={`View ${displayNameForIdentity(p.key, p.displayName)}’s profile`}
                   type="button"
                   onClick={() => onOpenProfile(p.key)}
                   style={{
@@ -2861,6 +2790,7 @@ function CruiseChat({
                       />
                     ) : null}
                   </div>
+                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
                 </button>
               ))
             )}
@@ -3222,6 +3152,8 @@ function DateChat({
 }
 
 function ThreadsPanel({
+  initialPeerKey,
+  onActiveThreadChange,
   api,
   session,
   setLastError,
@@ -3232,6 +3164,8 @@ function ThreadsPanel({
   mode = "all",
   compact = false
 }: Readonly<{
+  initialPeerKey?: string | null;
+  onActiveThreadChange?(key: string | null): void;
   api: Api;
   session: Session;
   setLastError(value: string | null): void;
@@ -3248,7 +3182,8 @@ function ThreadsPanel({
   const [unreadOnly, setUnreadOnly] = useState<boolean>(false);
   const [selectMode, setSelectMode] = useState<boolean>(false);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
-  const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
+  const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(initialPeerKey ?? null);
+  useEffect(() => { onActiveThreadChange?.(selectedPeerKey); }, [selectedPeerKey, onActiveThreadChange]);
   const [messages, setMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [threadView, setThreadView] = useState<"messages" | "profile">("messages");
   const [threadProfile, setThreadProfile] = useState<UserProfile | null>(null);
@@ -3477,7 +3412,7 @@ function ThreadsPanel({
         const nextWithUnread = next
           .map((row, index) => ({
             ...row,
-            displayName: groupLabelByPeerKey[row.key] ?? row.displayName,
+            displayName: displayNameForIdentity(row.key, groupLabelByPeerKey[row.key] ?? row.displayName),
             unreadCount: unreadCounts[index] ?? 0
           }))
           .sort((a, b) => b.at - a.at);
@@ -3541,7 +3476,7 @@ function ThreadsPanel({
   }, []);
 
   useEffect(() => {
-    if (!selectedPeerKey || threadView !== "profile") return;
+    if (!selectedPeerKey) return;
     const profileId = profileIdFromPresenceKey(selectedPeerKey);
     if (!profileId) {
       setThreadProfile(null);
@@ -3723,9 +3658,10 @@ function ThreadsPanel({
   }
 
   if (selectedPeerKey) {
-    const peerLabel = activeRow?.displayName ?? (selectedPeerKey ? displayNameForPeerKey(selectedPeerKey) : "anon");
+    const peerLabel = activeRow?.displayName ?? threadProfile?.displayName ?? (selectedPeerKey ? displayNameForPeerKey(selectedPeerKey) : "Anon");
     return (
-      <div
+      <MessageWorkspace rows={visibleRows} current={selectedPeerKey} onSelect={key => { setSelectedPeerKey(key); setThreadView("messages"); }}>
+      <div className="rd-active-thread"
         style={{
           display: "grid",
           gap: 0,
@@ -3734,7 +3670,7 @@ function ThreadsPanel({
           marginBlock: 0
         }}
       >
-        <div style={{ position: "sticky", top: 0, zIndex: 46, background: "rgba(8,8,12,0.96)", borderBottom: "1px solid rgba(255,58,77,0.35)", padding: "6px 10px", display: "flex", justifyContent: "flex-end" }}>
+        <div className="rd-thread-header" style={{ position: "sticky", top: 0, zIndex: 46, background: "#17171b", borderBottom: "1px solid var(--line)", padding: "12px", display: "flex", justifyContent: "space-between", alignItems:"center", gap:12 }}><button className="rd-btn" aria-label="Back to conversations" onClick={() => setSelectedPeerKey(null)}>←</button><strong>{displayNameForIdentity(selectedPeerKey, peerLabel)}</strong>
           <button
             type="button"
             onClick={() => setThreadView((prev) => (prev === "messages" ? "profile" : "messages"))}
@@ -3744,14 +3680,14 @@ function ThreadsPanel({
           </button>
         </div>
         {threadView === "messages" ? (
-          <ChatWindow
+          <ChatWindow key={selectedPeerKey}
           readReceipts={hasPlus(session)}
             chatKind={selectedChatKind}
             peerKey={selectedPeerKey}
             currentUserKey={meKey}
             messages={messages}
             client={client}
-            title={`${selectedChatKind === "cruise" ? "INSTANT" : "DIRECT"} THREAD: ${peerLabel}`}
+            title={peerLabel}
             peerSummary={{ displayName: peerLabel }}
             thirdParty={
               selectedChatKind === "cruise"
@@ -3777,8 +3713,8 @@ function ThreadsPanel({
                 style={{ width: 88, height: 88, borderRadius: "50%", objectFit: "cover", border: "2px solid #ff3047" }}
               />
               <div style={{ display: "grid", gap: 4 }}>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{threadProfile?.displayName ?? peerLabel}</div>
-                <div style={{ color: "#ff7a88", fontSize: 14 }}>Instant Messaging Available</div>
+                <div style={{ fontSize: 24, fontWeight: 700 }}>{displayNameForIdentity(selectedPeerKey, threadProfile?.displayName ?? peerLabel)}</div>
+                <div style={{ color: "#ff7a88", fontSize: 14 }}>Open to a conversation</div>
               </div>
             </div>
             {threadProfileLoading ? <div style={{ color: "#9fb6bf", fontSize: 14 }}>Loading profile...</div> : null}
@@ -3808,6 +3744,7 @@ function ThreadsPanel({
           </div>
         )}
       </div>
+      </MessageWorkspace>
     );
   }
 
@@ -3884,11 +3821,11 @@ function ThreadsPanel({
           >
             <img
               src={row.avatarUrl ?? avatarForKey(row.key)}
-              alt={`${row.displayName} avatar`}
+              alt={`${displayNameForIdentity(row.key, row.displayName)} avatar`}
               style={{ width: 52, height: 52, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(255,122,136,0.9)" }}
             />
             <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
-              <div style={{ fontWeight: 700 }}>{row.displayName}</div>
+              <div style={{ fontWeight: 700 }}>{displayNameForIdentity(row.key, row.displayName)}</div>
               <div style={{ color: "#b9bec9", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.preview}</div>
             </div>
             <div style={{ display: "grid", justifyItems: "end", gap: 6 }}>
@@ -4030,7 +3967,7 @@ function PublicPostings({
       return displayNameForUserId(key.slice("user:".length).trim());
     }
     if (key.startsWith("session:")) {
-      return "anon";
+      return "Anon";
     }
     return key;
   }
@@ -6063,7 +6000,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
       const ageNum = Number(draft.age);
       const mergedBio = buildProfileBio(draft.bio, draft.lookingForMore);
       const payload = {
-        displayName: draft.displayName,
+        displayName: session.userType === "guest" ? "Anon" : draft.displayName,
         age: Math.trunc(ageNum),
         bio: mergedBio,
         stats: {
@@ -6217,7 +6154,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
       <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>Your profile</div>
-          <PrivacySettings api={api} session={session} />
+
           {session.userType === "guest" ? (
             <div style={{ color: "#b9bec9", fontSize: 13 }}>
               Guest profile data is temporary and clears on logout.
@@ -6237,7 +6174,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               style={buttonSecondary(false)}
               disabled={!profile}
             >
-              {showMyProfile ? "HIDE MY PROFILE" : "VIEW MY PROFILE"}
+              {showMyProfile ? "Hide my profile" : "View my profile"}
             </button>
           </div>
         </div>
@@ -6249,7 +6186,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span className="rd-label">Display Name</span>
-              <input value={draft.displayName} onChange={(e) => setDraft((d) => ({ ...d, displayName: e.target.value }))} style={fieldStyle()} />
+              <input value={session.userType === "guest" ? "Anon" : draft.displayName} readOnly={session.userType === "guest"} onChange={(e) => setDraft((d) => ({ ...d, displayName: e.target.value }))} style={fieldStyle()} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <span className="rd-label">Age</span>
@@ -6273,7 +6210,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
 
       <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
         <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>PROFILE DETAILS</div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>Profile details</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span className="rd-label">Height (in)</span>
@@ -7270,6 +7207,8 @@ export function Router({
 }>): React.ReactElement {
   const isMobile = useIsMobile();
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
+  const [rememberedThread, setRememberedThread] = useState<string | null>(null);
+  const [settingsSection, setSettingsSection] = useState("profile");
   const [mobileInboxTab, setMobileInboxTab] = useState<MobileInboxTab>("threads");
   const [scopedErrors, setScopedErrors] = useState<Partial<Record<RouterErrorScope, string>>>({});
   const isMobileInboxOpen = isMobile && activeTab === "threads";
@@ -7315,9 +7254,15 @@ export function Router({
   const setPromotedError = useMemo(() => makeScopedSetLastError("promoted"), [makeScopedSetLastError]);
 
   const unifiedSettingsSurface = (
-    <div style={{ display: "grid", gap: 12 }}>
-      <SettingsProfile api={api} session={session} setLastError={setProfileError} />
-      <SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} />
+    <div className="rd-settings-page"><div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR SPACE</div><h1>Make it yours.</h1><p>Your profile, your privacy, your preferences.</p></div></div>
+      <div className="rd-settings-tabs" role="tablist" aria-label="Settings sections">{["profile", "privacy", "notifications", "membership", "account"].map(section => <button key={section} role="tab" aria-selected={settingsSection === section} onClick={() => setSettingsSection(section)}>{section[0].toUpperCase() + section.slice(1)}</button>)}</div>
+      <div role="tabpanel" aria-label={settingsSection}>
+      {settingsSection === "profile" ? <SettingsProfile api={api} session={session} setLastError={setProfileError} /> : null}
+      {settingsSection === "privacy" ? <PrivacySettings api={api} session={session} /> : null}
+      {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings /></section> : null}
+      {settingsSection === "membership" ? <section className="rd-card rd-settings-body"><div className="rd-eyebrow">RED DOOR PLUS</div><h2>{hasPlus(session) ? "More possibilities. Already yours." : "Make every connection count."}</h2><p className="rd-muted">Advanced filters, saved searches, private albums, read receipts, and group chat invitations.</p><strong>CAD $7.99 / month</strong><button className="rd-btn primary" onClick={openPlus}>{hasPlus(session) ? "Manage membership" : "Explore Plus"}</button></section> : null}
+      {settingsSection === "account" ? <SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /> : null}
+      </div>
     </div>
   );
   const scopedError = scopedErrors[currentErrorScope] ?? null;
@@ -7344,7 +7289,7 @@ export function Router({
       {!hideModeCard ? null : null}
       {!isMobileInboxOpen && !isMobileAdsOpen && activeTab !== "discover" && inlineErrorBanner}
 
-      <div style={{ display: activeTab === "discover" || isMobileInboxOpen || isMobileAdsOpen ? "block" : "none" }}>
+      <div className="rd-discover-container" style={{ display: activeTab === "discover" || isMobileInboxOpen || isMobileAdsOpen ? "block" : "none" }}>
         <CruiseSurface
           api={api}
           session={session}
@@ -7364,7 +7309,7 @@ export function Router({
         />
       </div>
       {activeTab === "threads" && !isMobile ? (
-        <ThreadsPanel
+        <ThreadsPanel initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
           api={api}
           session={session}
           setLastError={setThreadsError}
@@ -7375,7 +7320,7 @@ export function Router({
         />
       ) : null}
       {isMobileInboxOpen ? (
-        <div
+        <div className="rd-mobile-inbox"
           style={{
             position: "fixed",
             left: 0,
@@ -7393,10 +7338,9 @@ export function Router({
         >
           <div style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 6px)", borderBottom: "1px solid rgba(255, 95, 104, 0.28)" }}>
             <div style={{ width: 44, height: 4, borderRadius: 999, margin: "0 auto 8px", background: "rgba(255, 129, 138, 0.7)" }} />
-            <div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR CONNECTIONS</div><h1>Inbox</h1></div><Icon name="message" /></div>
+            <div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR CONNECTIONS</div><h1>Inbox</h1></div><button className="rd-btn" aria-label="Close inbox" onClick={() => setActiveTab("discover")}>Close</button></div>
             <div className="rd-inbox-tabs">
               {[
-                { id: "chat-grid" as const, label: "Chat Grid", icon: "grid" as IconName },
                 { id: "threads" as const, label: "Inbox Threads", icon: "message" as IconName },
                 { id: "pinned" as const, label: "Pinned Chats", icon: "star" as IconName },
                 { id: "spots" as const, label: "Cruising Spots", icon: "map" as IconName },
@@ -7451,7 +7395,7 @@ export function Router({
               />
             ) : null}
             {mobileInboxTab === "threads" ? (
-              <ThreadsPanel
+              <ThreadsPanel initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
                 api={api}
                 session={session}
                 setLastError={setThreadsError}
@@ -7463,7 +7407,7 @@ export function Router({
               />
             ) : null}
             {mobileInboxTab === "pinned" ? (
-              <ThreadsPanel
+              <ThreadsPanel initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
                 api={api}
                 session={session}
                 setLastError={setThreadsError}

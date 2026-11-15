@@ -86,6 +86,11 @@ describe("Core API and payment lifecycle smoke checks", () => {
   it("Given a guest or invalid profile When core actions are attempted Then enforces age and profile rules", async () => {
     const guest = await request("/auth/guest", {});
     await request("/chat/send", { chatKind: "cruise", toKey: `user:${alice.id}`, text: "blocked by age gate" }, guest.session.sessionToken, undefined, 403);
+    await request("/auth/verify-age", { sessionToken: guest.session.sessionToken, ageYears: 28 });
+    const guestProfile = await request("/profile/me", { displayName: "Custom guest nickname", age: 28, bio: "Hello", stats: {} }, guest.session.sessionToken, "PUT");
+    expect(guestProfile.profile.displayName).toBe("Anon");
+    const guestRead = await request("/profile/me", undefined, guest.session.sessionToken);
+    expect(guestRead.profile.displayName).toBe("Anon");
     await request("/profile/me", { displayName: "", age: 17, bio: "" }, alice.token, "PUT", 400);
     const bypass = await request("/auth/verify-email", { email: "alice@example.com", code: "000000" }, undefined, undefined, 400);
     expect(bypass.code).toBe("INVALID_VERIFICATION_CODE");

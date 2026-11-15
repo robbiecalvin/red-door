@@ -52,6 +52,7 @@ function defaultRasterStyle(): Record<string, unknown> {
       }
     },
     layers: [
+      { id: "background", type: "background", paint: { "background-color": "#eeece8" } },
       {
         id: "basemap",
         type: "raster",

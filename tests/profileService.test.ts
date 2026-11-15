@@ -22,7 +22,18 @@ describe("profileService", () => {
     const read = await svc.getMe(session);
     expect(read.ok).toBe(true);
     if (!read.ok) throw new Error("unreachable");
-    expect(read.value.displayName).toBe("Guest One");
+    expect(read.value.displayName).toBe("Anon");
+  });
+
+  it("normalizes a legacy guest nickname when reading without changing its identity", async () => {
+    const repo = createInMemoryProfileRepository();
+    await repo.upsert({ userId: "guest:legacy-session", displayName: "Old nickname", age: 28, bio: "Hello", stats: {}, galleryMediaIds: [], updatedAtMs: 1 });
+    const service = createProfileService({ repo });
+    const result = await service.getMe({ userType: "guest", sessionToken: "legacy-session", ageVerified: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected guest profile");
+    expect(result.value.displayName).toBe("Anon");
+    expect(result.value.userId).toBe("guest:legacy-session");
   });
 
   it("Given guest sessions with different session tokens When each saves a profile Then data is isolated by session token", async () => {
@@ -43,8 +54,8 @@ describe("profileService", () => {
     expect(readA.ok).toBe(true);
     expect(readB.ok).toBe(true);
     if (!readA.ok || !readB.ok) throw new Error("unreachable");
-    expect(readA.value.displayName).toBe("Guest A");
-    expect(readB.value.displayName).toBe("Guest B");
+    expect(readA.value.displayName).toBe("Anon");
+    expect(readB.value.displayName).toBe("Anon");
   });
 
   it("Given a guest session missing sessionToken When upsertMe is called Then it rejects with INVALID_INPUT", async () => {

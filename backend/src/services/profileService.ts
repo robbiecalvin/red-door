@@ -255,14 +255,14 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
 
       const existing = await deps.repo.getByUserId(auth.value.userId);
       if (!existing) return err("PROFILE_NOT_FOUND", "Profile not found.");
-      return ok(existing);
+      return ok(session.userType === "guest" ? { ...existing, displayName: "Anon" } : existing);
     },
 
     async upsertMe(session: SessionLike, update: ProfileUpdate): Promise<Result<Profile>> {
       const auth = requireProfileOwner(session);
       if (!auth.ok) return auth;
 
-      const displayNameRes = validateDisplayName(update.displayName);
+      const displayNameRes = validateDisplayName(session.userType === "guest" ? "Anon" : update.displayName);
       if (!displayNameRes.ok) return displayNameRes;
       const ageRes = validateAge(update.age);
       if (!ageRes.ok) return ageRes;
@@ -362,6 +362,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
       if (nextGallery.length > limits(session).gallery) return err("INVALID_INPUT", `Your plan allows ${limits(session).gallery} gallery photos.`);
       const next: Profile = {
         ...existing,
+        displayName: session.userType === "guest" ? "Anon" : existing.displayName,
         galleryMediaIds: nextGallery,
         mainPhotoMediaId: nextMain,
         updatedAtMs: nowMs()

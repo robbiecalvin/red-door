@@ -11,6 +11,15 @@ Red Door is a cruise-first social platform with:
 
 The active frontend product emphasis is Cruise mode. Date and Hybrid logic exists server-side and in services/tests, with frontend behavior still cruise-first.
 
+## UI refresh
+
+- Atmospheric red-door login artwork and a mobile-first black and red layout.
+- Map/People switch with shared filters, filter counts, readable profile cards, and approximate distance bands. The map stays in light mode.
+- Shared bottom sheets for profiles, filters, and conversation actions; desktop navigation and split discovery/conversation layouts.
+- Profile, Privacy, Notifications, Membership, and Account settings sections. Browser notifications are optional and work while the app is open in the background.
+- Guest screen names always show **Anon**, including legacy guest profiles. Guest sessions still keep separate identities and conversations.
+- Message sending status, retry on rejection, and a composer that fits the available mobile viewport.
+
 ## Tech stack
 
 - Frontend: React 18, TypeScript, Vite 5, MapLibre GL

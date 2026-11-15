@@ -1,3 +1,5 @@
+import { NOTIFICATION_ENABLED, NOTIFICATION_DISCREET } from "./NotificationSettings";
+import afterDark from "../assets/after-dark.png";
 import { PasswordRecovery } from "./PasswordRecovery";
 import { AdminAnalytics } from "./AdminAnalytics";
 import { PlusPanel } from "./PlusPanel";
@@ -353,7 +355,6 @@ export function App(): React.ReactElement {
   const [onlineCount, setOnlineCount] = useState<number>(0);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
   const [topMenuOpen, setTopMenuOpen] = useState<boolean>(false);
-  const [filterPanelOpen, setFilterPanelOpen] = useState<boolean>(false);
   const unreadSyncInFlightRef = useRef<boolean>(false);
 
   const persistSessionToken = useCallback((token: string): void => {
@@ -897,13 +898,33 @@ export function App(): React.ReactElement {
     }, 0);
   }, [setTabAndRoute]);
 
+  const previousUnread = useRef<number | null>(null);
+  useEffect(() => {
+    const previous = previousUnread.current;
+    previousUnread.current = unreadChatCount;
+    if (previous === null || unreadChatCount <= previous || !document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    try { if (localStorage.getItem(NOTIFICATION_ENABLED) !== "true") return;
+      const discreet = localStorage.getItem(NOTIFICATION_DISCREET) !== "false";
+      const notification = new Notification("Red Door", {body: discreet ? "You have a new message." : `${unreadChatCount} unread messages.`, tag:"reddoor-messages"});
+      notification.onclick = () => { window.focus(); setTabAndRoute("threads"); notification.close(); };
+    } catch { /* Browser notifications are optional. */ }
+  }, [unreadChatCount, setTabAndRoute]);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const update = () => {
+      document.documentElement.style.setProperty("--rd-viewport-height", `${viewport?.height ?? window.innerHeight}px`);
+      const editing = document.activeElement?.matches("input,textarea,[contenteditable=true]");
+      document.documentElement.dataset.keyboardOpen = editing && window.innerHeight - (viewport?.height ?? window.innerHeight) > 120 ? "true" : "false";
+    };
+    update(); viewport?.addEventListener("resize", update);
+    return () => { viewport?.removeEventListener("resize", update); document.documentElement.style.removeProperty("--rd-viewport-height"); };
+  }, []);
+
   const toggleTopFilterPanel = useCallback((): void => {
-    const next = !filterPanelOpen;
-    setFilterPanelOpen(next);
     if (topMenuOpen) setTopMenuOpen(false);
-    setTabAndRoute("discover", "chat");
-    window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: next ? "open_filters" : "close_filters" } }));
-  }, [filterPanelOpen, setTabAndRoute, topMenuOpen]);
+    setTabAndRoute("discover", discoverScreen);
+    window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "open_filters" } }));
+  }, [discoverScreen, setTabAndRoute, topMenuOpen]);
 
   useEffect(() => {
     if (FULL_PAGE_TAB_NAV) {
@@ -921,7 +942,6 @@ export function App(): React.ReactElement {
 
   useEffect(() => {
     setTopMenuOpen(false);
-    setFilterPanelOpen(false);
   }, [activeTab]);
 
   useEffect(() => {
@@ -997,6 +1017,8 @@ export function App(): React.ReactElement {
         </div>
       ) : null}
 
+      {showBottomNav ? <nav className="rd-desktop-nav" aria-label="Main navigation">{([
+        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["profile", "user", "Profile"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
       >
@@ -1006,9 +1028,9 @@ export function App(): React.ReactElement {
               <section className="rd-card rd-home-hero" aria-label="Welcome to Red Door">
                 <div className="rd-card-body">
                   <div className="rd-welcome-brand"><span className="rd-door-mark" aria-hidden="true" />RED DOOR<span className="rd-adult-badge">18+</span></div>
-                  <div className="rd-home-art" aria-hidden="true"><div className="rd-door-frame"><div className="rd-door-panel" /></div><span className="rd-art-caption">A little curiosity. A new connection.</span></div>
-                  <div className="rd-eyebrow">YOUR WORLD. YOUR RULES.</div>
-                  <h1 className="rd-home-title">Good company.<br /><span>Closer than you think.</span></h1>
+                  <img className="rd-afterdark-art" src={afterDark} alt="" aria-hidden="true" />
+                  <div className="rd-eyebrow">AFTER DARK. ON YOUR TERMS.</div>
+                  <h1 className="rd-home-title">Come a little<br /><span>closer.</span></h1>
                   <p className="rd-home-copy">A space for gay men to explore, chat, and connect. Step inside and see who’s nearby.</p>
                   <div className="rd-welcome-features"><span><Icon name="map" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
                 </div>
@@ -1016,7 +1038,7 @@ export function App(): React.ReactElement {
 
               <section className="rd-card rd-auth-hero" aria-label="Authentication">
                 <div className="rd-card-head">
-                  <div className="rd-card-title">Make yourself at home.</div>
+                  <div className="rd-card-title">Your night starts here.</div>
                   <div className="rd-card-sub">Your next connection starts here.</div>
                 </div>
 
@@ -1212,11 +1234,11 @@ export function App(): React.ReactElement {
           {session && session.userType === "guest" && session.ageVerified !== true ? (
             <section className="rd-card" aria-label="Age gate">
               <div className="rd-card-head">
-                <div className="rd-card-title">Age Gate</div>
+                <div className="rd-card-title">Before you step inside</div>
                 <div className="rd-card-sub">18+ required</div>
               </div>
               <div className="rd-card-body">
-                <div style={{ color: "var(--muted)", marginBottom: 12 }}>The backend blocks Cruise/Date/Hybrid actions until age is verified.</div>
+                <div style={{ color: "var(--muted)", marginBottom: 12 }}>Red Door is for adults 18 and over. Confirm your age to continue.</div>
                 {lastError ? (
                   <div className="rd-error" role="alert" aria-live="polite" style={{ marginBottom: 12, marginTop: 0 }}>
                     {lastError}

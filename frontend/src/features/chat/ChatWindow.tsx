@@ -1,3 +1,5 @@
+import { Sheet } from "../../app/Sheet";
+import { displayNameForIdentity, isAnonymousIdentity } from "../../../../shared/identity";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatKind, ChatMediaAttachment, ChatMessage, ServiceError } from "./chat.types";
@@ -31,13 +33,14 @@ function displayMessageText(text: string): string {
 
 function fallbackAuthorLabel(actorKey: string): string {
   const trimmed = actorKey.trim();
+  if (isAnonymousIdentity(trimmed)) return "Anon";
   if (trimmed.startsWith("user:")) {
     const id = trimmed.slice("user:".length).trim();
     return id ? `User ${id.slice(0, 8)}` : "User";
   }
   if (trimmed.startsWith("session:")) {
     const id = trimmed.slice("session:".length).trim();
-    return id ? `Guest ${id.slice(0, 6)}` : "Guest";
+    return "Anon";
   }
   if (trimmed.startsWith("spot:")) {
     return "Spot";
@@ -102,7 +105,10 @@ export function ChatWindow({
   const fixedComposer = isEdgeToEdge && fillHeight === true;
   const boardMode = presentation === "board";
 
+  const messageList = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
   const sorted = useMemo(() => [...messages].sort((a, b) => a.createdAtMs - b.createdAtMs), [messages]);
+  useEffect(() => { if (followLatest.current && messageList.current) messageList.current.scrollTop = messageList.current.scrollHeight; }, [sorted.length]);
   const mediaObjectKeys = useMemo(
     () =>
       Array.from(
@@ -136,16 +142,19 @@ export function ChatWindow({
     };
   }, [client, mediaObjectKeys, mediaUrlsByKey]);
 
-  async function onSend(media?: ChatMediaAttachment): Promise<void> {
-    const text = draft.trim();
+  const [failedMessage, setFailedMessage] = useState<{text:string; media?:ChatMediaAttachment} | null>(null);
+  async function onSend(media?: ChatMediaAttachment, retryText?: string): Promise<void> {
+    const text = retryText ?? draft.trim();
     if (text.length === 0 && !media) return;
     setSending(true);
     setLastError(null);
     try {
       await client.sendMessage(chatKind, peerKey, text, media);
-      setDraft("");
+      setDraft(current => current.trim() === text ? "" : current);
+      setFailedMessage(null);
     } catch (e) {
       const err = e as ServiceError;
+      setFailedMessage({text,media});
       setLastError(typeof err?.message === "string" ? err.message : "Message rejected.");
     } finally {
       setSending(false);
@@ -337,6 +346,7 @@ export function ChatWindow({
 
   return (
     <section
+      className="rd-chat-window"
       aria-label="Chat"
       style={{
         background: isEdgeToEdge ? "transparent" : "#000000",
@@ -375,7 +385,7 @@ export function ChatWindow({
               {peerSummary.avatarUrl ? (
                 <img
                   src={peerSummary.avatarUrl}
-                  alt={`${peerSummary.displayName} avatar`}
+                  alt={`${displayNameForIdentity(peerKey, peerSummary.displayName)} avatar`}
                   style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", border: "1px solid rgba(255,138,150,0.8)" }}
                 />
               ) : (
@@ -390,7 +400,7 @@ export function ChatWindow({
                   }}
                 />
               )}
-              <span style={{ color: "#fff", fontWeight: 600 }}>{peerSummary.displayName}</span>
+              <span style={{ color: "#fff", fontWeight: 600 }}>{displayNameForIdentity(peerKey, peerSummary.displayName)}</span>
             </div>
           ) : null}
           <div style={{ textAlign: "center", fontSize: 12, color: "#AAAAAA" }}>
@@ -413,11 +423,14 @@ export function ChatWindow({
             lineHeight: 1.4
           }}
         >
-          {lastError}
+          {lastError}{failedMessage ? <button type="button" className="rd-btn" disabled={sending} onClick={() => void onSend(failedMessage.media, failedMessage.text)}>Retry message</button> : null}
         </div>
       ) : null}
 
       <div
+        ref={messageList}
+        onScroll={() => { const list=messageList.current; if (list) followLatest.current=list.scrollHeight-list.scrollTop-list.clientHeight<80; }}
+        className="rd-chat-messages"
         aria-label="Messages"
         style={{
           background: isEdgeToEdge ? "#09090b" : "#111111",
@@ -433,13 +446,13 @@ export function ChatWindow({
         }}
       >
         {sorted.length === 0 ? (
-          <div style={{ color: "#AAAAAA", fontSize: 14, lineHeight: 1.4 }}>{boardMode ? "No posts yet." : "No messages."}</div>
+          <div style={{ color: "#AAAAAA", fontSize: 14, lineHeight: 1.4 }}>{boardMode ? "No posts yet." : "Say hello. A good conversation starts with you."}</div>
         ) : (
           sorted.map((m) => {
             const mine = m.fromKey === currentUserKey;
             const bubbleBg = boardMode ? "rgba(22,22,28,0.96)" : mine ? "#C00000" : "#444444";
             const rowAlign: React.CSSProperties = boardMode ? { alignItems: "stretch" } : mine ? { alignItems: "flex-end" } : { alignItems: "flex-start" };
-            const author = authorLabelForKey ? authorLabelForKey(m.fromKey) : fallbackAuthorLabel(m.fromKey);
+            const author = isAnonymousIdentity(m.fromKey) ? "Anon" : authorLabelForKey ? authorLabelForKey(m.fromKey) : fallbackAuthorLabel(m.fromKey);
             return (
               <div key={m.messageId} style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%", ...rowAlign }}>
                 {boardMode ? (
@@ -533,12 +546,13 @@ export function ChatWindow({
         )}
       </div>
 
+      {sending ? <div role="status" className="rd-sending-status">Sending…</div> : null}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           void onSend();
         }}
-        aria-label="Message input"
+        className="rd-chat-composer" aria-label="Message input"
         style={{
           background: isEdgeToEdge ? "linear-gradient(180deg, rgba(96,0,12,0.96), rgba(58,0,8,0.98))" : "#111111",
           border: isEdgeToEdge ? "none" : "2px solid #C00000",
@@ -624,27 +638,7 @@ export function ChatWindow({
             +
           </button>
           {actionsOpen ? (
-            <div
-              style={{
-                position: "fixed",
-                left: "50%",
-                transform: "translateX(-50%)",
-                top: fixedComposer ? undefined : 92,
-                bottom: fixedComposer ? "calc(env(safe-area-inset-bottom, 0px) + 126px)" : undefined,
-                zIndex: 55,
-                width: "min(360px, calc(100vw - 24px))",
-                maxWidth: "calc(100vw - 24px)",
-                maxHeight: "min(62vh, calc(100svh - 220px))",
-                overflowY: "auto",
-                overflowX: "hidden",
-                display: "grid",
-                gap: 8,
-                padding: 10,
-                borderRadius: 10,
-                border: "1px solid rgba(255,58,77,0.5)",
-                background: "rgba(10,11,16,0.98)"
-              }}
-            >
+            <Sheet title="Conversation actions" onClose={() => setActionsOpen(false)}><div className="rd-conversation-actions">
               <button
                 type="button"
                 disabled={sending}
@@ -783,7 +777,7 @@ export function ChatWindow({
                   </button>
                 </div>
               ) : null}
-            </div>
+            </div></Sheet>
           ) : null}
         </div>
         <button

@@ -1,0 +1,5 @@
+import React from "react";
+import { displayNameForIdentity } from "../../../shared/identity";
+export function MessageWorkspace({ children, rows, current, onSelect }: { children: React.ReactNode; rows: ReadonlyArray<{ key: string; displayName: string; preview: string; unreadCount: number }>; current: string; onSelect(key: string): void }): React.ReactElement {
+  return <div className="rd-message-workspace"><aside className="rd-conversation-rail"><div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR CONNECTIONS</div><h2>Conversations</h2></div></div>{rows.length === 0 ? <p className="rd-caption">Your conversations will appear here.</p> : null}{rows.map(row => <button key={row.key} className={`rd-conversation-shortcut ${current === row.key ? "is-active" : ""}`} onClick={() => onSelect(row.key)}><strong>{displayNameForIdentity(row.key, row.displayName)}</strong><span>{row.preview}</span>{row.unreadCount ? <small>{row.unreadCount} unread</small> : null}</button>)}</aside><div className="rd-message-detail">{children}</div></div>;
+}
