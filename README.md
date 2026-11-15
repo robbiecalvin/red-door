@@ -396,3 +396,7 @@ See [Plus subscription setup and behavior](docs/plus-subscriptions.md) for limit
 - Login includes password recovery when SMTP and an HTTPS `PUBLIC_APP_URL` are configured. Password resets revoke HTTP and realtime sessions. New administrator access requires email verification.
 - Optional activity measurement is off by default. Users can opt in at registration or change the preference in profile settings. Administrators can open **Activity dashboard** from the account menu.
 - [Execution roadmap and live-release gates](docs/execution-roadmap.md) · [Metrics privacy and interpretation](docs/baseline-analytics.md).
+
+## Shared-link previews
+
+Text-message and social previews use the static Open Graph/Twitter metadata in `frontend/index.html` and `frontend/public/social/red-door-share-v1.png`. The image is copied into `dist/social/` during the production build. Keep the absolute preview/canonical URLs aligned with the public site domain if it changes. Messaging services can cache older previews after deployment.

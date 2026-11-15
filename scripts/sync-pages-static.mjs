@@ -79,6 +79,11 @@ function main() {
   removeIfExists(rootAssetsDir);
   fs.cpSync(distAssetsDir, rootAssetsDir, { recursive: true });
   writeLegacyAliases();
+  // Keep preview images available for the optional root-based static publish flow.
+  const socialDir = path.join(distDir, "social");
+  if (fs.existsSync(socialDir)) {
+    fs.cpSync(socialDir, path.join(rootDir, "social"), { recursive: true });
+  }
 
   for (const page of pages) {
     fs.writeFileSync(path.join(rootDir, page), html, "utf8");
