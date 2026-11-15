@@ -63,8 +63,10 @@ export function ChatWindow({
   showHeader,
   fillHeight,
   presentation,
+  allowAttachments=true,
   authorLabelForKey
 }: Readonly<{
+  allowAttachments?:boolean;
   readReceipts?: boolean;
   chatKind: ChatKind;
   peerKey: string;
@@ -351,7 +353,7 @@ export function ChatWindow({
 
   return (
     <section
-      className="rd-chat-window"
+      className={`rd-chat-window ${allowAttachments?"":"is-text-only"}`}
       aria-label="Chat"
       style={{
         background: isEdgeToEdge ? "transparent" : "#000000",
@@ -596,7 +598,7 @@ export function ChatWindow({
             aria-label={boardMode ? "Write a post" : "Message text"}
           />
         </label>
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative",display:allowAttachments?"block":"none" }}>
           <input
             ref={fileInputRef}
             type="file"
@@ -644,7 +646,7 @@ export function ChatWindow({
           >
             +
           </button>
-          {actionsOpen ? (
+          {actionsOpen && allowAttachments ? (
             <Sheet title="Conversation actions" onClose={() => setActionsOpen(false)}><div className="rd-conversation-actions">
               <button
                 type="button"

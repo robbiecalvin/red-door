@@ -46,6 +46,7 @@ export type BillingHealth = {
   stripeConnection: "unconfigured" | "ok" | "error"; priceValid: boolean; mode?: "test" | "live"; issue?: string;
 };
 export type PlusStatus = {
+  renewalScheduled?:boolean;subscriptionStatus?:string;hasPaymentMethod?:boolean;autoRenew?:boolean;nextBillingAtMs?:number;redeemedPromoCodes?:string[];providerTutorialPending?:boolean;
   active: boolean; expiresAtMs?: number; limits: ReturnType<typeof limits>;
   savedSearches: SavedSearch[]; pinnedKeys: string[]; privateMediaIds: string[];
   albumSharedWith: string[]; billingConfigured: boolean; hasBillingAccount: boolean;

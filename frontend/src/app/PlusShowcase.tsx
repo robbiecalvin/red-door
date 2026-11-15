@@ -6,7 +6,8 @@ export const PLUS_STORIES = {
   travel: { icon: "map", label: "Your next city", title: "Make a connection before you arrive.", description: "Move your discovery location with Travel mode. Explore the people around your next destination.", action: "Explore somewhere new" },
   album: { icon: "shield", label: "Your private side", title: "A little more. For the right people.", description: "Keep up to 20 photos in your private album. Choose who gets access, and revoke it whenever you want.", action: "Build your private album" },
   chats: { icon: "message", label: "Your conversations", title: "Keep the good conversations going.", description: "See when messages are read, pin up to 50 chats, and invite another member into a group conversation.", action: "Make room for more" },
-  privacy: { icon: "shield", label: "Your space", title: "Browse on your terms.", description: "With off-grid browsing, your profile and location stay out of public discovery. Your existing conversations remain available. Basic location hiding stays free.", action: "Explore off-grid browsing" },
+
+  md: {icon:"groups",label:"MD companions",title:"Another way to find company.",description:"Browse linked Meet Discreet providers available within 50 km. MD chat requires a separate MD account and paid provider subscription; it is not included in your Plus price.",action:"Explore MD"},
   profile: { icon: "user", label: "Your best side", title: "Give them more to be curious about.", description: "Show more of yourself with 12 gallery photos and a profile video. Keep up to 100 favorites close.", action: "Show more of you" }
 } satisfies Record<string, {icon:IconName; label:string; title:string; description:string; action:string}>;
 export type PlusFeature = keyof typeof PLUS_STORIES;
@@ -23,7 +24,7 @@ export function PlusShowcase({ initialFeature = "filters" }: {initialFeature?: P
       {feature === "travel" ? <><div className="rd-plus-demo-map"><i /><i /><i /><Icon name="map" /></div><div className="rd-plus-demo-search"><Icon name="map" /><strong>Next stop. New possibilities.</strong></div></> : null}
       {feature === "album" ? <><div className="rd-plus-demo-album">{[1,2,3].map(n => <span key={n}><Icon name={n === 2 ? "shield" : "user"} /></span>)}</div><div className="rd-plus-demo-search"><Icon name="shield" /><strong>Shared by invitation. Always your call.</strong></div></> : null}
       {feature === "chats" ? <div className="rd-plus-demo-chat"><span>Hey. Glad you said hello.</span><span>I was hoping you would.</span><small>Read ✓✓</small><div><Icon name="groups" />Invite another connection</div></div> : null}
-      {feature === "privacy" ? <><div className="rd-plus-demo-album"><span><Icon name="shield" /></span></div><div className="rd-plus-demo-search"><strong>Off the grid. Still connected.</strong></div></> : null}
+      {feature === "md" ? <><div className="rd-plus-demo-profile"><Icon name="groups"/><span>MD × Red Door</span></div><div className="rd-plus-demo-chips"><span>Live linked profiles</span><span>Within 50 km</span><span>Separate MD subscription</span></div></> : null}
       {feature === "profile" ? <><div className="rd-plus-demo-profile"><Icon name="user" /><span>More photos.<br />More personality.</span></div><div className="rd-plus-demo-chips"><span>12 gallery photos</span><span>Profile video</span><span>100 favorites</span></div></> : null}
       </div><div className="rd-plus-story-copy"><h2>{story.title}</h2><p>{story.description}</p></div>
     </section>

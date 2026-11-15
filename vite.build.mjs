@@ -1,9 +1,14 @@
+import fs from "node:fs";
 import react from "@vitejs/plugin-react";
 import { build } from "vite";
 
 async function main() {
   const apiBasePath = process.env.DUALMODE_API_BASE_PATH ?? "https://red-door-api.onrender.com";
   const wsUrl = process.env.DUALMODE_WS_URL ?? "wss://red-door-api.onrender.com/ws";
+  const publicUrl = process.env.DUALMODE_PUBLIC_APP_URL?.trim() || "https://robbiecalvin.github.io/red-door/";
+  const publicBase = new URL(publicUrl);
+  if(publicBase.protocol!=="https:"||publicBase.username||publicBase.password||publicBase.search||publicBase.hash)throw new Error("DUALMODE_PUBLIC_APP_URL must be HTTPS.");
+  const normalizedUrl=publicUrl.replace(/\/$/,"")+"/";
   await build({
     configFile: false,
     clearScreen: false,
@@ -15,7 +20,7 @@ async function main() {
       __DUALMODE_API_BASE_PATH__: JSON.stringify(apiBasePath),
       __DUALMODE_WS_URL__: JSON.stringify(wsUrl),
     },
-    plugins: [react()],
+    plugins: [react(),{name:"red-door-public-url",transformIndexHtml(html){return html.replaceAll("https://robbiecalvin.github.io/red-door/",normalizedUrl);}}],
     base: "./",
     optimizeDeps: {
       // Keep build behavior consistent with dev. (Vite 5.x does not support optimizeDeps.disabled.)
@@ -27,6 +32,7 @@ async function main() {
       emptyOutDir: true,
     },
   });
+  if(!publicBase.hostname.endsWith("github.io"))fs.writeFileSync("dist/CNAME",publicBase.hostname+"\n");
 }
 
 main().catch((err) => {

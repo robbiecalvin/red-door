@@ -1,3 +1,4 @@
+import { AccountNotices } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { useLiveInbox } from "./useLiveInbox";
 import { disablePush } from "./pushNotifications";
@@ -18,7 +19,7 @@ import placeholderC from "../assets/reddoor-placeholder-3.svg";
 import { Icon } from "./Icon";
 
 type AuthView = "guest" | "register" | "login";
-type TopTab = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted";
+type TopTab = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
 type DiscoverFilter = "all" | "online" | "favorites";
 type DiscoverScreen = "map" | "chat";
 type ProfilePosition = "" | "top" | "bottom" | "side";
@@ -36,7 +37,7 @@ type ProfileSetupDraft = Readonly<{
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
 const DEFAULT_SHARED_API_BASE = "https://red-door-api.onrender.com";
-const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "cruise", "profile", "settings", "submissions", "promoted"]);
+const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "cruise", "profile", "settings", "submissions", "promoted", "md"]);
 const DEFAULT_TAB: TopTab = "discover";
 const FULL_PAGE_TAB_NAV = false;
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
@@ -237,6 +238,8 @@ function tabFromPathname(): TopTab | null {
 }
 
 function tabFromLocation(): TopTab {
+  // Return links from MD and Stripe land on the root document with a hash route.
+  if (window.location.hash.startsWith("#/")) return tabFromHash();
   const fromPath = tabFromPathname();
   if (fromPath) return fromPath;
   return tabFromHash();
@@ -348,6 +351,7 @@ export function App(): React.ReactElement {
   const [promoCode, setPromoCode] = useState("");
   const liveInboxStatus=useLiveInbox(session,resolveApiBasePath());
   const [plusFeature, setPlusFeature] = useState<PlusFeature | undefined>();
+  const [loginSequence,setLoginSequence]=useState(0);
   const [plusOpen, setPlusOpen] = useState(false);
   const [registerAge, setRegisterAge] = useState<string>("");
   const [verificationCode, setVerificationCode] = useState<string>("");
@@ -653,6 +657,7 @@ export function App(): React.ReactElement {
         persistSessionToken(loginRes.session.sessionToken);
         setSessionToken(loginRes.session.sessionToken);
         setSession(nextSession);
+      setLoginSequence(n=>n+1);
         setPendingVerificationEmail("");
         setVerificationCode("");
         setAuthInfo("");
@@ -726,6 +731,7 @@ export function App(): React.ReactElement {
       persistSessionToken(res.session.sessionToken);
       setSessionToken(res.session.sessionToken);
       setSession(nextSession);
+      setLoginSequence(n=>n+1);
     } catch (e) {
       const err = e as ServiceError;
       const msg = normalizeUiError(e, "Login failed.");
@@ -961,8 +967,8 @@ export function App(): React.ReactElement {
     if (!session) return;
     const refresh = () => { void api.getSession(session.sessionToken).then(r => setSession(r.session)).catch(e => { if (e?.code === "INVALID_SESSION" || e?.code === "SESSION_NOT_FOUND") onLogout(); }); };
     const timer = window.setInterval(refresh, 30_000);
-    window.addEventListener("focus", refresh);
-    return () => { clearInterval(timer); window.removeEventListener("focus", refresh); };
+    window.addEventListener("focus", refresh);window.addEventListener("rd:plus-changed",refresh);
+    return () => { clearInterval(timer); window.removeEventListener("focus", refresh);window.removeEventListener("rd:plus-changed",refresh); };
   }, [api, session?.sessionToken]);
   const topAvatar = topAvatarUrl ?? avatarForSeed(session?.userId ?? session?.sessionToken ?? "guest");
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
@@ -973,6 +979,7 @@ export function App(): React.ReactElement {
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav" : ""}`}>
       {recoveryOpen ? <PasswordRecovery api={api} token={recoveryToken} onClose={() => { setRecoveryOpen(false); setRecoveryToken(""); }} onComplete={() => { onLogout(); setRecoveryOpen(false); setRecoveryToken(""); setAuthView("login"); setAuthInfo("Password updated. Sign in with your new password."); }} /> : null}
       {analyticsOpen && session?.role === "admin" ? <AdminAnalytics api={api} session={session} onClose={() => setAnalyticsOpen(false)} /> : null}
+      <AccountNotices api={api} session={session} ready={Boolean(session?.ageVerified && !profileSetupChecking && !profileSetupRequired && !plusOpen)} loginSequence={loginSequence}/>
       {plusOpen ? <PlusPanel api={api} session={session} feature={plusFeature} onClose={() => setPlusOpen(false)} onRegister={() => { setPlusOpen(false); onLogout(); setAuthView("register"); }} /> : null}
       {session ? (
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
@@ -1016,8 +1023,8 @@ export function App(): React.ReactElement {
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("submissions"); }} aria-label="Open submissions">
             <Icon name="book" className="rd-ui-icon" />
           </button>
-          <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("promoted"); }} aria-label="Open promoted">
-            <Icon name="star" className="rd-ui-icon" />
+          <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("md"); }} aria-label="Open MD">
+            <span className="rd-md-nav-label">MD</span>
           </button>
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); void onLogout(); }} aria-label="Log out">
             <Icon name="logout" className="rd-ui-icon" />
@@ -1026,7 +1033,7 @@ export function App(): React.ReactElement {
       ) : null}
 
       {showBottomNav ? <nav className="rd-desktop-nav" aria-label="Main navigation">{([
-        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["groups", "groups", "Community"], ["profile", "user", "Profile"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
+        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["groups", "groups", "Community"], ["md", "shield", "MD"], ["profile", "user", "Profile"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
       <div className="rd-inbox-live-status" role="status" hidden={activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
@@ -1176,7 +1183,7 @@ export function App(): React.ReactElement {
                       ) : null}
 
                       {authView === "register" ? (
-                        <label className="rd-field"><span className="rd-label">Promo code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" />{Date.now() < LAUNCH_END_MS ? <span className="rd-launch-offer">Use <strong>THEREDDOORLAUNCH</strong> for complimentary Plus through December 31, 2026. Redeem before January 1, 2027, Pacific time. No card required; no automatic renewal.</span> : null}</label>
+                        <label className="rd-field"><span className="rd-label">Promo code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" />{Date.now() < LAUNCH_END_MS ? <span className="rd-launch-offer">Have a launch or gift code? Enter it here for complimentary Plus through December 31, 2026. No card required. Paid renewal is a separate choice.</span> : null}</label>
                       ) : null}
                       {authView === "register" ? <label className="rd-field" style={{ fontSize: 12, color: "var(--muted)" }}><span><input type="checkbox" checked={analyticsConsent} onChange={e => setAnalyticsConsent(e.target.checked)} /> Help improve Red Door (optional)</span><span>Share activity counts using a protected account identifier. Daily activity is kept for 35 days; inactive measurement records are deleted after 35 days. No message content, photos, or location. Change this in settings anytime.</span></label> : null}
                       {authView === "register" ? (
@@ -1436,6 +1443,7 @@ export function App(): React.ReactElement {
             <Icon name="board" className="rd-ui-icon rd-mobile-nav-image" /><span>Board</span>
           </button>
           <button className={`rd-mobile-nav-btn ${activeTab === "groups" ? "is-active" : ""}`} aria-label="Community plans" aria-current={activeTab === "groups" ? "page" : undefined} onClick={()=>setTabAndRoute("groups")}><Icon name="groups" className="rd-ui-icon"/><span>Community</span></button>
+          <button className={`rd-mobile-nav-btn ${activeTab === "md" || activeTab === "promoted" ? "is-active" : ""}`} aria-label="MD companions" aria-current={activeTab === "md" ? "page" : undefined} onClick={()=>setTabAndRoute("md")}><span className="rd-md-nav-label">MD</span><span>MD</span></button>
         </nav>
       ) : null}
     </div>

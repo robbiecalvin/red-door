@@ -1,4 +1,4 @@
-import { hasPlus, launchGrant, type PlusData } from "../../../shared/plus";
+import { hasPlus, launchGrant, promoCode as normalizePromoCode, PROVIDER_LAUNCH_CODE, type PlusData } from "../../../shared/plus";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -576,7 +576,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         userType: "registered",
         tier: plusExpiresAtMs ? "premium" : "free",
         plusExpiresAtMs,
-        plusData: { analyticsConsent: analyticsConsent === true },
+        plusData: { analyticsConsent: analyticsConsent === true, ...(plusExpiresAtMs ? {redeemedPromoCodes:[normalizePromoCode(promoCode)],providerTutorialPending:normalizePromoCode(promoCode)===PROVIDER_LAUNCH_CODE} : {}) },
         role: "user",
         ageVerified: false,
         // Web build currently runs without verification-code UX; treat new registrations as verified.

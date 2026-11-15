@@ -1,3 +1,5 @@
+import { installMdBridge } from "./services/mdBridge";
+import { scheduleParameters } from "./services/renewalEnrollment";
 import { createCommunityRepository } from "./repositories/communityRepository";
 import { createPushService } from "./services/pushService";
 import { installMemberRoutes } from "./routes/memberRoutes";
@@ -5,7 +7,7 @@ import { publicMember, hidesDiscovery, hidesPresence } from "./services/memberSe
 import { createAnalyticsService } from "./services/analyticsService";
 import { analyticsRepository } from "./repositories/analyticsRepository";
 import { type AnalyticsCohort } from "../../shared/analytics";
-import { LAUNCH_END_MS } from "../../shared/plus";
+import { LAUNCH_END_MS, launchGrant, promoCode, PROVIDER_LAUNCH_CODE } from "../../shared/plus";
 import { hasPlus, limits, type PlusData, type SavedSearch } from "../../shared/plus";
 import { stripeRequest, verifyStripeEvent, assertPlusPrice, signAlbumAccess, validAlbumAccess, billingConfiguration, inspectBilling } from "./services/subscriptionService";
 import http from "node:http";
@@ -547,10 +549,9 @@ async function main(): Promise<void> {
     return hasPlus(user) ? "other_plus" : "free";
   }
   const app = express();
-  const allowedOrigins = parseAllowedOrigins(
-    process.env.CORS_ALLOWED_ORIGINS ??
-      "capacitor://localhost,http://localhost,http://127.0.0.1,ionic://localhost"
-  );
+  let publicAppOrigin="";try{const configured=new URL(process.env.PUBLIC_APP_URL ?? "");if(configured.protocol==="https:")publicAppOrigin=configured.origin;}catch{}
+  const allowedOrigins=parseAllowedOrigins([process.env.CORS_ALLOWED_ORIGINS ?? "capacitor://localhost,http://localhost,http://127.0.0.1,ionic://localhost",publicAppOrigin].filter(Boolean).join(","));
+
   app.disable("x-powered-by");
   app.use((req, res, next) => {
     const originHeader = req.headers.origin;
@@ -566,25 +567,59 @@ async function main(): Promise<void> {
     }
     next();
   });
+  async function finishRenewalSetup(checkoutId:string){
+    const checkout=await stripeRequest(`checkout/sessions/${encodeURIComponent(checkoutId)}`);
+    if(checkout.mode!=="setup" || checkout.status!=="complete" || checkout.metadata?.flow!=="launch-renewal")throw new Error("Invalid renewal setup.");
+    const user=authService.getUser(checkout.metadata?.userId);if(user && user.plusData?.stripeCheckoutSessionId!==checkout.id)return;
+    if(!user || user.bannedAtMs || user.plusData?.stripeCustomerId!==checkout.customer || !(user.plusData?.redeemedPromoCodes?.length || user.plusExpiresAtMs===LAUNCH_END_MS))throw new Error("Invalid renewal account.");
+    const setup=await stripeRequest(`setup_intents/${encodeURIComponent(typeof checkout.setup_intent==="string"?checkout.setup_intent:checkout.setup_intent?.id)}`);
+    if(user.plusData?.stripeProcessedSetupIds?.includes(setup.id))return;
+    const method=typeof setup.payment_method==="string"?setup.payment_method:setup.payment_method?.id;
+    if(setup.status!=="succeeded" || setup.customer!==checkout.customer || setup.metadata?.userId!==user.id || !method)throw new Error("Payment setup is not complete.");
+    await stripeRequest(`customers/${encodeURIComponent(checkout.customer)}`,new URLSearchParams({"invoice_settings[default_payment_method]":method}));
+    const current=authService.getUser(user.id)!;
+    if(Date.now()<LAUNCH_END_MS){
+      const scheduled=await stripeRequest("subscription_schedules",scheduleParameters(user.id,checkout.customer,method,process.env.STRIPE_PLUS_PRICE_ID!),`reddoor-renewal:${setup.id}`);
+      authService.updatePlus(user.id,{plusData:{...authService.getUser(user.id)!.plusData,stripePaymentMethodSaved:true,stripeAutoRenew:true,stripeNextBillingAtMs:LAUNCH_END_MS,stripeScheduleId:scheduled.id,stripeScheduleStatus:scheduled.status,stripeProcessedSetupIds:[...(current.plusData?.stripeProcessedSetupIds ?? []),setup.id]}});
+    }else{
+      const subscription=await stripeRequest("subscriptions",new URLSearchParams({customer:checkout.customer,default_payment_method:method,"items[0][price]":process.env.STRIPE_PLUS_PRICE_ID!,"metadata[userId]":user.id,"metadata[renewalConsent]":"stripe-hosted-setup",payment_behavior:"default_incomplete"}),`reddoor-renewal:${setup.id}`);
+      authService.updatePlus(user.id,{plusData:{...authService.getUser(user.id)!.plusData,stripePaymentMethodSaved:true,stripeAutoRenew:["active","trialing"].includes(subscription.status),stripeSubscriptionId:subscription.id,stripeSubscriptionStatus:subscription.status,stripeProcessedSetupIds:[...(current.plusData?.stripeProcessedSetupIds ?? []),setup.id]}});
+    }
+    await authPersistQueue;if(authPersistenceError)throw new Error("Renewal persistence failed.");
+  }
   app.post("/billing/webhook", express.raw({ type: "application/json", limit: "256kb" }), async (req, res) => {
     if (!process.env.STRIPE_WEBHOOK_SECRET?.trim()) return res.status(503).json({ message: "Billing is not configured." });
     let event: any;
     try { event = verifyStripeEvent(req.body, String(req.headers["stripe-signature"] ?? ""), process.env.STRIPE_WEBHOOK_SECRET.trim()); }
     catch { return res.status(400).json({ message: "Invalid webhook signature." }); }
-    if (!["checkout.session.completed", "invoice.paid", "customer.subscription.updated", "customer.subscription.deleted", "invoice.payment_failed"].includes(event.type)) return res.json({ received: true });
+    if (!["checkout.session.completed", "invoice.paid", "customer.subscription.updated", "customer.subscription.created", "customer.subscription.deleted", "invoice.payment_failed", "customer.updated", "subscription_schedule.updated", "subscription_schedule.canceled", "subscription_schedule.released", "subscription_schedule.aborted", "subscription_schedule.completed"].includes(event.type)) return res.json({ received: true });
     try {
       const object = event.data.object;
-      const subscriptionId = object.object === "subscription" ? object.id : object.subscription ?? object.parent?.subscription_details?.subscription;
+      if(event.type==="checkout.session.completed" && object.mode==="setup"){await finishRenewalSetup(object.id);return res.json({received:true});}
+      if(object.object==="subscription_schedule"){
+        const schedule=await stripeRequest(`subscription_schedules/${encodeURIComponent(object.id)}`),user=authService.getUser(schedule.metadata?.userId);
+        if(!user || user.plusData?.stripeScheduleId!==schedule.id)return res.status(400).json({message:"Unknown renewal schedule."});
+        const subscriptionId=typeof schedule.subscription==="string"?schedule.subscription:schedule.subscription?.id;
+        authService.updatePlus(user.id,{plusData:{...user.plusData,stripeScheduleStatus:schedule.status,stripeAutoRenew:schedule.status==="released"?user.plusData?.stripeAutoRenew===true:!["canceled","aborted"].includes(schedule.status)&&user.plusData?.stripePaymentMethodSaved===true,...(subscriptionId?{stripeSubscriptionId:subscriptionId}:{} )}});
+        await authPersistQueue;if(authPersistenceError)throw new Error("Renewal persistence failed.");return res.json({received:true});
+      }
+
+      if(object.object==="customer"){
+        const owner=authService.snapshotState().users.find(u=>u.plusData?.stripeCustomerId===object.id);
+        if(owner && !owner.plusData?.stripeSubscriptionId){const customer=await stripeRequest(`customers/${encodeURIComponent(object.id)}`),saved=Boolean(!customer.deleted&&customer.invoice_settings?.default_payment_method),current=authService.getUser(owner.id)!;authService.updatePlus(owner.id,{plusData:{...current.plusData,stripePaymentMethodSaved:saved,stripeAutoRenew:saved&&Boolean(current.plusData?.stripeScheduleId)&&!["canceled","aborted","completed"].includes(current.plusData?.stripeScheduleStatus ?? "")}});await authPersistQueue;if(authPersistenceError)throw new Error("Persistence failed.");return res.json({received:true});}
+      }
+      const subscriptionId = object.object === "subscription" ? object.id : object.object === "customer" ? authService.snapshotState().users.find(u=>u.plusData?.stripeCustomerId===object.id)?.plusData?.stripeSubscriptionId : object.subscription ?? object.parent?.subscription_details?.subscription;
       if (typeof subscriptionId !== "string") return res.json({ received: true });
       // Retrieve canonical current state: replays and out-of-order events cannot extend access.
-      const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(subscriptionId)}?expand[]=items.data.price&expand[]=latest_invoice`);
+      const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(subscriptionId)}?expand[]=items.data.price&expand[]=latest_invoice&expand[]=customer`);
       const userId = subscription.metadata?.userId;
       const user = typeof userId === "string" ? authService.getUser(userId) : undefined;
       if (!user) return res.status(400).json({ message: "Unknown subscription account." });
       const price = subscription.items?.data?.[0]?.price;
       assertPlusPrice(price, false);
       if (price.id !== process.env.STRIPE_PLUS_PRICE_ID?.trim()) return res.status(400).json({ message: "Unexpected subscription price." });
-      const plusData = { ...user.plusData, stripeCustomerId: String(subscription.customer), stripeSubscriptionId: subscription.id, stripeLivemode: price.livemode === true };
+      const method=subscription.default_payment_method || (typeof subscription.customer==="object"?subscription.customer.invoice_settings?.default_payment_method:null);
+      const plusData = { ...user.plusData, stripeCustomerId: typeof subscription.customer==="string"?subscription.customer:subscription.customer?.id, stripeSubscriptionId: subscription.id, stripeLivemode: price.livemode === true, stripePaymentMethodSaved:Boolean(method), stripeAutoRenew:Boolean(method && ["active","trialing"].includes(subscription.status) && !subscription.cancel_at_period_end),stripeNextBillingAtMs:Number(subscription.trial_end ?? subscription.current_period_end)*1000,stripeSubscriptionStatus:String(subscription.status) };
       const periodEnd = Number(subscription.current_period_end) * 1000;
       const paidInvoice = subscription.latest_invoice?.paid === true && subscription.latest_invoice?.status === "paid";
       const grantPaidPeriod = subscription.status === "active" && paidInvoice && event.type !== "invoice.payment_failed" && Number.isFinite(periodEnd);
@@ -602,7 +637,7 @@ async function main(): Promise<void> {
       return res.json({ received: true });
     } catch { return res.status(502).json({ message: "Unable to synchronize subscription. Retry webhook delivery." }); }
   });
-  app.use(express.json({ limit: "8kb" }));
+  app.use(express.json({ limit: "8kb", verify:(req,_res,buffer)=>{(req as Request & {rawBody?:Buffer}).rawBody=Buffer.from(buffer);} }));
   app.use((req, _res, next) => {
     const token = getSessionToken(req);
     if (token) {
@@ -800,8 +835,16 @@ async function main(): Promise<void> {
   app.get("/plus", (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const data = actor.user.plusData ?? {};
-    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.user.plusExpiresAtMs, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: billingConfiguration().configured, hasBillingAccount: Boolean(data.stripeCustomerId) });
+    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.user.plusExpiresAtMs, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: billingConfiguration().configured, hasBillingAccount: Boolean(data.stripeCustomerId), hasPaymentMethod:data.stripePaymentMethodSaved===true, autoRenew:data.stripeAutoRenew===true,nextBillingAtMs:data.stripeNextBillingAtMs,redeemedPromoCodes:data.redeemedPromoCodes ?? [],providerTutorialPending:data.providerTutorialPending===true,renewalScheduled:Boolean(data.stripeScheduleId && !["canceled","aborted","completed","released"].includes(data.stripeScheduleStatus ?? "")),subscriptionStatus:data.stripeSubscriptionStatus });
   });
+  app.post("/plus/redeem",async(req,res)=>{const actor=plusUser(req,res);if(!actor)return;
+    try {const code=promoCode(req.body?.code),expires=launchGrant(code)!;const user=authService.getUser(actor.user.id)!;if(user.plusData?.redeemedPromoCodes?.includes(code))return res.status(409).json({message:"You already used this promo code."});
+      const permanent=hasPlus(user)&&user.plusExpiresAtMs===undefined;
+      authService.updatePlus(user.id,{tier:"premium",...(permanent?{}:{plusExpiresAtMs:Math.max(user.plusExpiresAtMs ?? 0,expires)}),plusData:{...user.plusData,redeemedPromoCodes:[...(user.plusData?.redeemedPromoCodes ?? []),code],providerTutorialPending:code===PROVIDER_LAUNCH_CODE || user.plusData?.providerTutorialPending===true}});
+      await authPersistQueue;if(authPersistenceError)return res.status(503).json({message:"Unable to save this promotion. Please retry."});return res.json({ok:true,providerTutorial:code===PROVIDER_LAUNCH_CODE,expiresAtMs:expires});
+    }catch(e){return res.status(400).json({message:(e as Error).message});}
+  });
+  app.post("/plus/tutorial/dismiss",async(req,res)=>{const actor=plusUser(req,res);if(!actor)return;authService.updatePlus(actor.user.id,{plusData:{...actor.user.plusData,providerTutorialPending:false}});await authPersistQueue;if(authPersistenceError)return res.status(503).json({message:"Unable to save this preference."});return res.json({ok:true});});
   app.put("/plus/preferences", async (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const data: PlusData = { ...actor.user.plusData };
@@ -863,14 +906,18 @@ async function main(): Promise<void> {
     if (!object) return res.status(404).end();
     res.setHeader("Content-Type", object.mimeType); return res.send(object.data);
   });
-  app.post("/billing/checkout", async (req, res) => {
+  const checkoutHandler:express.RequestHandler = async (req,res) => {
     const actor = plusUser(req, res); if (!actor) return;
     try {
-      if (hasPlus(actor.session)) return res.status(409).json({ message: "You already have Plus. Manage your subscription or wait until your complimentary access ends." });
+      const deferred=req.path==="/billing/enroll";
+      const complimentary=actor.user.plusExpiresAtMs===LAUNCH_END_MS && hasPlus(actor.session);
+      if(deferred && (req.body?.acceptRenewal!==true || !complimentary))return res.status(400).json({message:"Monthly renewal enrollment requires your explicit consent and active launch access."});
+      if(hasPlus(actor.session) && !deferred)return res.status(409).json({message:"You already have Plus. Use billing enrollment to keep it after complimentary access ends."});
       const appUrl = process.env.PUBLIC_APP_URL?.trim();
       const priceId = process.env.STRIPE_PLUS_PRICE_ID?.trim();
       if (!billingConfiguration().configured || !appUrl || !priceId) return res.status(503).json({ message: "Subscriptions are not available for purchase yet." });
       if (!/^https:\/\//.test(appUrl)) throw new Error("Configure a secure public app URL.");
+      if(deferred && actor.user.plusData?.stripeScheduleId){const schedule=await stripeRequest(`subscription_schedules/${encodeURIComponent(actor.user.plusData.stripeScheduleId)}`);if(!["canceled","aborted","completed","released"].includes(schedule.status))return res.status(409).json({message:"Your renewal is already scheduled. Manage billing or cancel that schedule first."});}
       if (actor.user.plusData?.stripeSubscriptionId) {
         const existing = await stripeRequest(`subscriptions/${encodeURIComponent(actor.user.plusData.stripeSubscriptionId)}`);
         if (!["canceled", "incomplete_expired"].includes(existing.status)) return res.status(409).json({ message: "Manage your existing subscription before starting another." });
@@ -879,13 +926,23 @@ async function main(): Promise<void> {
       if (priorCheckoutId) {
         const prior = await stripeRequest(`checkout/sessions/${encodeURIComponent(priorCheckoutId)}`);
         if (prior.status === "open") return res.json({ url: prior.url });
-        if (prior.status === "complete" && !actor.user.plusData?.stripeSubscriptionId) return res.status(409).json({ message: "Payment is being confirmed. Refresh your subscription status shortly." });
+        if (prior.status === "complete" && !actor.user.plusData?.stripeSubscriptionId && !actor.user.plusData?.stripeScheduleId) return res.status(409).json({ message: "Payment is being confirmed. Refresh your subscription status shortly." });
       }
       const price = await stripeRequest(`prices/${encodeURIComponent(priceId)}`); assertPlusPrice(price);
+      if(deferred){
+        let customer=actor.user.plusData?.stripeCustomerId;
+        if(!customer){const created=await stripeRequest("customers",new URLSearchParams({email:actor.user.email,"metadata[userId]":actor.user.id}),`reddoor-customer:${actor.user.id}`);customer=created.id;authService.updatePlus(actor.user.id,{plusData:{...authService.getUser(actor.user.id)!.plusData,stripeCustomerId:customer}});await authPersistQueue;if(authPersistenceError)throw new Error("Unable to save customer.");}
+        const setupParams=new URLSearchParams({mode:"setup",customer:customer!,currency:"cad",client_reference_id:actor.user.id,"metadata[userId]":actor.user.id,"metadata[flow]":"launch-renewal","setup_intent_data[metadata][userId]":actor.user.id,success_url:appUrl+"?billing=success",cancel_url:appUrl+"?billing=cancelled","custom_text[submit][message]":"Save your payment method and enroll in Red Door Plus: CAD $7.99 monthly starting January 1, 2027 (Pacific time), until you cancel. No charge today."});
+        const checkout=await stripeRequest("checkout/sessions",setupParams,`reddoor-enroll:${actor.user.id}:${priorCheckoutId ?? "initial"}`);
+        authService.updatePlus(actor.user.id,{plusData:{...authService.getUser(actor.user.id)!.plusData,stripeCheckoutSessionId:checkout.id}});await authPersistQueue;if(authPersistenceError)throw new Error("Unable to save checkout.");return res.json({url:checkout.url});
+      }
       const params = new URLSearchParams({ mode: "subscription", "line_items[0][price]": priceId, "line_items[0][quantity]": "1", "subscription_data[metadata][userId]": actor.user.id, client_reference_id: actor.user.id, success_url: appUrl + "?billing=success", cancel_url: appUrl + "?billing=cancelled" });
+      params.set("payment_method_collection","always");
+      params.set("subscription_data[metadata][renewalConsent]","stripe-hosted-checkout");
+
       if (actor.user.plusData?.stripeCustomerId) params.set("customer", actor.user.plusData.stripeCustomerId);
       else params.set("customer_email", actor.user.email);
-      const checkout = await stripeRequest("checkout/sessions", params, `reddoor-plus:${actor.user.id}:${priorCheckoutId ?? "initial"}`);
+      const checkout = await stripeRequest("checkout/sessions", params, `reddoor-plus:${actor.user.id}:${deferred?"renewal":"paid"}:${priorCheckoutId ?? "initial"}`);
       const latestUser = authService.getUser(actor.user.id)!;
       authService.updatePlus(actor.user.id, { plusData: { ...latestUser.plusData, stripeCheckoutSessionId: checkout.id } });
       await authPersistQueue;
@@ -893,7 +950,10 @@ async function main(): Promise<void> {
       recordMetric(() => metrics.billing(price.livemode === true ? "checkout_started" : "test_checkout_started", checkout.id));
       return res.json({ url: checkout.url });
     } catch (e) { return res.status(502).json({ message: (e as Error).message }); }
-  });
+  };
+  app.post("/billing/checkout",checkoutHandler);
+  app.post("/billing/enroll",checkoutHandler);
+  app.post("/billing/enrollment/cancel",async(req,res)=>{const actor=plusUser(req,res);if(!actor)return;const id=actor.user.plusData?.stripeScheduleId;if(!id)return res.status(400).json({message:"No scheduled renewal."});try{await stripeRequest(`subscription_schedules/${encodeURIComponent(id)}/cancel`,new URLSearchParams());authService.updatePlus(actor.user.id,{plusData:{...authService.getUser(actor.user.id)!.plusData,stripeAutoRenew:false,stripeScheduleStatus:"canceled"}});await authPersistQueue;if(authPersistenceError)throw new Error("Unable to save cancellation.");return res.json({ok:true});}catch{return res.status(502).json({message:"Unable to cancel the scheduled renewal. Please retry."});}});
   app.post("/billing/portal", async (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const customer = actor.user.plusData?.stripeCustomerId;
@@ -1490,37 +1550,11 @@ async function main(): Promise<void> {
     return res.status(200).json({ listings: result.value, feeCents: 2000 });
   });
 
-  app.post("/promoted-profiles/payment/start", (req, res) => {
-    const token = getSessionToken(req);
-    const sessionResult = authService.getSession(token ?? "");
-    if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = promotedProfilesService.startPayment(domainSession(sessionResult.value));
-    if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ payment: result.value });
-  });
+  app.post("/promoted-profiles/payment/start",(_req,res)=>res.status(410).json({message:"Promoted profiles have retired. Visit MD in Red Door Plus."}));
 
-  app.post("/promoted-profiles/payment/confirm", (req, res) => {
-    const token = getSessionToken(req);
-    const sessionResult = authService.getSession(token ?? "");
-    if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = promotedProfilesService.confirmPayment(domainSession(sessionResult.value), (req.body as any)?.paymentToken);
-    if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ payment: result.value });
-  });
+  app.post("/promoted-profiles/payment/confirm",(_req,res)=>res.status(410).json({message:"Promoted profiles have retired. Visit MD in Red Door Plus."}));
 
-  app.post("/promoted-profiles", (req, res) => {
-    const token = getSessionToken(req);
-    const sessionResult = authService.getSession(token ?? "");
-    if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = promotedProfilesService.createListing(domainSession(sessionResult.value), {
-      paymentToken: (req.body as any)?.paymentToken,
-      title: (req.body as any)?.title,
-      body: (req.body as any)?.body,
-      displayName: (req.body as any)?.displayName
-    });
-    if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ listing: result.value });
-  });
+  app.post("/promoted-profiles",(_req,res)=>res.status(410).json({message:"Promoted profiles have retired. Visit MD in Red Door Plus."}));
 
   // Session helper endpoint (debug-friendly; still enforces INVALID_SESSION deterministically).
   app.get("/session", (req, res) => {
@@ -1562,10 +1596,12 @@ async function main(): Promise<void> {
     wss,
     jwtSecret,
     authService,
+    publicBroadcastPayload(type,payload){if(type==="md_message"){const {memberIds,...visible}=payload as {memberIds:unknown;[key:string]:unknown};return visible;}return payload;},
     authorizeBroadcast(auth, type, payload) {
       if (!auth.ageVerified) return false;
       const actor = auth.userId ? `user:${auth.userId}` : `session:${publicGuestId(auth.sessionToken ?? "")}`;
       const data = payload as any;
+      if(type==="md_message")return Boolean(auth.userId && data?.memberIds?.includes(auth.userId) && hasPlus(authService.getUser(auth.userId) ?? {userType:"guest"}));
       if (type === "chat_message") {
         const message = data?.message;
         if (!message || blockService.isBlocked(message.fromKey, message.toKey)) return false;
@@ -1587,6 +1623,7 @@ async function main(): Promise<void> {
     }
   });
 
+  installMdBridge(app,{auth:authService,repository:communityRepository,member:plusUser,persist:async()=>{await authPersistQueue;if(authPersistenceError)throw new Error("Persistence unavailable");},blocked:(a,b)=>blockService.isBlocked(a,b),secret:process.env.MD_SHARED_SECRET?.trim() ?? "",keySecret:jwtSecret,appUrl:process.env.PUBLIC_APP_URL?.trim() || "https://thereddoor.app",notify:id=>pushService.notify(id,"md"),broadcast:(type,payload)=>safeBroadcast(gateway.broadcast,type,payload)});
   installMemberRoutes(app,{
     auth:authService,profiles:profileRepo,media:mediaRepo,storage:mediaStorage,bucket:s3Bucket || "local-dev-bucket",repository:communityRepository,
     privacyChanged:(key,hideProfile)=>safeBroadcast(gateway.broadcast,"presence_removed",{key,hideProfile}),

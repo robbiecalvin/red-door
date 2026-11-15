@@ -11,10 +11,10 @@ export async function createPushService(repo:CommunityRepository,auth:AuthServic
   let origin: URL | null=null;try {origin=new URL(appUrl);}catch{}
   const configured=Boolean(origin && (origin.protocol==="https:" || origin.hostname==="localhost"));
   const contact=origin ? `https://${origin.host}/` : "https://example.invalid/";
-  return {publicKey:keys.publicKey,configured,async notify(userId:string) {
+  return {publicKey:keys.publicKey,configured,async notify(userId:string,route:"threads"|"md"="threads") {
     const user=auth.getUser(userId);if(!configured || !user || user.bannedAtMs)return;
     for(const subscription of user.plusData?.pushSubscriptions ?? []) {
-      try {await webpush.sendNotification(subscription,JSON.stringify({title:"Red Door",body:"You have a new message.",url:new URL("#/threads",appUrl).href}),{vapidDetails:{subject:contact,publicKey:keys.publicKey,privateKey:keys.privateKey},TTL:300,timeout:5000});}
+      try {await webpush.sendNotification(subscription,JSON.stringify({title:"Red Door",body:"You have a new message.",url:new URL(`#/${route}`,appUrl).href}),{vapidDetails:{subject:contact,publicKey:keys.publicKey,privateKey:keys.privateKey},TTL:300,timeout:5000});}
       catch(e){if([404,410].includes((e as {statusCode:number}).statusCode)){const current=auth.getUser(userId);if(current)auth.updatePlus(userId,{plusData:{...current.plusData,pushSubscriptions:current.plusData?.pushSubscriptions?.filter(s=>s.endpoint!==subscription.endpoint)}});}}
     }
   }};

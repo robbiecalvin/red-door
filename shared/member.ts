@@ -9,6 +9,7 @@ export type MemberPreferences = {
   interests: string[];
   prompts: PromptAnswer[];
   hideLocation: boolean;
+  hideProfile?: boolean;
   incognito: boolean;
   discovery?: { intent: Intent | ""; interest: string; verifiedOnly: boolean };
 };

@@ -1,3 +1,4 @@
+import { mdSignature, validMdSignature } from "../backend/src/services/mdBridge";
 import { WebSocket } from "ws";
 import { createAuthService } from "../backend/src/services/authService";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -16,6 +17,13 @@ const price = { id: "price_smoke", active: true, currency: "cad", unit_amount: 7
 const periodEnd = Math.floor(Date.now() / 1000) + 30 * 86400;
 let providerState: any = { id: "sub_smoke", object: "subscription", customer: "cus_smoke", metadata: {}, status: "active", latest_invoice: { paid: true, status: "paid" }, current_period_end: periodEnd, items: { data: [{ price }] } };
 let resetToken = "";
+const MD_SECRET="smoke-only-shared-md-secret-at-least-32-characters";
+let mdBuyerId="",mdReceiptRevoked=false,checkoutParams=new URLSearchParams(),setupCustomer="cus_renewal",setupUserId="",scheduleCreates=0,scheduleState:any={id:"sched_launch",status:"not_started",metadata:{}},setupCheckout:any=null;
+const FRIENDLY_CODE="frog-banana-door-mango-lantern-otter";
+async function mdRequest(route:string,data:unknown,expected=200,nonce=crypto.randomUUID()){
+  const raw=JSON.stringify(data),timestamp=String(Math.floor(Date.now()/1000));const result=await fetch(base+route,{method:"POST",headers:{"content-type":"application/json","x-md-timestamp":timestamp,"x-md-nonce":nonce,"x-md-signature":mdSignature(MD_SECRET,timestamp,nonce,"POST",route,raw)},body:raw});const body=await result.json();expect({route,status:result.status}).toEqual({route,status:expected});return body;
+}
+async function customWebhook(type:string,object:unknown,id:string){const raw=JSON.stringify({id,type,data:{object}}),timestamp=Math.floor(Date.now()/1000),mac=crypto.createHmac("sha256",WEBHOOK_SECRET).update(`${timestamp}.${raw}`).digest("hex");return fetch(base+"/billing/webhook",{method:"POST",headers:{"content-type":"application/json","stripe-signature":`t=${timestamp},v1=${mac}`},body:raw});}
 let providerPosts = 0, backend: ChildProcess, stub: http.Server, base: string, root: string;
 async function freePort() { const server = net.createServer(); server.listen(0, "127.0.0.1"); await once(server, "listening"); const port = (server.address() as net.AddressInfo).port; await new Promise<void>(r => server.close(() => r())); return port; }
 async function request(route: string, data?: unknown, token?: string, method?: string, expected = 200): Promise<any> {
@@ -43,20 +51,32 @@ beforeAll(async () => {
   seed.adminCreateUser("smoke-admin@example.com", "Smoke-test123!", null, "registered", "free", "admin");
   seed.adminCreateUser("reset-smoke@example.com", "Smoke-test123!", null, "registered", "free", "user");
   resetToken = seed.requestPasswordReset("reset-smoke@example.com")!.token;
-  stub = http.createServer((req, res) => {
+  stub = http.createServer(async (req, res) => {
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const raw=Buffer.concat(chunks).toString("utf8");const params=new URLSearchParams(raw);
+    if(req.url==="/integrations/red-door/chat/redeem"){
+      const valid=validMdSignature(MD_SECRET,String(req.headers["x-md-timestamp"]),String(req.headers["x-md-nonce"]),"POST",req.url,raw,String(req.headers["x-md-signature"]));const input=JSON.parse(raw);
+      res.setHeader("content-type","application/json");if(!valid||input.viewerId!==mdBuyerId||input.providerId!=="md-provider-one"||input.code!==FRIENDLY_CODE||mdReceiptRevoked){res.statusCode=403;return res.end(JSON.stringify({message:"Invalid paid grant"}));}return res.end(JSON.stringify({paid:true,viewerId:mdBuyerId,providerId:input.providerId,grantId:"md-grant-one",expiresAtMs:Date.now()+30*86400000}));
+    }
+    if(req.url==="/v1/customers"&&req.method==="POST")return res.end(JSON.stringify({id:setupCustomer}));
+    if(req.url?.startsWith("/v1/customers/")&&req.method==="POST")return res.end(JSON.stringify({id:setupCustomer,invoice_settings:{default_payment_method:"pm_saved"}}));
+    if(req.url?.startsWith("/v1/setup_intents/"))return res.end(JSON.stringify({id:"seti_launch",status:"succeeded",customer:setupCustomer,payment_method:"pm_saved",metadata:{userId:setupUserId}}));
+    if(req.url==="/v1/subscription_schedules"&&req.method==="POST"){scheduleCreates++;scheduleState={...scheduleState,status:"not_started",metadata:{userId:setupUserId},start_date:Number(params.get("start_date"))};return res.end(JSON.stringify(scheduleState));}
+    if(req.url==="/v1/subscription_schedules/sched_launch/cancel"){scheduleState.status="canceled";return res.end(JSON.stringify(scheduleState));}
+    if(req.url?.startsWith("/v1/subscription_schedules/"))return res.end(JSON.stringify(scheduleState));
+
     res.setHeader("content-type", "application/json");
     if (req.method === "POST") providerPosts++;
     if (req.url?.startsWith("/v1/prices/")) return res.end(JSON.stringify(price));
     if (req.url?.startsWith("/v1/subscriptions/")) return res.end(JSON.stringify(providerState));
-    if (req.url === "/v1/checkout/sessions") return res.end(JSON.stringify({ id: "cs_smoke", url: "https://checkout.stripe.com/smoke" }));
-    if (req.url?.startsWith("/v1/checkout/sessions/")) return res.end(JSON.stringify({ id: "cs_smoke", status: "open", url: "https://checkout.stripe.com/smoke" }));
+    if (req.url === "/v1/checkout/sessions") {checkoutParams=params;if(params.get("mode")==="setup"){setupUserId=params.get("metadata[userId]")!;setupCheckout={id:"cs_setup_launch",mode:"setup",status:"complete",customer:params.get("customer"),setup_intent:"seti_launch",metadata:{userId:setupUserId,flow:"launch-renewal"}};return res.end(JSON.stringify({id:setupCheckout.id,url:"https://checkout.stripe.com/setup-fixture"}));}return res.end(JSON.stringify({ id: "cs_smoke", url: "https://checkout.stripe.com/smoke" }));}
+    if (req.url?.startsWith("/v1/checkout/sessions/")) return res.end(JSON.stringify(req.url.includes("cs_setup_launch")?setupCheckout:{ id: "cs_smoke", status: "open", url: "https://checkout.stripe.com/smoke" }));
     if (req.url === "/v1/billing_portal/sessions") return res.end(JSON.stringify({ url: "https://billing.stripe.com/smoke" }));
     res.statusCode = 404; res.end("{}");
   });
   stub.listen(0, "127.0.0.1"); await once(stub, "listening");
   const port = await freePort(); base = `http://127.0.0.1:${port}`;
   backend = spawn(process.execPath, ["--import", require.resolve("tsx"), "--import", path.resolve(__dirname, "fixtures/stripe-fetch.mjs"), path.resolve(__dirname, "../backend/src/server.ts")], {
-    cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: String(port), JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", SMTP_HOST: "", TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", PUBLIC_APP_URL: "https://example.com/", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
+    cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: String(port), JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", SMTP_HOST: "", TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
   });
   let startup = ""; backend.stderr?.on("data", chunk => { startup += chunk; });
   let ready = false;
@@ -254,7 +274,8 @@ describe("Core API and payment lifecycle smoke checks", () => {
     const member=await request("/members/me",{intent:"chatting",intentHours:1,interests:["Coffee","Hiking"],prompts:[{prompt:"Ask me about…",answer:"My favorite trail"}]},alice.token,"PUT");
     expect(member.preferences.intentExpiresAtMs).toBeGreaterThan(Date.now());
     const profile=await request(`/profile/public/${alice.id}`);expect(profile.profile.member.interests).toEqual(["Coffee","Hiking"]);expect(profile.profile.member.intent).toBe("chatting");expect(profile.profile.member.hideLocation).toBeUndefined();
-    await request("/members/me",{incognito:true},bob.token,"PUT",402);
+    await request("/members/me",{hideProfile:true},bob.token,"PUT");
+    await request("/members/me",{hideProfile:false},bob.token,"PUT");
     await request("/members/me",{discovery:{intent:"",interest:"Coffee",verifiedOnly:false}},bob.token,"PUT",402);
   });
   it("Given a free member hiding location When presence is updated Then hides coordinates from HTTP and realtime discovery",async()=>{
@@ -316,6 +337,40 @@ describe("Core API and payment lifecycle smoke checks", () => {
     await request("/chat/send",{chatKind:"cruise",toKey:publicKey,text:"Reply to Anon"},bob.token);expect((await request(`/chat/messages?chatKind=cruise&otherKey=user:${bob.id}`,undefined,token)).messages).toHaveLength(2);
     const upload=await request("/chat/media/initiate",{mimeType:"image/png",sizeBytes:1},token);expect(upload.objectKey).not.toContain(token);
     await request("/block",{targetKey:`user:${bob.id}`},token);await request("/chat/send",{chatKind:"cruise",toKey:publicKey,text:"Blocked reply"},bob.token,undefined,403);
+  });
+
+  it("Given gift codes When redeemed during or after registration Then records one use per account and only the provider code requests a tutorial",async()=>{
+    const gifted=await account("gifted-existing");await request("/plus/redeem",{code:"REDDOORUNLOCKED"},gifted.token);let state=await request("/plus",undefined,gifted.token);expect(state.active).toBe(true);expect(state.expiresAtMs).toBe(LAUNCH_END_MS);expect(state.providerTutorialPending).toBe(false);await request("/plus/redeem",{code:"REDDOORUNLOCKED"},gifted.token,undefined,409);
+    await request("/plus/redeem",{code:"REDDOORLAUNCH"},gifted.token);state=await request("/plus",undefined,gifted.token);expect(state.providerTutorialPending).toBe(true);await request("/plus/tutorial/dismiss",{},gifted.token);expect((await request("/plus",undefined,gifted.token)).providerTutorialPending).toBe(false);
+    const registered=await account("gifted-at-registration",false,"REDDOORLAUNCH");expect((await request("/plus",undefined,registered.token)).providerTutorialPending).toBe(true);
+  });
+  it("Given launch access When saving billing Then requires consent and schedules January 1 without extending complimentary access or reenrolling after cancellation",async()=>{
+    const member=await account("renewal-enrollment",false,"REDDOORUNLOCKED");await request("/billing/enroll",{acceptRenewal:false},member.token,undefined,400);
+    const checkout=await request("/billing/enroll",{acceptRenewal:true},member.token);expect(checkout.url).toContain("setup-fixture");expect(checkoutParams.get("mode")).toBe("setup");expect(checkoutParams.get("line_items[0][price]")).toBeNull();expect(checkoutParams.get("custom_text[submit][message]")).toContain("CAD $7.99 monthly starting January 1, 2027");
+    expect((await request("/plus",undefined,member.token)).hasPaymentMethod).toBe(false);
+    const paid=await customWebhook("checkout.session.completed",setupCheckout,"evt_setup_launch");expect(paid.status).toBe(200);const enabled=await request("/plus",undefined,member.token);expect(enabled.hasPaymentMethod).toBe(true);expect(enabled.autoRenew).toBe(true);expect(enabled.expiresAtMs).toBe(LAUNCH_END_MS);expect(enabled.nextBillingAtMs).toBe(LAUNCH_END_MS);expect(scheduleState.start_date*1000).toBe(LAUNCH_END_MS);expect(scheduleCreates).toBe(1);
+    expect((await customWebhook("checkout.session.completed",setupCheckout,"evt_setup_replay")).status).toBe(200);expect(scheduleCreates).toBe(1);
+    await request("/billing/enrollment/cancel",{},member.token);expect((await request("/plus",undefined,member.token)).autoRenew).toBe(false);expect((await customWebhook("checkout.session.completed",setupCheckout,"evt_setup_replay_after_cancel")).status).toBe(200);expect(scheduleCreates).toBe(1);expect((await request("/plus",undefined,member.token)).autoRenew).toBe(false);
+  });
+  it("Given a linked MD provider When signed live assertions and paid chat grants arrive Then enforces Plus, distance, ownership, code binding, idempotence and revocation",async()=>{
+    const provider=await account("md-provider",false,"REDDOORLAUNCH"),buyer=await account("md-buyer",false,"REDDOORUNLOCKED"),other=await account("md-other",false,"REDDOORUNLOCKED");mdBuyerId=buyer.id;
+    await request("/md/discover",{lat:49.28,lng:-123.12},bob.token,undefined,402);await request("/md/account/key",{acknowledge:false},provider.token,undefined,400);
+    const key=await request("/md/account/key",{acknowledge:true},provider.token);expect(key.key).toMatch(/^rd_link_/);expect(JSON.stringify(await request("/md/account",undefined,provider.token))).not.toContain(key.key);
+    const data={email:"md-provider@example.com",key:key.key,providerId:"md-provider-one",paid:true,liveProfile:true,adultVerified:true,paidUntilMs:Date.now()+30*86400000,name:"MD companion",photoUrl:"https://meetdiscreet.ca/photos/test.png",profileUrl:"https://meetdiscreet.ca/providers/md-provider-one",lat:49.28,lng:-123.12};
+    await request("/integrations/md/link",data,undefined,undefined,401);const nonce=crypto.randomUUID();const link=await mdRequest("/integrations/md/link",data,200,nonce);await mdRequest("/integrations/md/link",data,409,nonce);await mdRequest("/integrations/md/live",{...data,linkId:link.linkId,active:true});
+    const nearby=await request("/md/discover",{lat:49.28,lng:-123.12},buyer.token);expect(nearby.providers).toHaveLength(1);expect(JSON.stringify(nearby)).not.toContain(provider.id);expect(nearby.providers[0].lat).toBeUndefined();expect(nearby.providers[0].liveUntilMs).toBeLessThanOrEqual(Date.now()+600000);
+    expect((await request("/md/discover",{lat:51,lng:-123.12},buyer.token)).providers).toHaveLength(0);
+    const handoff=await request("/md/handoff",{providerId:data.providerId},buyer.token),ticket=new URL(handoff.url).searchParams.get("rd_handoff");expect(new URL(handoff.url).origin).toBe("https://meetdiscreet.ca");expect((await mdRequest("/integrations/md/handoff",{ticket,providerId:data.providerId})).viewerId).toBe(buyer.id);
+    await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token,undefined,403);await request("/md/chat/redeem",{providerId:data.providerId,code:"frog"},buyer.token,undefined,400);await request("/md/chat/redeem",{providerId:data.providerId,code:FRIENDLY_CODE},other.token,undefined,403);await request("/md/chat/redeem",{providerId:data.providerId,code:FRIENDLY_CODE},buyer.token);
+    const mdSocket=new WebSocket(base.replace("http:","ws:"));await once(mdSocket,"open");const authReply=once(mdSocket,"message");mdSocket.send(JSON.stringify({type:"auth",payload:{sessionToken:buyer.token}}));await authReply;
+    const mdFrame=once(mdSocket,"message");
+    const id=crypto.randomUUID(),sent=await request("/md/messages",{providerId:data.providerId,text:"Hello from Red Door",clientMessageId:id},buyer.token);const repeated=await request("/md/messages",{providerId:data.providerId,text:"Hello from Red Door",clientMessageId:id},buyer.token);expect(repeated.message.messageId).toBe(sent.message.messageId);
+    const frame=JSON.parse(String((await mdFrame)[0]));mdSocket.terminate();expect(frame.type).toBe("md_message");expect(frame.payload.memberIds).toBeUndefined();expect(JSON.stringify(frame)).not.toContain(provider.id);
+    const response=await mdRequest("/integrations/md/messages",{linkId:link.linkId,providerId:data.providerId,viewerId:buyer.id,text:"Hello from MD",clientMessageId:crypto.randomUUID()});expect(response.message.fromKey).toBe("md:md-provider-one");expect(JSON.stringify(response)).not.toContain(provider.id);
+    expect((await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token)).messages).toHaveLength(2);await request(`/md/messages?providerId=${data.providerId}&viewerId=${buyer.id}`,undefined,other.token,undefined,403);
+    await request("/block",{targetKey:`user:${provider.id}`},buyer.token);expect((await mdRequest("/integrations/md/inbox",{linkId:link.linkId,providerId:data.providerId})).threads).toHaveLength(0);await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token,undefined,403);await request("/unblock",{targetKey:`user:${provider.id}`},buyer.token);
+    await mdRequest("/integrations/md/chat/revoke",{grantId:"md-grant-one",providerId:data.providerId});mdReceiptRevoked=true;await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token,undefined,403);
+    await request("/md/account/key",{acknowledge:true},provider.token);expect((await request("/md/discover",{lat:49.28,lng:-123.12},buyer.token)).providers).toHaveLength(0);await mdRequest("/integrations/md/link",data,403);
   });
 
 });

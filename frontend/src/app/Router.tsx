@@ -1,3 +1,5 @@
+import { MdPanel, MdAccountSettings } from "./MdPanel";
+import { BillingSettings, PromoCodeForm } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { CommunityPanel } from "./CommunityPanel";
 import { MemberEditor, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentControl, IntentBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, FirstConnections, DiscoveryChoices, type DiscoveryChoice } from "./MemberPanels";
@@ -53,7 +55,7 @@ type Settings = Readonly<{
   defaultCenterLng: number;
 }>;
 
-type TopTab = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted";
+type TopTab = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
 type DiscoverFilter = "all" | "online" | "favorites";
 type MobileCruiseTab = "map" | "chat";
 type DiscoverScreen = MobileCruiseTab;
@@ -67,7 +69,7 @@ const GROUP_INVITE_STATUS_PREFIX = "GROUP_INVITE_STATUS|";
 const PROFILE_MEDIA_UPDATED_EVENT = "rd:profile-media-updated";
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
 declare const __DUALMODE_WS_URL__: string | undefined;
-type RouterErrorScope = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted";
+type RouterErrorScope = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
 
 type ProfileDraft = Readonly<{
   displayName: string;
@@ -7291,8 +7293,8 @@ export function Router({
       {settingsSection === "profile" ? <div className="rd-profile-settings-stack"><SettingsProfile api={api} session={session} setLastError={setProfileError} /><MemberEditor api={api} session={session}/><PhotoVerificationPanel api={api} session={session}/></div> : null}
       {settingsSection === "privacy" ? <div className="rd-profile-settings-stack"><MemberPrivacy api={api} session={session}/><PrivacySettings api={api} session={session}/><PrivacyBlockList api={api} session={session}/></div> : null}
       {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings api={api} session={session} /></section> : null}
-      {settingsSection === "membership" ? <PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /> : null}
-      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
+      {settingsSection === "membership" ? <div className="rd-profile-settings-stack"><PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /><BillingSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/></div> : null}
+      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><MdAccountSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
       </div>
     </div>
   );
@@ -7497,7 +7499,7 @@ export function Router({
       {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setSubmissionsError} /> : null}
-      {activeTab === "promoted" ? <PromotedProfilesPanel api={api} session={session} isMobile={isMobile} setLastError={setPromotedError} /> : null}
+      {activeTab === "promoted" || activeTab === "md" ? <MdPanel api={api} session={session}/> : null}
     </div>
   );
 }

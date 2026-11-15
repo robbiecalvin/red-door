@@ -23,15 +23,15 @@ describe("Member discovery, privacy, and plans",()=>{
     expect(()=>updateMember(p,{prompts:[{prompt:PROFILE_PROMPTS[0],answer:"x".repeat(181)}]},free,now)).toThrow();
     expect(()=>updateMember(p,{prompts:[{prompt:PROFILE_PROMPTS[0],answer:"One"},{prompt:PROFILE_PROMPTS[0],answer:"Two"}]},free,now)).toThrow();
   });
-  it("keeps location hiding free and gates only off-grid browsing and remembered preferences",()=>{
+  it("keeps profile/location hiding free and gates remembered discovery preferences",()=>{
     expect(hidesPresence(updateMember(undefined,{hideLocation:true},free),free)).toBe(true);
-    expect(()=>updateMember(undefined,{incognito:true},free)).toThrow("Plus");
+    expect(hidesDiscovery(updateMember(undefined,{hideProfile:true},free),free)).toBe(true);
     expect(()=>updateMember(undefined,{discovery:{intent:"",interest:"Coffee",verifiedOnly:false}},free)).toThrow("Plus");
     const hidden=updateMember(undefined,{incognito:true},plus);
     expect(hidesDiscovery(hidden,plus)).toBe(true);
     expect(hidesPresence(hidden,plus)).toBe(true);
-    expect(hidesDiscovery(hidden,{...plus,plusExpiresAtMs:1})).toBe(false);
-    expect(hidesDiscovery(hidden,free)).toBe(false);
+    expect(hidesDiscovery(hidden,{...plus,plusExpiresAtMs:1})).toBe(true);
+    expect(hidesDiscovery(hidden,free)).toBe(true);
     expect(updateMember(hidden,{incognito:false},free).incognito).toBe(false);
   });
   it("keeps the review badge bound to the reviewed main photo",()=>{

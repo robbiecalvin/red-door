@@ -41,6 +41,7 @@ export type WebsocketGatewayDeps = Readonly<{
     resolveJWT(token: string): Result<AuthSession>;
   }>;
 
+  publicBroadcastPayload?(type:string,payload:unknown):unknown;
   authorizeBroadcast?: (auth: AuthContext, type: string, payload: unknown) => boolean;
   maxIncomingPayloadBytes?: number;
   heartbeatTimeoutMs?: number;
@@ -259,7 +260,7 @@ export function createWebsocketGateway(deps: WebsocketGatewayDeps): WebsocketGat
     },
 
     broadcast(type: string, payload: unknown): void {
-      const message = JSON.stringify({ type, payload });
+      const message = JSON.stringify({ type, payload:deps.publicBroadcastPayload?deps.publicBroadcastPayload(type,payload):payload });
       const bytes = Buffer.byteLength(message, "utf8");
       if (bytes > DEFAULT_MAX_INCOMING_PAYLOAD_BYTES) {
         // Enforce the same 2kb budget on outgoing messages.

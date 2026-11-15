@@ -1,6 +1,6 @@
 # Red Door (Web + Optional Backend)
 
-Last updated: 2026-03-09
+Last updated: 2026-11-15
 
 ## What this project is
 
@@ -23,6 +23,16 @@ The active frontend product emphasis is Cruise mode. Date and Hybrid logic exist
 ## Red Door Plus
 
 Plus now includes interactive benefit previews, a Free/Plus comparison, clear CAD $7.99 monthly pricing, and contextual upgrade entry points for filters, Travel mode, chat limits, and profile video. Active members get shortcuts into their benefits. Guest members can start registration directly from the Plus screen.
+
+## MD linking and launch membership
+
+- Plus members can generate a one-time secret in Account settings to link a paid, live Meet Discreet provider profile. The MD directory replaces promoted profiles and rotates linked live providers within 50 km.
+- Provider subscriptions are a separate $11.99 purchase on MD. Red Door unlocks messages only after the MD backend verifies an account-bound paid-chat code.
+- Registration and Account settings accept `REDDOORLAUNCH` (Plus + provider linking tutorial) and `REDDOORUNLOCKED` (Plus). Each code is redeemable once per account; complimentary access ends January 1, 2027 at midnight Pacific. The existing launch code remains supported.
+- Dismissible reminders appear on explicit login when billing needs attention. Stripe-hosted enrollment requires consent to CAD $7.99 monthly starting January 1; paid subscriptions then renew monthly. No card numbers are stored in Red Door.
+- **Hide my profile** is free in Privacy settings and removes the personal profile from the grid and map.
+
+MD's backend must implement the [integration contract](docs/md-integration-contract.md) before linking/payments work across sites. See [deployment and billing setup](docs/md-launch-deployment.md) before switching to the new domains.
 
 ## Community and connection features
 
@@ -79,7 +89,7 @@ See [rollout validation and deployment notes](docs/community-rollout-validation.
 - Cruising spots: list/create/check-in/check-in listing/spot actions
 - Favorites: list + toggle
 - Submissions (stories): list/create/view/rate
-- Promoted profiles: payment start/confirm/create/list
+- Plus-only MD provider discovery, account linking, verified paid-chat codes, and a separate MD inbox. Legacy promoted-profile purchases are retired.
 
 ### Chat, messaging, and real-time
 

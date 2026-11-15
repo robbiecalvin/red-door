@@ -28,9 +28,8 @@ export function updateMember(current: MemberPreferences | undefined, input: unkn
     });
     if(new Set(next.prompts.map(p=>p.prompt)).size !== next.prompts.length) throw new MemberError("INVALID_INPUT", "Choose different prompts.");
   }
-  for (const key of ["hideLocation", "incognito"] as const) if (p[key] !== undefined) {
+  for (const key of ["hideLocation", "hideProfile", "incognito"] as const) if (p[key] !== undefined) {
     if(typeof p[key] !== "boolean") throw new MemberError("INVALID_INPUT", "Invalid privacy option.");
-    if(key === "incognito" && p[key] && !hasPlus(identity,now)) throw new MemberError("PLUS_REQUIRED", "Off-grid browsing is included with Plus.",402);
     next[key] = p[key] as boolean;
   }
   if(p.discovery !== undefined) {
@@ -45,7 +44,7 @@ export function publicMember(preferences: MemberPreferences | undefined, verific
   const member={...DEFAULT_MEMBER,...preferences};
   return {interests:member.interests,prompts:member.prompts,...(member.intent && (member.intentExpiresAtMs ?? 0)>now ? {intent:member.intent,intentExpiresAtMs:member.intentExpiresAtMs} : {}),photoVerified:Boolean(mainPhotoMediaId && verification?.status === "approved" && verification.mainPhotoMediaId === mainPhotoMediaId)};
 }
-export function hidesDiscovery(member: MemberPreferences | undefined, identity: PlusIdentity): boolean { return member?.incognito === true && hasPlus(identity); }
+export function hidesDiscovery(member: MemberPreferences | undefined, identity: PlusIdentity): boolean { return member?.hideProfile === true || member?.incognito === true; }
 export function hidesPresence(member: MemberPreferences | undefined, identity: PlusIdentity): boolean { return member?.hideLocation === true || hidesDiscovery(member,identity); }
 export function makePlan(input: unknown, hostId: string, id: string, now=Date.now()): CommunityPlan {
   if(!input || typeof input !== "object") throw new MemberError("INVALID_INPUT","Invalid plan.");

@@ -31,6 +31,8 @@ jobs:
         run: npm ci
 
       - name: Build web site from source
+        env:
+          DUALMODE_PUBLIC_APP_URL: ${{ vars.RED_DOOR_PUBLIC_APP_URL || 'https://robbiecalvin.github.io/red-door/' }}
         run: npm run build
 
       - name: Prepare Pages artifact
