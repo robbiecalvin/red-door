@@ -29,6 +29,8 @@ export type BlockRecord = Readonly<{
 
 export type BlockServiceDeps = Readonly<{
   nowMs?: () => number;
+  initialBlocks?: ReadonlyArray<{blockerKey:string;blockedKey:string}>;
+  onStateChanged?(blocks:{blockerKey:string;blockedKey:string}[]):void;
 }>;
 
 export type BlockService = Readonly<{
@@ -101,6 +103,8 @@ export function createBlockService(deps: BlockServiceDeps = {}): BlockService {
     if (existing.size === 0) blockedByBlocker.delete(blockerKey);
   }
 
+  for(const record of deps.initialBlocks ?? []){blockedEdges.add(edgeKey(record.blockerKey,record.blockedKey));addIndex(record.blockerKey,record.blockedKey);}
+  function persist(){const records=[];for(const [blockerKey,blocked] of blockedByBlocker)for(const blockedKey of blocked)records.push({blockerKey,blockedKey});deps.onStateChanged?.(records);}
   return {
     block(session: Session, targetKey: string): Result<BlockRecord> {
       const valid = validateSession(session);
@@ -119,6 +123,7 @@ export function createBlockService(deps: BlockServiceDeps = {}): BlockService {
       const key = edgeKey(blockerKey, blockedKey);
       blockedEdges.add(key);
       addIndex(blockerKey, blockedKey);
+      persist();
 
       return ok({ blockerKey, blockedKey, createdAtMs: nowMs() });
     },
@@ -136,6 +141,7 @@ export function createBlockService(deps: BlockServiceDeps = {}): BlockService {
       const key = edgeKey(blockerKey, blockedKey);
       blockedEdges.delete(key);
       removeIndex(blockerKey, blockedKey);
+      persist();
       return ok(undefined);
     },
 

@@ -1,3 +1,6 @@
+import { actorKey } from "../../../shared/identity";
+import { useLiveInbox } from "./useLiveInbox";
+import { disablePush } from "./pushNotifications";
 import { isPlusFeature, type PlusFeature } from "./PlusShowcase";
 import { NOTIFICATION_ENABLED, NOTIFICATION_DISCREET } from "./NotificationSettings";
 import afterDark from "../assets/after-dark.png";
@@ -343,6 +346,7 @@ export function App(): React.ReactElement {
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [promoCode, setPromoCode] = useState("");
+  const liveInboxStatus=useLiveInbox(session,resolveApiBasePath());
   const [plusFeature, setPlusFeature] = useState<PlusFeature | undefined>();
   const [plusOpen, setPlusOpen] = useState(false);
   const [registerAge, setRegisterAge] = useState<string>("");
@@ -466,7 +470,7 @@ export function App(): React.ReactElement {
       try {
         const res = await api.listActivePresence(activeSession.sessionToken);
         if (cancelled) return;
-        const meKey = activeSession.userId ? `user:${activeSession.userId}` : `session:${activeSession.sessionToken}`;
+        const meKey = actorKey(activeSession);
         const list = Array.isArray(res.presence) ? res.presence : [];
         setOnlineCount(list.filter((p) => p.key !== meKey).length);
       } catch {
@@ -490,7 +494,7 @@ export function App(): React.ReactElement {
     }
     let cancelled = false;
     const activeSession = session;
-    const meKey = activeSession.userId ? `user:${activeSession.userId}` : `session:${activeSession.sessionToken}`;
+    const meKey = actorKey(activeSession);
 
     async function safeListThreads(chatKind: "cruise" | "date"): Promise<ReadonlyArray<Readonly<{ otherKey: string }>>> {
       try {
@@ -501,8 +505,8 @@ export function App(): React.ReactElement {
       }
     }
 
-    async function refreshUnreadCount(): Promise<void> {
-      if (cancelled || unreadSyncInFlightRef.current || document.hidden) return;
+    async function refreshUnreadCount(force=false): Promise<void> {
+      if (cancelled || unreadSyncInFlightRef.current || (!force && document.hidden)) return;
       unreadSyncInFlightRef.current = true;
       try {
         const [cruiseThreads, dateThreads] = await Promise.all([safeListThreads("cruise"), safeListThreads("date")]);
@@ -552,6 +556,7 @@ export function App(): React.ReactElement {
       }
     }
 
+    const live=()=>void refreshUnreadCount(true);window.addEventListener("rd:inbox-update",live);
     void refreshUnreadCount();
     const onVisibilityChange = (): void => {
       if (!document.hidden) void refreshUnreadCount();
@@ -561,7 +566,7 @@ export function App(): React.ReactElement {
     }, 2500);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      cancelled = true;
+      cancelled = true;window.removeEventListener("rd:inbox-update",live);
       unreadSyncInFlightRef.current = false;
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -569,6 +574,7 @@ export function App(): React.ReactElement {
   }, [api, session]);
 
   function onLogout(): void {
+    if(session?.userId)void disablePush(api,session).catch(()=>{});
     clearPersistedSessionToken();
     setSessionToken(null);
     setSession(null);
@@ -855,7 +861,7 @@ export function App(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [api, ageYears, registerAge, registerDisplayName, session]);
+  }, [api, ageYears, registerAge, registerDisplayName, session?.sessionToken, session?.ageVerified, session?.userType, session?.userId]);
 
   const setTabAndRoute = useCallback((tab: TopTab, nextDiscoverScreen?: DiscoverScreen): void => {
     if (FULL_PAGE_TAB_NAV) {
@@ -1020,7 +1026,8 @@ export function App(): React.ReactElement {
       ) : null}
 
       {showBottomNav ? <nav className="rd-desktop-nav" aria-label="Main navigation">{([
-        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["profile", "user", "Profile"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
+        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["groups", "groups", "Community"], ["profile", "user", "Profile"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
+      <div className="rd-inbox-live-status" role="status" hidden={activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
       >
@@ -1428,6 +1435,7 @@ export function App(): React.ReactElement {
           >
             <Icon name="board" className="rd-ui-icon rd-mobile-nav-image" /><span>Board</span>
           </button>
+          <button className={`rd-mobile-nav-btn ${activeTab === "groups" ? "is-active" : ""}`} aria-label="Community plans" aria-current={activeTab === "groups" ? "page" : undefined} onClick={()=>setTabAndRoute("groups")}><Icon name="groups" className="rd-ui-icon"/><span>Community</span></button>
         </nav>
       ) : null}
     </div>

@@ -1,3 +1,5 @@
+import { actorKey } from "../../../shared/identity";
+import type { PublicMember } from "../../../shared/member";
 import { type AnalyticsSummary } from "../../../shared/analytics";
 import { hasPlus, limits, launchGrant, type PlusData, type SavedSearch } from "../../../shared/plus";
 export type ServiceError = Readonly<{
@@ -7,6 +9,7 @@ export type ServiceError = Readonly<{
 }>;
 
 export type Session = Readonly<{
+  publicKey?: string;
   sessionToken: string;
   userType: "guest" | "registered" | "subscriber";
   tier: "free" | "premium";
@@ -80,6 +83,7 @@ export type ProfileCutStatus = "cut" | "uncut";
 export type ProfilePosition = "top" | "bottom" | "side";
 
 export type UserProfile = Readonly<{
+  member?: PublicMember;
   userId: string;
   displayName: string;
   age: number;
@@ -101,6 +105,7 @@ export type UserProfile = Readonly<{
 }>;
 
 export type PublicProfile = Readonly<{
+  member?: PublicMember;
   userId: string;
   displayName: string;
   age: number;
@@ -153,7 +158,7 @@ export type ProfileUpdate = Readonly<{
   travelMode?: unknown;
 }>;
 
-export type MediaKind = "photo_main" | "photo_gallery" | "photo_private" | "video";
+export type MediaKind = "photo_main" | "photo_gallery" | "photo_private" | "photo_verification" | "video";
 
 export type InitiateMediaUploadResponse = Readonly<{
   mediaId: string;
@@ -2374,7 +2379,7 @@ function writeState(state: LocalState, persist = true): void {
 }
 
 function actorKeyForSession(session: Session): string {
-  return session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  return actorKey(session);
 }
 
 function requireSession(state: LocalState, sessionToken: string): Session {
@@ -2521,6 +2526,8 @@ export async function uploadToLocalSignedUrl(uploadUrl: string, file: Blob, mime
 }
 
 function createLocalApiClient(): Readonly<{
+  memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T>;
+  memberPhoto(token: string, userId: string): Promise<Blob>;
   requestPasswordReset(email: string): Promise<{ message: string }>;
   confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
   getPrivacy(sessionToken: string): Promise<{ analyticsConsent: boolean }>;
@@ -2586,7 +2593,7 @@ function createLocalApiClient(): Readonly<{
   reportMessage(sessionToken: string, messageId: string, reason: string, targetKey?: string): Promise<any>;
   getMyProfile(sessionToken: string): Promise<{ profile: UserProfile }>;
   getPublicProfiles(): Promise<{ profiles: ReadonlyArray<PublicProfile> }>;
-  getPublicProfile(userId: string): Promise<{ profile: PublicProfile }>;
+  getPublicProfile(userId: string, sessionToken?: string): Promise<{ profile: PublicProfile }>;
   getPublicMediaUrl(mediaId: string): Promise<{ downloadUrl: string }>;
   upsertMyProfile(sessionToken: string, payload: ProfileUpdatePayload): Promise<{ profile: UserProfile }>;
   updateProfileMediaReferences(
@@ -2670,6 +2677,8 @@ function createLocalApiClient(): Readonly<{
   const feeCents = 499;
 
   return {
+    async memberRequest<T>() { throw {code:"BACKEND_REQUIRED",message:"This community feature needs a connected Red Door backend."}; return {} as T; },
+    async memberPhoto() { throw new Error("Photo verification needs a connected backend."); return new Blob(); },
     async requestPasswordReset() { throw { message: "Account recovery requires the live backend and email delivery." }; },
     async confirmPasswordReset() { throw { message: "Password reset links must be used with the live backend." }; },
     async getPrivacy(token) { const state = readState(), session = requireUserSession(state, token); return { analyticsConsent: state.usersById[session.userId!]?.plusData?.analyticsConsent === true }; },
@@ -3186,7 +3195,7 @@ function createLocalApiClient(): Readonly<{
         )
       };
     },
-    async getPublicProfile(userId: string): Promise<{ profile: PublicProfile }> {
+    async getPublicProfile(userId: string, sessionToken?: string): Promise<{ profile: PublicProfile }> {
       const state = readState();
       if (userId.startsWith("guest:")) throw { code: "PROFILE_NOT_FOUND", message: "Profile not found." } as ServiceError;
       const banned = state.usersById[userId];
@@ -3984,6 +3993,8 @@ function createLocalApiClient(): Readonly<{
 }
 
 export function apiClient(basePath = "/api"): Readonly<{
+  memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T>;
+  memberPhoto(token: string, userId: string): Promise<Blob>;
   requestPasswordReset(email: string): Promise<{ message: string }>;
   confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
   getPrivacy(sessionToken: string): Promise<{ analyticsConsent: boolean }>;
@@ -4049,7 +4060,7 @@ export function apiClient(basePath = "/api"): Readonly<{
   reportMessage(sessionToken: string, messageId: string, reason: string, targetKey?: string): Promise<any>;
   getMyProfile(sessionToken: string): Promise<{ profile: UserProfile }>;
   getPublicProfiles(): Promise<{ profiles: ReadonlyArray<PublicProfile> }>;
-  getPublicProfile(userId: string): Promise<{ profile: PublicProfile }>;
+  getPublicProfile(userId: string, sessionToken?: string): Promise<{ profile: PublicProfile }>;
   getPublicMediaUrl(mediaId: string): Promise<{ downloadUrl: string }>;
   upsertMyProfile(sessionToken: string, payload: ProfileUpdatePayload): Promise<{ profile: UserProfile }>;
   updateProfileMediaReferences(
@@ -4141,6 +4152,8 @@ export function apiClient(basePath = "/api"): Readonly<{
   }
 
   return {
+    async memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T> { const response=await fetch(`${basePath}${route}`,{method:method ?? (data===undefined?"GET":"POST"),headers:headers(token),body:data===undefined?undefined:JSON.stringify(data),cache:"no-store"});return await readJsonOrThrow(response) as T; },
+    async memberPhoto(token,userId) {const response=await fetch(`${basePath}/admin/photo-verifications/${encodeURIComponent(userId)}/photo`,{headers:headers(token),cache:"no-store"});if(!response.ok){await readJsonOrThrow(response);throw new Error("Photo unavailable.");}return response.blob();},
     async requestPasswordReset(email) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/request`, { method: "POST", headers: headers(), body: JSON.stringify({ email }) })) as Promise<{ message: string }>; },
     async confirmPasswordReset(token, password) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/confirm`, { method: "POST", headers: headers(), body: JSON.stringify({ token, password }) })) as Promise<{ ok: true }>; },
     async getPrivacy(token) { return readJsonOrThrow(await fetch(`${basePath}/account/privacy`, { headers: headers(token) })) as Promise<{ analyticsConsent: boolean }>; },
@@ -4392,10 +4405,10 @@ export function apiClient(basePath = "/api"): Readonly<{
       });
       return (await readJsonOrThrow(res)) as { profiles: ReadonlyArray<PublicProfile> };
     },
-    async getPublicProfile(userId: string): Promise<{ profile: PublicProfile }> {
+    async getPublicProfile(userId: string, sessionToken?: string): Promise<{ profile: PublicProfile }> {
       const res = await fetch(`${basePath}/profile/public/${encodeURIComponent(userId)}`, {
         method: "GET",
-        headers: headers()
+        headers: headers(sessionToken)
       });
       return (await readJsonOrThrow(res)) as { profile: PublicProfile };
     },

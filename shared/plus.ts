@@ -1,3 +1,4 @@
+import type { MemberPreferences, PhotoVerification } from "./member";
 export const PLUS_PRICE_CENTS = 799;
 export const PLUS_CURRENCY = "cad";
 export const LAUNCH_CODE = "THEREDDOORLAUNCH";
@@ -14,7 +15,7 @@ export function launchGrant(code: unknown, now = Date.now()): number | undefined
   if (now >= LAUNCH_END_MS) throw new Error("This promotion expired on January 1, 2027 (Pacific time).");
   return LAUNCH_END_MS;
 }
-export const PLUS_FEATURES = ["Travel mode", "Advanced filters", "Saved searches", "100 favorites and 50 pinned chats", "20-photo private album with sharing controls", "12 gallery photos and profile video", "Read receipts", "Group chats"] as const;
+export const PLUS_FEATURES = ["Travel mode", "Advanced filters", "Saved searches", "100 favorites and 50 pinned chats", "20-photo private album with sharing controls", "12 gallery photos and profile video", "Read receipts", "Group chats", "Off-grid browsing", "Remembered discovery preferences"] as const;
 export function limits(identity: PlusIdentity, now = Date.now()) {
   return hasPlus(identity, now)
     ? { favorites: 100, pins: 50, gallery: 12, privateAlbum: 20 }
@@ -22,6 +23,9 @@ export function limits(identity: PlusIdentity, now = Date.now()) {
 }
 export type SavedSearch = { name: string; filters: Record<string, string | boolean> };
 export type PlusData = {
+  member?: MemberPreferences;
+  photoVerification?: PhotoVerification;
+  pushSubscriptions?: { endpoint: string; keys: { p256dh: string; auth: string } }[];
   analyticsConsent?: boolean;
   savedSearches?: SavedSearch[];
   pinnedKeys?: string[];

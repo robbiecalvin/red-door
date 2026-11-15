@@ -247,4 +247,75 @@ describe("Core API and payment lifecycle smoke checks", () => {
   it("Given a private photo object key When requested through the chat-media signer Then rejects it", async () => {
     await request(`/chat/media/url?objectKey=${encodeURIComponent(`private-profiles/${alice.id}/photo.png`)}`, undefined, alice.token, undefined, 400);
   });
+  it("Given community preferences When public discovery is requested Then exposes interests and expiring intent but no private settings",async()=>{
+    await request("/members/me",undefined,undefined,undefined,401);
+    const guest=await request("/auth/guest",{});await request("/auth/verify-age",{sessionToken:guest.session.sessionToken,ageYears:25});
+    await request("/members/me",undefined,guest.session.sessionToken,undefined,403);
+    const member=await request("/members/me",{intent:"chatting",intentHours:1,interests:["Coffee","Hiking"],prompts:[{prompt:"Ask me about…",answer:"My favorite trail"}]},alice.token,"PUT");
+    expect(member.preferences.intentExpiresAtMs).toBeGreaterThan(Date.now());
+    const profile=await request(`/profile/public/${alice.id}`);expect(profile.profile.member.interests).toEqual(["Coffee","Hiking"]);expect(profile.profile.member.intent).toBe("chatting");expect(profile.profile.member.hideLocation).toBeUndefined();
+    await request("/members/me",{incognito:true},bob.token,"PUT",402);
+    await request("/members/me",{discovery:{intent:"",interest:"Coffee",verifiedOnly:false}},bob.token,"PUT",402);
+  });
+  it("Given a free member hiding location When presence is updated Then hides coordinates from HTTP and realtime discovery",async()=>{
+    await request("/members/me",{hideLocation:true},alice.token,"PUT");
+    await request("/presence",{lat:49.28,lng:-123.12},alice.token);
+    const list=await request("/presence/active",undefined,bob.token);expect(list.presence.some((p:any)=>p.key===`user:${alice.id}`)).toBe(false);
+    await request("/members/me",{hideLocation:false},alice.token,"PUT");
+    expect((await request("/presence/active",undefined,bob.token)).presence.some((p:any)=>p.key===`user:${alice.id}`)).toBe(true);
+  });
+  it("Given Plus off-grid browsing When listing profiles Then hides the profile but preserves existing connections",async()=>{
+    const member=await account("offgrid",false,"THEREDDOORLAUNCH");
+    await request("/profile/me",{displayName:"Offgrid",age:26,bio:"Hello"},member.token,"PUT");
+    await request("/members/me",{incognito:true,discovery:{intent:"chatting",interest:"Coffee",verifiedOnly:false}},member.token,"PUT");
+    expect((await request("/profile/public")).profiles.some((p:any)=>p.userId===member.id)).toBe(false);
+    await request(`/profile/public/${member.id}`,undefined,undefined,undefined,404);
+    await request("/chat/send",{chatKind:"cruise",toKey:`user:${alice.id}`,text:"Hello from an existing connection"},member.token);
+    expect((await request(`/profile/public/${member.id}`,undefined,alice.token)).profile.userId).toBe(member.id);
+    await request("/members/me",{incognito:false},member.token,"PUT");
+    expect((await request("/profile/public")).profiles.some((p:any)=>p.userId===member.id)).toBe(true);
+  });
+  it("Given photo review When proof is submitted Then keeps it private and binds admin approval to the current main photo",async()=>{
+    async function upload(kind:string){const bytes=Buffer.from("test image bytes");const init=await request("/profile/media/initiate",{kind,mimeType:"image/png",sizeBytes:bytes.length},alice.token);expect((await fetch(init.uploadUrl,{method:"PUT",headers:{"content-type":"image/png"},body:bytes})).status).toBe(200);await request("/profile/media/complete",{mediaId:init.mediaId},alice.token);return init;}
+    const main=await upload("photo_main");const challenge=await request("/members/verification/challenge",{},alice.token);expect(challenge.verification.challenge).toMatch(/^[A-F0-9]{6}$/);
+    const proof=await upload("photo_verification");await request("/members/verification/submit",{mediaId:proof.mediaId},alice.token);
+    await request(`/media/public/${proof.mediaId}/url`,undefined,undefined,undefined,400);
+    expect((await fetch(base+`/storage/local/download/${encodeURIComponent(proof.objectKey)}`)).status).toBe(403);
+    await request("/admin/photo-verifications",undefined,bob.token,undefined,403);
+    expect((await fetch(base+`/admin/photo-verifications/${alice.id}/photo`,{headers:{"x-session-token":bob.token}})).status).toBe(403);
+    const pending=await request("/admin/photo-verifications",undefined,admin.token);expect(pending.requests.some((r:any)=>r.userId===alice.id)).toBe(true);
+    expect((await fetch(base+`/admin/photo-verifications/${alice.id}/photo`,{headers:{"x-session-token":admin.token}})).status).toBe(200);
+    await request(`/admin/photo-verifications/${alice.id}/review`,{approve:true},admin.token);
+    expect((await request(`/profile/public/${alice.id}`)).profile.member.photoVerified).toBe(true);
+    expect((await fetch(base+`/admin/photo-verifications/${alice.id}/photo`,{headers:{"x-session-token":admin.token}})).status).toBe(404);
+    await upload("photo_main");expect((await request(`/profile/public/${alice.id}`)).profile.member.photoVerified).toBe(false);
+  });
+  it("Given local plans When members RSVP or cancel Then protects attendees and enforces ownership and blocks",async()=>{
+    const plan=await request("/community/plans",{title:"Coffee and conversation",description:"A relaxed public meetup",city:"Vancouver",venue:"Public café",category:"Coffee",startsAtMs:Date.now()+3600000,endsAtMs:Date.now()+7200000},alice.token);
+    await request(`/community/plans/${plan.id}/rsvp`,{join:true},bob.token);await request(`/community/plans/${plan.id}/rsvp`,{join:true},bob.token);
+    const list=await request("/community/plans?city=Vancouver&category=Coffee",undefined,bob.token);const row=list.plans.find((p:any)=>p.id===plan.id);expect(row.attendeeCount).toBe(2);expect(row.joined).toBe(true);expect(row.attendees).toBeUndefined();
+    await request(`/community/plans/${plan.id}`,undefined,bob.token,"DELETE",403);
+    await request("/block",{targetKey:`user:${alice.id}`},bob.token);expect((await request("/community/plans",undefined,bob.token)).plans.some((p:any)=>p.id===plan.id)).toBe(false);await request(`/community/plans/${plan.id}/rsvp`,{join:true},bob.token,undefined,404);await request("/unblock",{targetKey:`user:${alice.id}`},bob.token);
+    await request(`/community/plans/${plan.id}/rsvp`,{join:false},bob.token);await request(`/community/plans/${plan.id}`,undefined,alice.token,"DELETE");expect((await request("/community/plans",undefined,bob.token)).plans.some((p:any)=>p.id===plan.id)).toBe(false);
+  });
+  it("Given push and safety endpoints When called Then validates subscription destinations and restricts moderator access",async()=>{
+    await request("/notifications/push",{endpoint:"https://127.0.0.1/private",keys:{}},alice.token,undefined,400);
+    expect((await request("/notifications/push",undefined,alice.token)).publicKey).toBeTruthy();
+    await request("/admin/safety-reports",undefined,bob.token,undefined,403);
+    await request("/report/user",{targetKey:`user:${alice.id}`,reason:"Community plan safety test"},bob.token);
+    expect((await request("/admin/safety-reports",undefined,admin.token)).reports.some((r:any)=>r.reason==="Community plan safety test")).toBe(true);
+  });
+
+  it("Given a guest When appearing in presence, messages, or attachment paths Then never publishes the login credential",async()=>{
+    const created=await request("/auth/guest",{}),token=created.session.sessionToken,publicKey=created.session.publicKey;
+    expect(publicKey).toMatch(/^session:[a-f0-9]{64}$/);expect(publicKey).not.toContain(token);
+    expect((await request("/auth/verify-age",{sessionToken:token,ageYears:25})).session.publicKey).toBe(publicKey);
+    const presence=await request("/presence",{lat:49.28,lng:-123.12},token);expect(presence.presence.key).toBe(publicKey);expect(JSON.stringify(presence)).not.toContain(token);
+    await request("/session",undefined,publicKey.slice(8),undefined,401);
+    const sent=await request("/chat/send",{chatKind:"cruise",toKey:`user:${bob.id}`,text:"Guest hello"},token);expect(sent.message.fromKey).toBe(publicKey);expect(JSON.stringify(sent)).not.toContain(token);
+    await request("/chat/send",{chatKind:"cruise",toKey:publicKey,text:"Reply to Anon"},bob.token);expect((await request(`/chat/messages?chatKind=cruise&otherKey=user:${bob.id}`,undefined,token)).messages).toHaveLength(2);
+    const upload=await request("/chat/media/initiate",{mimeType:"image/png",sizeBytes:1},token);expect(upload.objectKey).not.toContain(token);
+    await request("/block",{targetKey:`user:${bob.id}`},token);await request("/chat/send",{chatKind:"cruise",toKey:publicKey,text:"Blocked reply"},bob.token,undefined,403);
+  });
+
 });

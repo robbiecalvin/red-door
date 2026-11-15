@@ -24,6 +24,17 @@ The active frontend product emphasis is Cruise mode. Date and Hybrid logic exist
 
 Plus now includes interactive benefit previews, a Free/Plus comparison, clear CAD $7.99 monthly pricing, and contextual upgrade entry points for filters, Travel mode, chat limits, and profile video. Active members get shortcuts into their benefits. Guest members can start registration directly from the Plus screen.
 
+## Community and connection features
+
+- Temporary intent statuses, shared interests, profile prompts, and quoted photo/message replies.
+- Live inbox updates with polling recovery and opt-in discreet Web Push notifications.
+- Private photo review with admin approval, free location hiding, and persistent safety reports/blocks.
+- Local plans with city/category filters, public venues, RSVPs, and cancellation/reporting controls.
+- Guided profile completion, useful empty states, and Plus remembered discovery settings.
+- Opaque public guest IDs protect guest credentials; guest display names remain Anon.
+
+See [rollout validation and deployment notes](docs/community-rollout-validation.md).
+
 ## Tech stack
 
 - Frontend: React 18, TypeScript, Vite 5, MapLibre GL

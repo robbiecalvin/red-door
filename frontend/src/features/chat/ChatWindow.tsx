@@ -1,3 +1,4 @@
+import { peekReply, clearReply } from "../../app/replyDraft";
 import { Sheet } from "../../app/Sheet";
 import { displayNameForIdentity, isAnonymousIdentity } from "../../../../shared/identity";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -142,15 +143,19 @@ export function ChatWindow({
     };
   }, [client, mediaObjectKeys, mediaUrlsByKey]);
 
+  const [replyQuote,setReplyQuote]=useState(()=>peekReply(peerKey));
+  useEffect(()=>{clearReply(peerKey);const reply=(event:Event)=>{const detail=(event as CustomEvent<{peerKey:string;quote:string}>).detail;if(detail.peerKey===peerKey)setReplyQuote(detail.quote);};window.addEventListener("rd:compose-reply",reply);return()=>window.removeEventListener("rd:compose-reply",reply);},[peerKey]);
   const [failedMessage, setFailedMessage] = useState<{text:string; media?:ChatMediaAttachment} | null>(null);
   async function onSend(media?: ChatMediaAttachment, retryText?: string): Promise<void> {
-    const text = retryText ?? draft.trim();
+    const draftText=draft.trim();
+    const text = retryText ?? (replyQuote && (draftText || media) ? `Reply to “${replyQuote}”\n\n${draftText}` : draftText);
     if (text.length === 0 && !media) return;
     setSending(true);
     setLastError(null);
     try {
       await client.sendMessage(chatKind, peerKey, text, media);
-      setDraft(current => current.trim() === text ? "" : current);
+      setDraft(current => current.trim() === draftText ? "" : current);
+      setReplyQuote("");
       setFailedMessage(null);
     } catch (e) {
       const err = e as ServiceError;
@@ -535,6 +540,7 @@ export function ChatWindow({
                   ) : null}
                 </div>
                 {!boardMode ? <div style={{ fontSize: 10, color: "#AAAAAA" }}>{formatTime(m.createdAtMs)}</div> : null}
+                {!boardMode ? <button type="button" className="rd-message-reply" aria-label="Reply to message" onClick={()=>setReplyQuote(m.media ? `${m.media.kind === "image" ? "Photo" : m.media.kind === "video" ? "Video" : "Voice message"}${m.text ? `: ${m.text.slice(0,120)}` : ""}` : m.text.slice(0,180))}>Reply</button> : null}
                 {mine && !boardMode ? (
                   <div style={{ fontSize: 10, color: "#ff99a3" }}>
                     {readReceipts && typeof m.readAtMs === "number" ? "Read" : typeof m.deliveredAtMs === "number" ? "Delivered" : ""}
@@ -547,6 +553,7 @@ export function ChatWindow({
       </div>
 
       {sending ? <div role="status" className="rd-sending-status">Sending…</div> : null}
+      {replyQuote ? <div className="rd-reply-composer"><div><small>Replying to</small><p>{replyQuote}</p></div><button className="rd-btn" aria-label="Cancel reply" onClick={()=>setReplyQuote("")}>×</button></div> : null}
       <form
         onSubmit={(e) => {
           e.preventDefault();

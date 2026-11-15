@@ -18,6 +18,7 @@ function encodeKey(key: string): string {
 
 export function createPostgresObjectStorage(pool: Pool): PostgresObjectStorage {
   return {
+    async deleteObject({key}) { await pool.query("DELETE FROM media_objects WHERE object_key=$1",[key]); },
     async presignPutObject(params) {
       const mime = encodeURIComponent(params.mimeType);
       return `/api/storage/postgres/upload/${encodeKey(params.key)}?mimeType=${mime}`;

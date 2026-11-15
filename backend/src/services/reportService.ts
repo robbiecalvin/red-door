@@ -38,6 +38,8 @@ export type ReportRecord = Readonly<{
 
 export type ReportServiceDeps = Readonly<{
   nowMs?: () => number;
+  initialReports?: ReadonlyArray<ReportRecord>;
+  onStateChanged?(reports:ReportRecord[]):void;
 }>;
 
 export type ReportService = Readonly<{
@@ -87,7 +89,7 @@ function validateSession(session: Session): Result<void> {
 
 export function createReportService(deps: ReportServiceDeps = {}): ReportService {
   const nowMs = deps.nowMs ?? (() => Date.now());
-  const reports: ReportRecord[] = [];
+  const reports: ReportRecord[] = [...(deps.initialReports ?? [])];
 
   return {
     reportUser(session: Session, targetKey: string, reason: string): Result<ReportRecord> {
@@ -109,6 +111,7 @@ export function createReportService(deps: ReportServiceDeps = {}): ReportService
         createdAtMs: nowMs()
       };
       reports.push(record);
+      deps.onStateChanged?.([...reports]);
       return ok(record);
     },
 
@@ -135,6 +138,7 @@ export function createReportService(deps: ReportServiceDeps = {}): ReportService
         createdAtMs: nowMs()
       };
       reports.push(record);
+      deps.onStateChanged?.([...reports]);
       return ok(record);
     },
 

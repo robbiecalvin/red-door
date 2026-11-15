@@ -1,3 +1,8 @@
+import { actorKey } from "../../../shared/identity";
+import { CommunityPanel } from "./CommunityPanel";
+import { MemberEditor, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentControl, IntentBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, FirstConnections, DiscoveryChoices, type DiscoveryChoice } from "./MemberPanels";
+import type { PublicMember } from "../../../shared/member";
+import { queueReply } from "./replyDraft";
 import { PlusMembershipCard } from "./PlusShowcase";
 import { displayNameForIdentity, isAnonymousIdentity } from "../../../shared/identity";
 import { Sheet } from "./Sheet";
@@ -66,6 +71,7 @@ type RouterErrorScope = "discover" | "threads" | "ads" | "groups" | "cruise" | "
 
 type ProfileDraft = Readonly<{
   displayName: string;
+  member?: PublicMember;
   age: string;
   bio: string;
   heightInches: string;
@@ -458,11 +464,13 @@ function CruiseSurface({
   const [selectedProfileKey, setSelectedProfileKey] = useState<string | null>(null);
   const [selfCoords, setSelfCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [snapshotPresence, setSnapshotPresence] = useState<ReadonlyArray<CruisePresenceUpdate>>([]);
+  useEffect(()=>{const remove=(event:Event)=>{const detail=(event as CustomEvent<{key:string;hideProfile?:boolean}>).detail,key=detail?.key;setSnapshotPresence(prev=>prev.filter(p=>p.key!==key));if(detail?.hideProfile)setPublicProfiles(prev=>prev.filter(p=>`user:${p.userId}`!==key));};window.addEventListener("rd:presence-removed",remove);return()=>window.removeEventListener("rd:presence-removed",remove);},[]);
   const [peerProfileByKey, setPeerProfileByKey] = useState<Record<string, { displayName?: string; age?: number }>>({});
   const [profilesLoading, setProfilesLoading] = useState(true);
   const [publicProfiles, setPublicProfiles] = useState<ReadonlyArray<{
     userId: string;
     displayName: string;
+    member?: PublicMember;
     age: number;
     bio: string;
     stats?: {
@@ -484,6 +492,7 @@ function CruiseSurface({
   const [selectedPublicProfile, setSelectedPublicProfile] = useState<{
     userId: string;
     displayName: string;
+    member?: PublicMember;
     age: number;
     bio: string;
     stats?: {
@@ -592,7 +601,7 @@ function CruiseSurface({
     };
   }, []);
 
-  const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const meKey = actorKey(session);
   const visiblePublicProfiles = useMemo(
     () => publicProfiles.filter((profile) => !blockedKeys.has(chatKeyFromProfileUserId(profile.userId))),
     [blockedKeys, publicProfiles]
@@ -704,7 +713,7 @@ function CruiseSurface({
     void Promise.all(
       missing.map(async (row) => {
         try {
-          const res = await api.getPublicProfile(row.profileId);
+          const res = await api.getPublicProfile(row.profileId, session.sessionToken);
           return { key: row.key, displayName: res.profile?.displayName as string | undefined, age: res.profile?.age as number | undefined };
         } catch {
           return null;
@@ -734,7 +743,7 @@ function CruiseSurface({
       if (session.userType === "guest") {
         if (!cancelled) {
           setFavorites(new Set());
-          setBlockedKeys(new Set());
+          try { const blocked=await api.listBlocked(session.sessionToken);if(!cancelled)setBlockedKeys(new Set(blocked.blocked)); } catch { if(!cancelled)setBlockedKeys(new Set()); }
         }
         return;
       }
@@ -751,12 +760,13 @@ function CruiseSurface({
         if (!cancelled) setBlockedKeys(new Set());
       }
     }
+    const live=()=>void refreshDiscoveryState();window.addEventListener("rd:member-updated",live);
     void refreshDiscoveryState();
     const id = window.setInterval(() => {
       void refreshDiscoveryState();
     }, 8_000);
     return () => {
-      cancelled = true;
+      cancelled = true;window.removeEventListener("rd:member-updated",live);
       window.clearInterval(id);
     };
   }, [api, session.sessionToken, session.userType]);
@@ -950,7 +960,7 @@ function CruiseSurface({
           videoMediaId: meProfile.profile.videoMediaId
         });
       } else {
-        const res = await api.getPublicProfile(profileId);
+        const res = await api.getPublicProfile(profileId, session.sessionToken);
         if (requestSeq !== profileRequestSeqRef.current) return;
         const mediaIds = [
           res.profile.mainPhotoMediaId,
@@ -1012,10 +1022,6 @@ function CruiseSurface({
 
   async function toggleBlockFromProfile(profileChatKey: string): Promise<void> {
     if (!profileChatKey.trim() || profileChatKey === meKey) return;
-    if (session.userType === "guest") {
-      setLastError("Anonymous users cannot block users.");
-      return;
-    }
     const wasBlocked = blockedKeys.has(profileChatKey);
     try {
       if (wasBlocked) {
@@ -1248,6 +1254,7 @@ function CruiseSurface({
 
   return (
     <div className={`rd-explore-surface ${mobileTab === "map" ? "is-map" : "is-people"}`}>
+      <IntentControl api={api} session={session} />
       <div className="rd-explore-toolbar"><div><span className="rd-eyebrow">EXPLORE</span><strong>{travelCenter ? "Your travel location" : selfCoords ? "People nearby" : "Discover people"}</strong></div><div className="rd-view-switch" aria-label="Explore view"><button aria-pressed={mobileTab === "map"} onClick={() => onDiscoverScreenChange("map")}>Map</button><button aria-pressed={mobileTab === "chat"} onClick={() => onDiscoverScreenChange("chat")}>People</button></div><button className="rd-btn" onClick={() => window.dispatchEvent(new CustomEvent("rd:discover-control", {detail:{action:"open_filters"}}))}>Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button></div>
       <div className="rd-explore-layout"><div className="rd-map-pane">{mobileTab === "map" ? mapPanel : null}</div><div className="rd-people-pane">{chatPanel}</div></div>
 
@@ -1303,23 +1310,25 @@ function CruiseSurface({
                       🔥 FIRE
                     </button>
                   ) : null}
-                  {selectedPublicProfile && selectedPublicProfile.userId !== (session.userId ?? "") ? (
+                  {selectedProfileKey !== meKey ? (
                     <button
                       type="button"
                       style={{
                         ...buttonSecondary(false),
-                        color: blockedKeys.has(chatKeyFromProfileUserId(selectedPublicProfile.userId)) ? "#ff9aa3" : "#ffd4d8",
+                        color: blockedKeys.has(selectedProfileKey) ? "#ff9aa3" : "#ffd4d8",
                         borderColor: "rgba(255,120,130,0.62)",
                         minWidth: 126
                       }}
-                      onClick={() => void toggleBlockFromProfile(chatKeyFromProfileUserId(selectedPublicProfile.userId))}
+                      onClick={() => void toggleBlockFromProfile(selectedProfileKey)}
                     >
-                      {blockedKeys.has(chatKeyFromProfileUserId(selectedPublicProfile.userId)) ? "UNBLOCK" : "BLOCK"}
+                      {blockedKeys.has(selectedProfileKey) ? "UNBLOCK" : "BLOCK"}
                     </button>
                   ) : null}
                   <button type="button" style={buttonSecondary(false)} onClick={() => setSelectedProfileKey(null)}>CLOSE</button>
                 </div>
               </div>
+              <ReportMemberButton api={api} session={session} peerKey={selectedProfileKey}/><ProfileConversation member={selectedPublicProfile?.member} onReply={excerpt => {queueReply(selectedProfileKey,excerpt);onOpenThreadRequested(selectedProfileKey);setSelectedProfileKey(null);}} />
+              {selectedPublicProfile?.mainPhotoMediaId ? <button className="rd-btn" onClick={()=>{queueReply(selectedProfileKey,"Your profile photo");onOpenThreadRequested(selectedProfileKey);setSelectedProfileKey(null);}}>Reply to profile photo</button> : null}
               <div style={{ color: "#ced3dc", fontSize: 14, lineHeight: 1.5 }}>
                 <div>Age: {selectedPublicProfile?.age ?? "-"}</div>
                 <div>Distance: {selectedProfileDistanceLabel ?? "-"}</div>
@@ -1581,6 +1590,7 @@ function CruiseChat({
   publicProfiles: ReadonlyArray<{
     userId: string;
     displayName: string;
+    member?: PublicMember;
     age: number;
     bio: string;
     stats?: {
@@ -1631,6 +1641,9 @@ function CruiseChat({
   const activeCallPeerRef = useRef<string | null>(null);
   const [remoteVideoStream, setRemoteVideoStream] = useState<MediaStream | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState<boolean>(discoverFilter === "favorites");
+  const [discoveryChoice,setDiscoveryChoice]=useState<DiscoveryChoice>({intent:"",interest:"",verifiedOnly:false});
+  const [discoveryNow,setDiscoveryNow]=useState(Date.now());
+  useEffect(()=>{const id=window.setInterval(()=>setDiscoveryNow(Date.now()),30000);return()=>clearInterval(id);},[]);
   const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
   const [onlineStatusFilter, setOnlineStatusFilter] = useState<"all" | "online" | "offline">(
     discoverFilter === "online" ? "online" : "all"
@@ -1652,7 +1665,7 @@ function CruiseChat({
   const [filterCutStatus, setFilterCutStatus] = useState<"" | "cut" | "uncut">("");
   const [filterPosition, setFilterPosition] = useState<"" | "top" | "bottom" | "side">("");
 
-  const me = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const me = actorKey(session);
   const peerKey = threadPeerKey ?? selectedPeerKey ?? "";
   const messages = peerKey ? messagesByPeerKey[peerKey] ?? [] : [];
 
@@ -1685,6 +1698,7 @@ function CruiseChat({
             displayName: displayNameForIdentity(chatKeyFromProfileUserId(p.userId), p.displayName),
             age: p.age,
             stats: p.stats,
+            member: p.member,
             meters: online && selfCoords ? Math.round(distanceMeters(selfCoords, { lat: online.lat, lng: online.lng })) : null,
             isOnline: Boolean(online),
             hasPicture: typeof p.mainPhotoMediaId === "string" && p.mainPhotoMediaId.trim().length > 0,
@@ -1706,6 +1720,9 @@ function CruiseChat({
     const maxCock = filterMaxCockSize.trim() ? Number(filterMaxCockSize) : undefined;
 
     const filtered = baseCards.filter((p) => {
+      if(discoveryChoice.intent && (p.member?.intent!==discoveryChoice.intent || (p.member?.intentExpiresAtMs ?? 0)<=discoveryNow))return false;
+      if(discoveryChoice.interest && !p.member?.interests.includes(discoveryChoice.interest))return false;
+      if(discoveryChoice.verifiedOnly && !p.member?.photoVerified)return false;
       if (favoritesOnly && !favorites.has(p.userId)) return false;
       if (onlineStatusFilter === "online" && !p.isOnline) return false;
       if (onlineStatusFilter === "offline" && p.isOnline) return false;
@@ -1737,6 +1754,7 @@ function CruiseChat({
       return a.key.localeCompare(b.key);
     });
   }, [
+    discoveryChoice,discoveryNow,
     session.tier, session.plusExpiresAtMs,
     baseCards,
     favorites,
@@ -2013,7 +2031,7 @@ function CruiseChat({
       const res = await api.listChat(session.sessionToken, channelToChatKind(channel), normalizedTargetPeerKey);
       const list = (res as any)?.messages as ChatMessage[];
       const safeList = Array.isArray(list) ? list : [];
-      void api.markChatRead(session.sessionToken, channelToChatKind(channel), normalizedTargetPeerKey).catch(() => {});
+      if(!document.hidden) void api.markChatRead(session.sessionToken, channelToChatKind(channel), normalizedTargetPeerKey).catch(() => {});
       setMessagesByPeerKey((prev) => ({ ...prev, [normalizedTargetPeerKey]: safeList }));
       const last = safeList.length > 0 ? safeList[safeList.length - 1] : null;
       if (last) {
@@ -2026,7 +2044,7 @@ function CruiseChat({
       for (const m of safeList) {
         if (m.fromKey === normalizedTargetPeerKey && m.createdAtMs > maxIncoming) maxIncoming = m.createdAtMs;
       }
-      if (maxIncoming > 0) {
+      if (!document.hidden && maxIncoming > 0) {
         setLastSeenByPeerKey((prev) => ({
           ...prev,
           [normalizedTargetPeerKey]: Math.max(prev[normalizedTargetPeerKey] ?? 0, maxIncoming)
@@ -2121,6 +2139,7 @@ function CruiseChat({
       }
     }
 
+    const live=()=>void refreshUnreadCounts();window.addEventListener("rd:inbox-update",live);
     const kick = window.setTimeout(() => {
       void refreshUnreadCounts();
     }, 1200);
@@ -2129,7 +2148,7 @@ function CruiseChat({
     }, 15_000);
 
     return () => {
-      cancelled = true;
+      cancelled = true;window.removeEventListener("rd:inbox-update",live);
       unreadInFlightRef.current = false;
       window.clearTimeout(kick);
       window.clearInterval(id);
@@ -2482,6 +2501,7 @@ function CruiseChat({
   }
 
   function clearGridFilters(): void {
+    setDiscoveryChoice({intent:"",interest:"",verifiedOnly:false});
     setFavoritesOnly(false);
     setOnlineStatusFilter("all");
     setHasChatHistoryOnly(false);
@@ -2550,7 +2570,7 @@ function CruiseChat({
     return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
   }, []);
 
-  const activeFilterCount = [favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
+  const activeFilterCount = [Boolean(discoveryChoice.intent),Boolean(discoveryChoice.interest),discoveryChoice.verifiedOnly,favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
   useEffect(() => { window.dispatchEvent(new CustomEvent("rd:filter-count", {detail:{count:activeFilterCount}})); }, [activeFilterCount]);
   useEffect(() => { window.dispatchEvent(new CustomEvent("rd:people-filter", {detail:{keys: activeFilterCount ? gridCards.map(card => card.key) : null}})); }, [activeFilterCount, gridCards]);
 
@@ -2740,10 +2760,12 @@ function CruiseChat({
               </div>
       </div></Sheet> : null}
       <div className="rd-discover-grid">
+          <FirstConnections api={api} session={session} />
+          <DiscoveryChoices api={api} session={session} value={discoveryChoice} onChange={setDiscoveryChoice} />
           <div className="rd-section-heading"><div><div className="rd-eyebrow">MAKE A CONNECTION</div><h1>Find your people</h1><p>{gridCards.length} {gridCards.length === 1 ? "person" : "people"} to discover</p></div></div>
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: chatGridColumns, justifyContent: isMobile ? "stretch" : "space-between" }}>
             {loading ? Array.from({length:6}, (_,i) => <div key={i} className="rd-profile-skeleton" aria-label="Loading profile" />) : gridCards.length === 0 ? (
-              <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name="user" /></span><h2>A little quiet here.</h2><p>No one matches your filters right now.<br />Try opening things up to find more connections.</p><button type="button" className="rd-btn" onClick={() => setFiltersOpen(true)}>Adjust filters</button></div>
+              <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name="user" /></span><h2>A little quiet here.</h2><p>No one matches your filters right now.<br />Try opening things up to find more connections.</p><div className="rd-row"><button type="button" className="rd-btn" onClick={clearGridFilters}>Clear filters</button><a className="rd-btn" href="#/groups">Find a local plan</a></div></div>
             ) : (
               gridCards.map((p) => (
                 <button
@@ -2791,7 +2813,7 @@ function CruiseChat({
                       />
                     ) : null}
                   </div>
-                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
+                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong><IntentBadge member={p.member}/><VerifiedBadge verified={p.member?.photoVerified}/><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
                 </button>
               ))
             )}
@@ -3201,7 +3223,7 @@ function ThreadsPanel({
   const deletedStorageKey = `reddoor:threads:deleted:${session.sessionToken}`;
   const pinnedStorageKey = `reddoor:threads:pinned:${session.sessionToken}`;
 
-  const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const meKey = actorKey(session);
   const [threadKindByPeerKey, setThreadKindByPeerKey] = useState<Record<string, "cruise" | "date">>({});
 
   const visibleRows = useMemo(() => {
@@ -3440,12 +3462,14 @@ function ThreadsPanel({
       }
     }
 
+    const live=()=>void refresh();window.addEventListener("rd:inbox-update",live);
     void refresh();
     const id = window.setInterval(() => {
       void refresh();
     }, 2500);
     return () => {
       cancelled = true;
+      window.removeEventListener("rd:inbox-update",live);
       window.clearInterval(id);
     };
   }, [api, meKey, onUnreadCountChange, session.sessionToken, session.userId, setLastError]);
@@ -3486,7 +3510,7 @@ function ThreadsPanel({
     let cancelled = false;
     setThreadProfileLoading(true);
     void api
-      .getPublicProfile(profileId)
+      .getPublicProfile(profileId, session.sessionToken)
       .then((res) => {
         if (!cancelled) setThreadProfile(res.profile);
       })
@@ -3517,6 +3541,7 @@ function ThreadsPanel({
         if (!cancelled) {
           const safeList = Array.isArray(list) ? list : [];
           setMessages((prev) => (chatMessagesEqual(prev, safeList) ? prev : safeList));
+          if(!document.hidden) {
           void api.markChatRead(session.sessionToken, selectedChatKind, selectedPeerKey).catch(() => {});
           let maxIncoming = 0;
           for (const message of safeList) {
@@ -3529,17 +3554,20 @@ function ThreadsPanel({
             const next = prev.map((row) => (row.key === selectedPeerKey ? { ...row, unreadCount: 0 } : row));
             return threadRowsEqual(prev, next) ? prev : next;
           });
+          }
         }
       } catch (e) {
         if (!cancelled) setLastError(normalizeErrorMessage(e));
       }
     };
+    const live=()=>void load();window.addEventListener("rd:inbox-update",live);
     void load();
     const id = window.setInterval(() => {
       void load();
     }, 1200);
     return () => {
       cancelled = true;
+      window.removeEventListener("rd:inbox-update",live);
       window.clearInterval(id);
     };
   }, [api, selectedChatKind, selectedPeerKey, session.sessionToken, setLastError]);
@@ -3562,7 +3590,7 @@ function ThreadsPanel({
             });
           }
         }
-        setMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
+        setMessages((prev) => prev.some(m=>m.messageId===msg.messageId) ? prev : [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
         if (chatKind === "cruise" && thirdMemberKey && hasPlus(session)) {
           try {
             const copy = await api.sendChat(session.sessionToken, chatKind, thirdMemberKey, text, media);
@@ -3931,14 +3959,14 @@ function PublicPostings({
   const canPostEvents = session.userType !== "guest";
   const canCreateSpots = true;
   const gridColumns = isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))";
-  const myActorKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const myActorKey = actorKey(session);
   const selectedAd = useMemo(() => ads.find((ad) => ad.postingId === selectedAdId) ?? null, [ads, selectedAdId]);
   const selectedGroup = useMemo(() => events.find((event) => event.postingId === selectedGroupId) ?? null, [events, selectedGroupId]);
   const selectedSpot = useMemo(() => spots.find((spot) => spot.spotId === selectedSpotId) ?? null, [selectedSpotId, spots]);
   const selectedAdThreadKey = selectedAd?.authorUserId ? `user:${selectedAd.authorUserId}` : "";
   const selectedGroupThreadKey = selectedGroup ? `event:${selectedGroup.postingId}` : "";
   const selectedSpotThreadKey = selectedSpotId ? `spot:${selectedSpotId}` : "";
-  const meKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const meKey = actorKey(session);
   const selfCoords = presenceByKey[meKey] ?? null;
 
   useEffect(() => {
@@ -4413,7 +4441,7 @@ function PublicPostings({
       const res = await api.listChat(session.sessionToken, "cruise", threadKey);
       const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
       setSpotThreadMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
-      void api.markChatRead(session.sessionToken, "cruise", threadKey).catch(() => {});
+      if(!document.hidden) void api.markChatRead(session.sessionToken, "cruise", threadKey).catch(() => {});
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -4425,7 +4453,7 @@ function PublicPostings({
       const res = await api.listChat(session.sessionToken, "date", threadKey);
       const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
       setAdThreadMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
-      void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
+      if(!document.hidden) void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -4437,7 +4465,7 @@ function PublicPostings({
       const res = await api.listChat(session.sessionToken, "date", threadKey);
       const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
       setGroupThreadMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
-      void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
+      if(!document.hidden) void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -5412,6 +5440,7 @@ function PromotedProfilesPanel({
   const [selectedProfile, setSelectedProfile] = useState<{
     userId: string;
     displayName: string;
+    member?: PublicMember;
     age: number;
     bio: string;
     stats?: {
@@ -5435,7 +5464,7 @@ function PromotedProfilesPanel({
   const refreshSeqRef = useRef<number>(0);
 
   const canPost = session.userType !== "guest";
-  const myActorKey = session.userId ? `user:${session.userId}` : `session:${session.sessionToken}`;
+  const myActorKey = actorKey(session);
   const selectedListing = useMemo(() => listings.find((item) => item.listingId === selectedListingId) ?? null, [listings, selectedListingId]);
 
   async function refresh(): Promise<void> {
@@ -5509,7 +5538,7 @@ function PromotedProfilesPanel({
       const res = await api.listChat(session.sessionToken, "date", threadKey);
       const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
       setPromotedMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
-      void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
+      if(!document.hidden) void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -7210,6 +7239,7 @@ export function Router({
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
   const [rememberedThread, setRememberedThread] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState("profile");
+  useEffect(()=>{const update=(event:Event)=>setSettingsSection(String((event as CustomEvent).detail));window.addEventListener("rd:settings-section",update);return()=>window.removeEventListener("rd:settings-section",update);},[]);
   const [mobileInboxTab, setMobileInboxTab] = useState<MobileInboxTab>("threads");
   const [scopedErrors, setScopedErrors] = useState<Partial<Record<RouterErrorScope, string>>>({});
   const isMobileInboxOpen = isMobile && activeTab === "threads";
@@ -7258,11 +7288,11 @@ export function Router({
     <div className="rd-settings-page"><div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR SPACE</div><h1>Make it yours.</h1><p>Your profile, your privacy, your preferences.</p></div></div>
       <div className="rd-settings-tabs" role="tablist" aria-label="Settings sections">{["profile", "privacy", "notifications", "membership", "account"].map(section => <button key={section} role="tab" aria-selected={settingsSection === section} onClick={() => setSettingsSection(section)}>{section[0].toUpperCase() + section.slice(1)}</button>)}</div>
       <div role="tabpanel" aria-label={settingsSection}>
-      {settingsSection === "profile" ? <SettingsProfile api={api} session={session} setLastError={setProfileError} /> : null}
-      {settingsSection === "privacy" ? <PrivacySettings api={api} session={session} /> : null}
-      {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings /></section> : null}
+      {settingsSection === "profile" ? <div className="rd-profile-settings-stack"><SettingsProfile api={api} session={session} setLastError={setProfileError} /><MemberEditor api={api} session={session}/><PhotoVerificationPanel api={api} session={session}/></div> : null}
+      {settingsSection === "privacy" ? <div className="rd-profile-settings-stack"><MemberPrivacy api={api} session={session}/><PrivacySettings api={api} session={session}/><PrivacyBlockList api={api} session={session}/></div> : null}
+      {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings api={api} session={session} /></section> : null}
       {settingsSection === "membership" ? <PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /> : null}
-      {settingsSection === "account" ? <SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /> : null}
+      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
       </div>
     </div>
   );
@@ -7463,7 +7493,7 @@ export function Router({
         </div>
       ) : null}
       {activeTab === "ads" && !isMobile ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setAdsError} /> : null}
-      {activeTab === "groups" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setGroupsError} /> : null}
+      {activeTab === "groups" ? <CommunityPanel api={api} session={session}/> : null}
       {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setSubmissionsError} /> : null}

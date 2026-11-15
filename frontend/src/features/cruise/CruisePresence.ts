@@ -120,6 +120,7 @@ export function useCruisePresence(options: CruisePresenceOptions): Readonly<{
           return;
         }
 
+        if(parsed.type === "presence_removed" && isObject(parsed.payload) && typeof parsed.payload.key==="string") {const key=parsed.payload.key;setByKey(prev=>{const next=new Map(prev);next.delete(key);return next;});window.dispatchEvent(new CustomEvent("rd:presence-removed",{detail:parsed.payload}));return;}
         if (parsed.type === "presence_update") {
           const payload = parsed.payload;
           if (!isPresenceUpdate(payload)) {

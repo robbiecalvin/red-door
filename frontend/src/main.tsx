@@ -6,6 +6,7 @@ import "./app/styles.css";
 import "./app/refresh.css";
 import "./app/polish.css";
 import "./app/plus-experience.css";
+import "./app/community.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 type ErrorBoundaryState = Readonly<{ error: Error | null }>;

@@ -1,3 +1,7 @@
+import { createCommunityRepository } from "./repositories/communityRepository";
+import { createPushService } from "./services/pushService";
+import { installMemberRoutes } from "./routes/memberRoutes";
+import { publicMember, hidesDiscovery, hidesPresence } from "./services/memberService";
 import { createAnalyticsService } from "./services/analyticsService";
 import { analyticsRepository } from "./repositories/analyticsRepository";
 import { type AnalyticsCohort } from "../../shared/analytics";
@@ -5,14 +9,14 @@ import { LAUNCH_END_MS } from "../../shared/plus";
 import { hasPlus, limits, type PlusData, type SavedSearch } from "../../shared/plus";
 import { stripeRequest, verifyStripeEvent, assertPlusPrice, signAlbumAccess, validAlbumAccess, billingConfiguration, inspectBilling } from "./services/subscriptionService";
 import http from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import express, { type Request, type Response } from "express";
 import { WebSocketServer } from "ws";
 import nodemailer from "nodemailer";
 
-import { createAuthService, type AuthStateSnapshot, type Mode, type ServiceError as AuthError, type Session as AuthSession } from "./services/authService";
+import { createAuthService, type AuthService, type AuthStateSnapshot, type Mode, type ServiceError as AuthError, type Session as AuthSession } from "./services/authService";
 import { createBlockService } from "./services/blockService";
 import { createChatService, type ChatPersistenceState, type ServiceError as ChatError } from "./services/chatService";
 import { createMatchingService, type ServiceError as MatchingError } from "./services/matchingService";
@@ -370,8 +374,6 @@ async function main(): Promise<void> {
     console.warn("[RedDoor] Verification delivery is not configured; no code was sent.");
   };
 
-  const blockService = createBlockService();
-  const reportService = createReportService();
   const favoritesService = createFavoritesService();
   const publicPostingsService = createPublicPostingsService({
     persistenceFilePath: path.resolve(process.cwd(), "backend/.data/public-postings.json")
@@ -424,7 +426,7 @@ async function main(): Promise<void> {
     console.log("[RedDoor] Persistence mode: local file storage");
   }
 
-  const authService = createAuthService({
+  const rawAuthService = createAuthService({
     jwtSecret,
     skipEmailVerification: true,
     adminEmails: parseAdminEmails(process.env.ADMIN_EMAILS),
@@ -433,6 +435,16 @@ async function main(): Promise<void> {
     onStateChanged: authStateRepo ? queueAuthStateSave : undefined
   });
 
+  const publicGuestId=(token:string)=>createHmac("sha256",jwtSecret!).update(`guest-public-v2:${token}`).digest("hex");
+  let securedGuests=new Map<string,number>();
+  let guestPersistQueue:Promise<unknown>=Promise.resolve(),guestPersistError:unknown=null;
+  let persistGuests=()=>{};
+  const authService:AuthService={...rawAuthService,
+    getSession(token){const result=rawAuthService.getSession(token);if(result.ok && result.value.userType==="guest" && !securedGuests.has(publicGuestId(token)))return {ok:false,error:{code:"INVALID_SESSION",message:"Start a fresh guest session to continue."}};return result;},
+    createGuestSession(){const result=rawAuthService.createGuestSession();if(result.ok){securedGuests.set(publicGuestId(result.value.session.sessionToken),result.value.session.expiresAtMs);persistGuests();}return result;}
+  };
+  const domainSession=(session:AuthSession):AuthSession=>session.userType==="guest"?{...session,sessionToken:publicGuestId(session.sessionToken)}:session;
+  const clientSession=(session:AuthSession)=>({...session,publicKey:sessionKeyFromSession(domainSession(session))});
   const profileRepo = postgresPool ? createPostgresProfileRepository(postgresPool) : createInMemoryProfileRepository();
   const profileService = createProfileService({ repo: profileRepo });
   const bannedUserIds = (): ReadonlySet<string> =>
@@ -468,6 +480,16 @@ async function main(): Promise<void> {
     bucket: s3Bucket || "local-dev-bucket"
   });
 
+  const communityRepository = await createCommunityRepository(postgresPool);
+  securedGuests=new Map(Object.entries(await communityRepository.setting<Record<string,number>>("securedGuests",()=>({}))).filter(([,expires])=>expires>Date.now()));
+  persistGuests=()=>{for(const [id,expires] of securedGuests)if(expires<=Date.now())securedGuests.delete(id);const snapshot=Object.fromEntries(securedGuests);guestPersistQueue=communityRepository.update(s=>{s.settings.securedGuests=snapshot;}).then(()=>{guestPersistError=null;}).catch(e=>{guestPersistError=e;});};
+  const initialSafety=await communityRepository.safety();
+  let safetyPersistence:Promise<unknown>=Promise.resolve(),safetyPersistenceError:unknown=null;
+  const blockService=createBlockService({initialBlocks:initialSafety.blocks,onStateChanged:blocks=>{safetyPersistence=communityRepository.update(s=>{s.blocks=blocks;}).then(()=>{safetyPersistenceError=null;}).catch(e=>{safetyPersistenceError=e;});}});
+  const reportService=createReportService({initialReports:initialSafety.reports,onStateChanged:reports=>{safetyPersistence=communityRepository.update(s=>{s.reports=reports;}).then(()=>{safetyPersistenceError=null;}).catch(e=>{safetyPersistenceError=e;});}});
+  const pushService = await createPushService(communityRepository, authService, process.env.PUBLIC_APP_URL ?? "");
+  const enrichProfile = <T extends {userId:string;mainPhotoMediaId?:string}>(profile:T) => {const user=authService.getUser(profile.userId);return {...profile,member:publicMember(user?.plusData?.member,user?.plusData?.photoVerification,profile.mainPhotoMediaId)};};
+  const hiddenPresence = (key:string) => {if(!key.startsWith("user:"))return false;const user=authService.getUser(key.slice(5));return Boolean(user && (user.bannedAtMs || hidesPresence(user.plusData?.member,user)));};
   const matchingService = createMatchingService({
     blockChecker: {
       isBlocked(fromKey: string, toKey: string): boolean {
@@ -753,6 +775,7 @@ async function main(): Promise<void> {
     const diagnostic = await inspectBilling();
     return res.json(diagnostic);
   });
+  app.get("/admin/safety-reports",(req,res)=>{if(!requireAdminSession(req,res))return;res.setHeader("Cache-Control","no-store");return res.json({reports:reportService.listReports().slice(-200).reverse()});});
   app.get("/admin/analytics", (req, res) => {
     if (!requireAdminSession(req, res)) return;
     res.setHeader("Cache-Control", "no-store");
@@ -880,10 +903,11 @@ async function main(): Promise<void> {
   });
 
   // Auth
-  app.post("/auth/guest", (_req, res) => {
+  app.post("/auth/guest", async (_req, res) => {
     const result = authService.createGuestSession();
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json(result.value);
+    await guestPersistQueue;if(guestPersistError)return res.status(503).json({message:"Unable to create a guest session. Please retry."});
+    return res.status(200).json({...result.value,session:clientSession(result.value.session)});
   });
 
   app.post("/auth/register", (req, res) => {
@@ -948,7 +972,7 @@ async function main(): Promise<void> {
     const ageYears = (req.body as any)?.ageYears;
     const result = authService.verifyAge(sessionToken, ageYears);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ session: result.value });
+    return res.status(200).json({ session: clientSession(result.value) });
   });
 
   app.post("/early-access/signup", async (req, res) => {
@@ -978,7 +1002,7 @@ async function main(): Promise<void> {
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const result = await profileService.getMe(sessionResult.value);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ profile: result.value });
+    return res.status(200).json({ profile: enrichProfile(result.value) });
   });
 
   app.get("/profile/public/:userId", async (req, res) => {
@@ -986,16 +1010,19 @@ async function main(): Promise<void> {
     if (bannedUserIds().has(userId)) {
       return sendError(res, { code: "PROFILE_NOT_FOUND", message: "Profile not found." });
     }
+    const target=authService.getUser(userId), viewer=authService.getSession(getSessionToken(req) ?? "");
+    if(target && hidesDiscovery(target.plusData?.member,target) && !(viewer.ok && (viewer.value.userId===userId || (["cruise","date"] as const).some(kind=>{const r=chatService.listThreads(domainSession(viewer.value),kind);return r.ok && r.value.some(t=>t.otherKey===`user:${userId}`);})))) return res.status(404).json({code:"PROFILE_NOT_FOUND",message:"Profile not found."});
+    if(viewer.ok && blockService.isBlocked(sessionKeyFromSession(domainSession(viewer.value)),`user:${userId}`))return res.status(404).json({code:"PROFILE_NOT_FOUND",message:"Profile not found."});
     const result = await profileService.getPublicByUserId(userId);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ profile: result.value });
+    return res.status(200).json({ profile: enrichProfile(result.value) });
   });
 
   app.get("/profile/public", async (_req, res) => {
     const result = await profileService.listPublicProfiles();
     if (!result.ok) return sendError(res, result.error);
     const banned = bannedUserIds();
-    return res.status(200).json({ profiles: result.value.filter((profile) => !banned.has(profile.userId)) });
+    return res.status(200).json({ profiles: result.value.filter((profile) => {const user=authService.getUser(profile.userId);return !banned.has(profile.userId) && !(user && hidesDiscovery(user.plusData?.member,user));}).map(enrichProfile) });
   });
 
   app.put("/profile/me", async (req, res) => {
@@ -1085,7 +1112,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = favoritesService.list(sessionResult.value);
+    const result = favoritesService.list(domainSession(sessionResult.value));
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ favorites: result.value });
   });
@@ -1094,7 +1121,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = favoritesService.toggle(sessionResult.value, (req.body as any)?.targetUserId);
+    const result = favoritesService.toggle(domainSession(sessionResult.value), (req.body as any)?.targetUserId);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json(result.value);
   });
@@ -1103,7 +1130,7 @@ async function main(): Promise<void> {
   app.get("/public-postings", (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = token ? authService.getSession(token) : null;
-    const viewer = sessionResult && sessionResult.ok ? sessionResult.value : undefined;
+    const viewer = sessionResult && sessionResult.ok ? domainSession(sessionResult.value) : undefined;
     const result = publicPostingsService.list((req.query as any)?.type, viewer);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ postings: result.value });
@@ -1113,7 +1140,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = publicPostingsService.create(sessionResult.value, {
+    const result = publicPostingsService.create(domainSession(sessionResult.value), {
       type: (req.body as any)?.type,
       title: (req.body as any)?.title,
       body: (req.body as any)?.body,
@@ -1158,7 +1185,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = publicPostingsService.requestToJoinEvent(sessionResult.value, (req.body as any)?.postingId);
+    const result = publicPostingsService.requestToJoinEvent(domainSession(sessionResult.value), (req.body as any)?.postingId);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ posting: result.value });
   });
@@ -1181,7 +1208,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = publicPostingsService.listEventInvites(sessionResult.value);
+    const result = publicPostingsService.listEventInvites(domainSession(sessionResult.value));
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ postings: result.value });
   });
@@ -1190,7 +1217,7 @@ async function main(): Promise<void> {
   app.get("/cruise-spots", (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = token ? authService.getSession(token) : null;
-    const viewer = sessionResult && sessionResult.ok ? sessionResult.value : undefined;
+    const viewer = sessionResult && sessionResult.ok ? domainSession(sessionResult.value) : undefined;
     const result = cruisingSpotsService.list(viewer);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ spots: result.value });
@@ -1210,7 +1237,7 @@ async function main(): Promise<void> {
     const fallbackLng = Number.isFinite(fallbackLngRaw) ? fallbackLngRaw : -73.9857;
     const lat = geocoded?.lat ?? (Number.isFinite(bodyLat) ? bodyLat : fallbackLat);
     const lng = geocoded?.lng ?? (Number.isFinite(bodyLng) ? bodyLng : fallbackLng);
-    const result = cruisingSpotsService.create(sessionResult.value, {
+    const result = cruisingSpotsService.create(domainSession(sessionResult.value), {
       name: (req.body as any)?.name,
       description: (req.body as any)?.description,
       address,
@@ -1226,7 +1253,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = cruisingSpotsService.checkIn(sessionResult.value, (req.params as any)?.spotId);
+    const result = cruisingSpotsService.checkIn(domainSession(sessionResult.value), (req.params as any)?.spotId);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ checkIn: result.value });
   });
@@ -1241,7 +1268,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = cruisingSpotsService.recordAction(sessionResult.value, (req.params as any)?.spotId);
+    const result = cruisingSpotsService.recordAction(domainSession(sessionResult.value), (req.params as any)?.spotId);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ action: result.value });
   });
@@ -1250,7 +1277,7 @@ async function main(): Promise<void> {
   app.get("/submissions", (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = token ? authService.getSession(token) : null;
-    const viewer = sessionResult && sessionResult.ok ? sessionResult.value : undefined;
+    const viewer = sessionResult && sessionResult.ok ? domainSession(sessionResult.value) : undefined;
     const result = submissionsService.list(viewer);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ submissions: result.value });
@@ -1260,7 +1287,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = submissionsService.create(sessionResult.value, (req.body as any)?.title, (req.body as any)?.body);
+    const result = submissionsService.create(domainSession(sessionResult.value), (req.body as any)?.title, (req.body as any)?.body);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ submission: result.value });
   });
@@ -1467,7 +1494,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = promotedProfilesService.startPayment(sessionResult.value);
+    const result = promotedProfilesService.startPayment(domainSession(sessionResult.value));
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ payment: result.value });
   });
@@ -1476,7 +1503,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = promotedProfilesService.confirmPayment(sessionResult.value, (req.body as any)?.paymentToken);
+    const result = promotedProfilesService.confirmPayment(domainSession(sessionResult.value), (req.body as any)?.paymentToken);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ payment: result.value });
   });
@@ -1485,7 +1512,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const result = promotedProfilesService.createListing(sessionResult.value, {
+    const result = promotedProfilesService.createListing(domainSession(sessionResult.value), {
       paymentToken: (req.body as any)?.paymentToken,
       title: (req.body as any)?.title,
       body: (req.body as any)?.body,
@@ -1500,7 +1527,7 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const result = authService.getSession(token ?? "");
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ session: result.value });
+    return res.status(200).json({ session: clientSession(result.value) });
   });
 
   // Mode
@@ -1516,7 +1543,7 @@ async function main(): Promise<void> {
     const optIn = (req.body as any)?.optIn;
     const result = authService.setHybridOptIn(token ?? "", optIn === true);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ session: result.value });
+    return res.status(200).json({ session: clientSession(result.value) });
   });
 
   app.post("/mode", (req, res) => {
@@ -1525,7 +1552,7 @@ async function main(): Promise<void> {
     if (!mode) return sendError(res, { code: "UNAUTHORIZED_ACTION", message: "Invalid mode." });
     const result = authService.setMode(token ?? "", mode);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ session: result.value });
+    return res.status(200).json({ session: clientSession(result.value) });
   });
 
   const server = http.createServer(app);
@@ -1537,7 +1564,7 @@ async function main(): Promise<void> {
     authService,
     authorizeBroadcast(auth, type, payload) {
       if (!auth.ageVerified) return false;
-      const actor = auth.userId ? `user:${auth.userId}` : `session:${auth.sessionToken}`;
+      const actor = auth.userId ? `user:${auth.userId}` : `session:${publicGuestId(auth.sessionToken ?? "")}`;
       const data = payload as any;
       if (type === "chat_message") {
         const message = data?.message;
@@ -1545,7 +1572,9 @@ async function main(): Promise<void> {
         return message.fromKey === actor || message.toKey === actor || (typeof message.toKey === "string" && message.toKey.startsWith("spot:") && !blockService.isBlocked(actor, message.fromKey));
       }
       if (type === "call_signal") return Boolean(data && (data.fromKey === actor || data.toKey === actor) && !blockService.isBlocked(data.fromKey, data.toKey));
-      if (type === "presence_update") return typeof data?.key === "string" && auth.mode !== "date" && !blockService.isBlocked(actor, data.key);
+      if (type === "presence_update") return typeof data?.key === "string" && auth.mode !== "date" && !hiddenPresence(data.key) && !blockService.isBlocked(actor, data.key);
+      if(type === "presence_removed")return typeof data?.key==="string" && auth.mode!=="date";
+      if(type === "chat_read")return Boolean(data && (data.actorKey===actor || data.otherKey===actor) && !blockService.isBlocked(data.actorKey,data.otherKey));
       return false;
     }
   });
@@ -1553,18 +1582,25 @@ async function main(): Promise<void> {
   const presenceService = createPresenceService({
     broadcaster: {
       broadcast(type: string, payload: unknown): void {
-        safeBroadcast(gateway.broadcast, type, payload);
+        if(!hiddenPresence((payload as {key:string}).key))safeBroadcast(gateway.broadcast, type, payload);
       }
     }
   });
 
+  installMemberRoutes(app,{
+    auth:authService,profiles:profileRepo,media:mediaRepo,storage:mediaStorage,bucket:s3Bucket || "local-dev-bucket",repository:communityRepository,
+    privacyChanged:(key,hideProfile)=>safeBroadcast(gateway.broadcast,"presence_removed",{key,hideProfile}),
+    member:plusUser,admin:requireAdminSession,blocked:(a,b)=>blockService.isBlocked(a,b),
+    persist:async()=>{await authPersistQueue;if(authPersistenceError)throw new Error("Persistence unavailable");},push:pushService,
+    privatePhoto:async(media)=>{if(mediaStorageMode==="s3"){const url=await mediaStorage.presignGetObject({bucket:s3Bucket,key:media.objectKey,expiresInSeconds:30});const response=await fetch(url);if(!response.ok)return null;return {data:Buffer.from(await response.arrayBuffer()),mimeType:media.mimeType};}return mediaStorageMode==="local"?(mediaStorage as LocalObjectStorage).getObject(media.objectKey):await (mediaStorage as PostgresObjectStorage).getObject(media.objectKey);}
+  });
   // Presence
   app.post("/presence", (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { lat, lng, status } = req.body as any;
-    const result = presenceService.updatePresence(sessionResult.value, { lat, lng, status });
+    const result = presenceService.updatePresence(domainSession(sessionResult.value), { lat, lng, status });
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ presence: result.value });
   });
@@ -1574,9 +1610,11 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const banned = bannedUserIds();
+    const viewerKey=sessionKeyFromSession(domainSession(sessionResult.value));
     
     // Get active presence
     const activePresence = presenceService.listActivePresence().filter((row) => {
+      if(hiddenPresence(row.key) || blockService.isBlocked(viewerKey,row.key))return false;
       if (!row.key.startsWith("user:")) return true;
       const userId = row.key.slice("user:".length).trim();
       return !banned.has(userId);
@@ -1588,7 +1626,7 @@ async function main(): Promise<void> {
       return profile.travelMode?.enabled === true && 
              profile.travelMode.lat !== undefined && 
              profile.travelMode.lng !== undefined &&
-             !banned.has(profile.userId);
+             !banned.has(profile.userId) && !hiddenPresence(`user:${profile.userId}`) && !blockService.isBlocked(viewerKey,`user:${profile.userId}`);
     }).map((profile) => ({
       key: `user:${profile.userId}`,
       userType: "registered" as const,
@@ -1657,11 +1695,12 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { chatKind, toKey, text, media } = req.body as any;
-    if (media && (typeof media.objectKey !== "string" || !media.objectKey.startsWith(`chat/${sessionResult.value.userId ? `user-${sessionResult.value.userId}` : `session-${sessionResult.value.sessionToken}`}/`))) return sendError(res, { code: "UNAUTHORIZED_ACTION", message: "Chat attachments must be uploaded by the sender." });
-    const result = chatService.sendMessage(sessionResult.value, { chatKind, toKey, text, media });
+    if (media && (typeof media.objectKey !== "string" || !media.objectKey.startsWith(`chat/${sessionResult.value.userId ? `user-${sessionResult.value.userId}` : `session-${publicGuestId(sessionResult.value.sessionToken)}`}/`))) return sendError(res, { code: "UNAUTHORIZED_ACTION", message: "Chat attachments must be uploaded by the sender." });
+    const result = chatService.sendMessage(domainSession(sessionResult.value), { chatKind, toKey, text, media });
     if (!result.ok) return sendError(res, result.error);
     if (sessionResult.value.userId && typeof toKey === "string" && toKey.startsWith("user:") && authService.getUser(sessionResult.value.userId)?.plusData?.analyticsConsent === true && authService.getUser(toKey.slice(5))?.plusData?.analyticsConsent === true && !/^GROUP_INVITE_/.test(text ?? "")) recordMetric(() => metrics.message(sessionResult.value.userId!, toKey.slice(5)));
     safeBroadcast(gateway.broadcast, "chat_message", { message: result.value });
+    if(typeof toKey==="string" && toKey.startsWith("user:") && !/^GROUP_INVITE_/.test(text ?? ""))void pushService.notify(toKey.slice(5)).catch(()=>{});
     return res.status(200).json({ message: result.value });
   });
 
@@ -1671,7 +1710,7 @@ async function main(): Promise<void> {
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const chatKind = req.query.chatKind;
     const otherKey = req.query.otherKey;
-    const result = chatService.listMessages(sessionResult.value, chatKind as any, otherKey as any);
+    const result = chatService.listMessages(domainSession(sessionResult.value), chatKind as any, otherKey as any);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ messages: result.value });
   });
@@ -1681,7 +1720,7 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const chatKind = req.query.chatKind;
-    const result = chatService.listThreads(sessionResult.value, chatKind as any);
+    const result = chatService.listThreads(domainSession(sessionResult.value), chatKind as any);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ threads: result.value });
   });
@@ -1691,8 +1730,12 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { chatKind, otherKey } = req.body as any;
-    const result = chatService.markRead(sessionResult.value, chatKind, otherKey);
+    const actorKey=sessionKeyFromSession(domainSession(sessionResult.value));
+    const before=chatService.listMessages(domainSession(sessionResult.value),chatKind,otherKey);
+    const changed=before.ok && before.value.some(m=>m.toKey===actorKey && m.readAtMs===undefined);
+    const result = chatService.markRead(domainSession(sessionResult.value), chatKind, otherKey);
     if (!result.ok) return sendError(res, result.error);
+    if(changed)safeBroadcast(gateway.broadcast,"chat_read",{actorKey:sessionKeyFromSession(domainSession(sessionResult.value)),otherKey,chatKind});
     return res.status(200).json(result.value);
   });
 
@@ -1737,7 +1780,7 @@ async function main(): Promise<void> {
     }
 
     const ext = extensionForMimeType(mimeType);
-    const owner = sessionResult.value.userId ? `user-${sessionResult.value.userId}` : `session-${sessionResult.value.sessionToken}`;
+    const owner = sessionResult.value.userId ? `user-${sessionResult.value.userId}` : `session-${publicGuestId(sessionResult.value.sessionToken)}`;
     const objectKey = `chat/${owner}/${randomUUID()}.${ext}`;
     const uploadUrl = await mediaStorage.presignPutObject({
       bucket: s3Bucket || "local-dev-bucket",
@@ -1751,12 +1794,12 @@ async function main(): Promise<void> {
   const chatDownloadTickets = new Map<string, { key: string; sessionToken: string; expires: number }>();
   function mayReadChatMedia(session: AuthSession, key: string) {
     if (!key.startsWith("chat/")) return false;
-    const actor = sessionKeyFromSession(session);
+    const actor = sessionKeyFromSession(domainSession(session));
     const messages = chatService.snapshotState().threads.flatMap(thread => thread.messages);
     for (const message of messages) {
       if (message.media?.objectKey !== key || blockService.isBlocked(message.fromKey, message.toKey)) continue;
       const peer = message.fromKey === actor ? message.toKey : message.fromKey;
-      const visible = chatService.listMessages(session, message.chatKind, peer);
+      const visible = chatService.listMessages(domainSession(session), message.chatKind, peer);
       if (visible.ok && visible.value.some(row => row.media?.objectKey === key)) return true;
     }
     return false;
@@ -1797,7 +1840,7 @@ async function main(): Promise<void> {
     const signalType = typeof (req.body as any)?.signalType === "string" ? String((req.body as any).signalType).trim() : "";
     const sdp = typeof (req.body as any)?.sdp === "string" ? String((req.body as any).sdp) : undefined;
     const candidate = typeof (req.body as any)?.candidate === "string" ? String((req.body as any).candidate) : undefined;
-    const fromKey = sessionKeyFromSession(sessionResult.value);
+    const fromKey = sessionKeyFromSession(domainSession(sessionResult.value));
     const allowedSignal = signalType === "offer" || signalType === "answer" || signalType === "ice" || signalType === "hangup";
 
     if (!toKey || !callId || !allowedSignal) {
@@ -1835,23 +1878,25 @@ async function main(): Promise<void> {
   });
 
   // Blocking
-  app.post("/block", (req, res) => {
+  app.post("/block", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { targetKey } = req.body as any;
-    const result = blockService.block(sessionResult.value, targetKey);
+    const result = blockService.block(domainSession(sessionResult.value), targetKey);
     if (!result.ok) return sendError(res, result.error);
+    await safetyPersistence;if(safetyPersistenceError)return res.status(503).json({message:"Unable to persist safety settings. Please retry."});
     return res.status(200).json({ block: result.value });
   });
 
-  app.post("/unblock", (req, res) => {
+  app.post("/unblock", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { targetKey } = req.body as any;
-    const result = blockService.unblock(sessionResult.value, targetKey);
+    const result = blockService.unblock(domainSession(sessionResult.value), targetKey);
     if (!result.ok) return sendError(res, result.error);
+    await safetyPersistence;if(safetyPersistenceError)return res.status(503).json({message:"Unable to persist safety settings. Please retry."});
     return res.status(200).json({ ok: true });
   });
 
@@ -1859,29 +1904,31 @@ async function main(): Promise<void> {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const actorKey = sessionKeyFromSession(sessionResult.value);
+    const actorKey = sessionKeyFromSession(domainSession(sessionResult.value));
     const blocked = blockService.listBlocked(actorKey);
     return res.status(200).json({ blocked });
   });
 
   // Reporting
-  app.post("/report/user", (req, res) => {
+  app.post("/report/user", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { targetKey, reason } = req.body as any;
-    const result = reportService.reportUser(sessionResult.value, targetKey, reason);
+    const result = reportService.reportUser(domainSession(sessionResult.value), targetKey, reason);
     if (!result.ok) return sendError(res, result.error);
+    await safetyPersistence;if(safetyPersistenceError)return res.status(503).json({message:"Unable to persist safety settings. Please retry."});
     return res.status(200).json({ report: result.value });
   });
 
-  app.post("/report/message", (req, res) => {
+  app.post("/report/message", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { messageId, reason, targetKey } = req.body as any;
-    const result = reportService.reportMessage(sessionResult.value, messageId, reason, targetKey);
+    const result = reportService.reportMessage(domainSession(sessionResult.value), messageId, reason, targetKey);
     if (!result.ok) return sendError(res, result.error);
+    await safetyPersistence;if(safetyPersistenceError)return res.status(503).json({message:"Unable to persist safety settings. Please retry."});
     return res.status(200).json({ report: result.value });
   });
 

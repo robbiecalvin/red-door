@@ -1,4 +1,4 @@
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import type { ObjectStorage } from "../mediaService";
@@ -23,6 +23,7 @@ export function createS3ObjectStorage(config: S3Config): ObjectStorage {
   });
 
   return {
+    async deleteObject({bucket,key}) { await client.send(new DeleteObjectCommand({Bucket:bucket,Key:key})); },
     async presignPutObject(params) {
       const cmd = new PutObjectCommand({
         Bucket: params.bucket,

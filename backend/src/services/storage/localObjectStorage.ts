@@ -60,6 +60,7 @@ export function createLocalObjectStorage(): LocalObjectStorage {
   loadAll();
 
   return {
+    async deleteObject({key}) { byKey.delete(key); for(const file of [filePathForKey(key),mimePathForKey(key)]) if(fs.existsSync(file)) fs.unlinkSync(file); },
     async presignPutObject(params) {
       const mime = encodeURIComponent(params.mimeType);
       return `/api/storage/local/upload/${encodeKey(params.key)}?mimeType=${mime}`;
