@@ -22,11 +22,13 @@ export function limits(identity: PlusIdentity, now = Date.now()) {
 }
 export type SavedSearch = { name: string; filters: Record<string, string | boolean> };
 export type PlusData = {
+  analyticsConsent?: boolean;
   savedSearches?: SavedSearch[];
   pinnedKeys?: string[];
   privateMediaIds?: string[];
   albumSharedWith?: string[];
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
+  stripeLivemode?: boolean;
   stripeCheckoutSessionId?: string;
 };

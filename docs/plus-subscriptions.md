@@ -61,3 +61,9 @@ The browser-local API is a development/demo mode stored on the same device. It m
 Checkout stays disabled until the registered, age-verified account has loaded backend status and the backend reports complete billing configuration. The Plus panel now shows a reason and a Refresh payment status control. Existing complimentary/paid Plus access intentionally prevents another subscription purchase.
 
 An administrator can open Plus → Check Stripe connection. This makes a read-only request to `/admin/billing/health`, reports missing variable names (never values), validates the public HTTPS URL, reads the configured Stripe price, checks CAD 799 cents monthly, and identifies test/live mode. It does not start Checkout or charge a card. Only administrators may access the endpoint. A successful check does not prove webhook signing/delivery; verify those in Stripe separately. API keys and price IDs must belong to the same Stripe account and mode.
+
+## Reliability batch update
+
+Run `npm run test:smoke` for the isolated HTTP/payment-contract suite. Stripe responses are supplied by a localhost fixture loaded only by the test subprocess; the production app has no mock-provider flag. These checks do not replace a real Stripe test-mode purchase and delivery test.
+
+Paid access now requires the canonical subscription's expanded latest invoice to be paid. Open invoices and explicit failed-payment events do not extend access. Existing subscriptions may renew an archived price; new purchases still require an active price. Add `invoice.payment_failed` to the Stripe webhook subscriptions to record failed-payment diagnostics/metrics. See [the execution roadmap](execution-roadmap.md) for the remaining live-release gate and later phases.

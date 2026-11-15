@@ -853,3 +853,12 @@ describe("chatService", () => {
     expect(() => svc.getThread("cruise", "", "b")).toThrow("Invalid thread keys.");
   });
 });
+
+describe("Cruise retention after configuration correction", () => {
+  it("Given persisted Cruise messages with an overly long expiry When cleanup runs Then removes messages older than the current retention policy", () => {
+    const now = 1800000000000;
+    const svc = createChatService({ nowMs: () => now, cruiseRetentionHours: 72, initialState: { threads: [{ threadId: "cruise::user:a::user:b", messages: [{ messageId: "old", chatId: "old-thread", chatKind: "cruise", fromKey: "user:a", toKey: "user:b", text: "expired", createdAtMs: now - 73 * 3600000, expiresAtMs: now + 300 * 86400000 }] }], readCursors: [] } });
+    svc.purgeExpired();
+    expect(svc.snapshotState().threads).toHaveLength(0);
+  });
+});

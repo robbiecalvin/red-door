@@ -176,7 +176,7 @@ describe("authService", () => {
     expect(res.error).toEqual({ code: "UNAUTHORIZED_ACTION", message: "Invalid verification request." });
   });
 
-  it("Given a verified user When verifyEmail is called again Then it returns a new session", () => {
+  it("Given a verified user When verifyEmail is called again without a password Then rejects session issuance", () => {
     const sent: Array<{ destination: string; code: string }> = [];
     const svc = createAuthService({
       jwtSecret: "test_secret",
@@ -188,7 +188,10 @@ describe("authService", () => {
     const first = svc.verifyEmail("user@example.com", sent[0]?.code ?? "");
     expect(first.ok).toBe(true);
     const second = svc.verifyEmail("user@example.com", "000000");
-    expect(second.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("unreachable");
+    expect(second.error.code).toBe("INVALID_VERIFICATION_CODE");
+    expect(svc.snapshotState().sessions).toHaveLength(1);
   });
 
   it("Given an unverified user with no code fields in store When verifyEmail is called Then it rejects with INVALID_VERIFICATION_CODE", () => {
@@ -713,6 +716,9 @@ describe("authService", () => {
     const regB = svc.register("user2@example.com", "StrongPass2!", "+15555551235");
     expect(regA.ok).toBe(true);
     expect(regB.ok).toBe(true);
+    expect(svc.listUsers().every(u => u.role !== "admin")).toBe(true);
+    const verifiedAdmin = svc.verifyEmail("admin2@example.com", sent[0].code);
+    expect(verifiedAdmin.ok).toBe(true);
     const users = svc.listUsers();
     expect(users.length).toBe(2);
     expect(users.some((u) => u.role === "admin")).toBe(true);
@@ -905,13 +911,15 @@ describe("authService", () => {
     expect(login.value.user.email).toBe("autoverify@example.com");
   });
 
-  it("Given an admin email in persisted state with stale non-admin role When login is called Then the user is auto-promoted to admin", () => {
+  it("Given a configured admin email with a stored non-admin role When login is called Then requires fresh email verification", () => {
     const password = "StrongPass1!";
     const salt = Buffer.from("fedcba9876543210");
     const hash = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 }).toString("base64");
     const svc = createAuthService({
       jwtSecret: "test_secret",
       adminEmails: ["promote@example.com"],
+      verificationCodeGenerator: () => "123456",
+      onVerificationCodeIssued: () => {},
       initialState: {
         users: [
           {
@@ -938,10 +946,13 @@ describe("authService", () => {
     });
 
     const login = svc.login("promote@example.com", password);
-    expect(login.ok).toBe(true);
-    if (!login.ok) throw new Error("unreachable");
-    expect(login.value.user.role).toBe("admin");
-    expect(login.value.session.role).toBe("admin");
+    expect(login.ok).toBe(false);
+    if (login.ok) throw new Error("unreachable");
+    expect(login.error.code).toBe("EMAIL_VERIFICATION_REQUIRED");
+    expect(svc.listUsers()[0].role).toBe("user");
+    const verified = svc.verifyEmail("promote@example.com", "123456");
+    if (!verified.ok) throw new Error(verified.error.message);
+    expect(verified.value.session.role).toBe("admin");
   });
 
   it("Given a persisted user store with malformed user entries When service loads Then malformed entries are ignored", () => {

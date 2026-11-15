@@ -136,3 +136,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent-deep); 
 .rd-plus-gate { padding: 14px; border: 1px solid #e52d4030; border-radius: 12px; background: #e52d400a; color: var(--muted); display: grid; gap: 10px; font-size: 13px; }
 .rd-launch-offer { margin: 16px 0; padding: 12px; background: #e52d400c; border: 1px solid #e52d4028; border-radius: 12px; font-size: 12px; color: #c9c5ce; }.rd-launch-offer strong { color: var(--accent); }
 .rd-plus-badge { font-size: 10px; padding: 3px 7px; background: #e52d4015; color: var(--accent); border: 1px solid #e52d4030; border-radius: 6px; letter-spacing: .05em; }
+.rd-analytics-panel { width: min(100%, 900px); }
+.rd-metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; margin-top: 20px; }
+.rd-metric { background: var(--surface-raised); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 8px; }
+.rd-metric span { font-size: 12px; color: var(--muted); }.rd-metric strong { font-size: 28px; }
+.rd-metric-table { max-width: 100%; overflow-x: auto; }.rd-metric-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }.rd-metric-table th,.rd-metric-table td { padding: 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }.rd-metric-table th { color: var(--muted); font-weight: 500; }
+@media(min-width:760px) { .rd-metric-grid { grid-template-columns: repeat(3,minmax(0,1fr)); } }

@@ -1,5 +1,4 @@
 import type { IncomingMessage } from "node:http";
-import jwt from "jsonwebtoken";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import type { Result, Session as AuthSession } from "../services/authService";
@@ -31,6 +30,7 @@ export type AuthContext = Readonly<{
   mode: "cruise" | "date" | "hybrid";
   sessionToken?: string;
   userId?: string;
+  ageVerified?: boolean;
 }>;
 
 export type WebsocketGatewayDeps = Readonly<{
@@ -38,8 +38,10 @@ export type WebsocketGatewayDeps = Readonly<{
   jwtSecret: string;
   authService: Readonly<{
     getSession(sessionToken: string): Result<AuthSession>;
+    resolveJWT(token: string): Result<AuthSession>;
   }>;
 
+  authorizeBroadcast?: (auth: AuthContext, type: string, payload: unknown) => boolean;
   maxIncomingPayloadBytes?: number;
   heartbeatTimeoutMs?: number;
   nowMs?: () => number;
@@ -96,24 +98,6 @@ function closePolicy(ws: WebSocket): void {
   }
 }
 
-function authenticateFromJwt(jwtSecret: string, token: string): AuthContext | null {
-  try {
-    const decoded = jwt.verify(token, jwtSecret, { algorithms: ["HS256"] });
-    if (typeof decoded !== "object" || decoded === null) return null;
-    const payload = decoded as Record<string, unknown>;
-    const sub = typeof payload.sub === "string" ? payload.sub : undefined;
-    const userType =
-      payload.userType === "registered" || payload.userType === "subscriber" ? payload.userType : null;
-    const tier = payload.tier === "free" || payload.tier === "premium" ? payload.tier : null;
-    if (!sub || !userType || !tier) return null;
-
-    // Mode is not derived from JWT; start as cruise (always legal) and let modeService govern transitions later.
-    return { userId: sub, userType, tier, mode: "cruise" };
-  } catch {
-    return null;
-  }
-}
-
 export function createWebsocketGateway(deps: WebsocketGatewayDeps): WebsocketGateway {
   const maxIncomingPayloadBytes = deps.maxIncomingPayloadBytes ?? DEFAULT_MAX_INCOMING_PAYLOAD_BYTES;
   const heartbeatTimeoutMs = deps.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
@@ -141,7 +125,12 @@ export function createWebsocketGateway(deps: WebsocketGatewayDeps): WebsocketGat
 
   function requireAuthenticated(ws: WebSocket): AuthContext | null {
     const auth = authBySocket.get(ws);
-    return auth ?? null;
+    if (!auth) return null;
+    if (!auth.sessionToken) return null;
+    const current = deps.authService.getSession(auth.sessionToken);
+    if (!current.ok) { authBySocket.delete(ws); closePolicy(ws); return null; }
+    const refreshed = { ...auth, ...current.value };
+    authBySocket.set(ws, refreshed); return refreshed;
   }
 
   function handleAuth(ws: WebSocket, payload: unknown): void {
@@ -173,7 +162,8 @@ export function createWebsocketGateway(deps: WebsocketGatewayDeps): WebsocketGat
         userType: session.userType,
         tier: session.tier,
         mode: session.mode,
-        userId: session.userId
+        userId: session.userId,
+        ageVerified: session.ageVerified
       };
       authBySocket.set(ws, auth);
       lastHeartbeatBySocket.set(ws, nowMs());
@@ -181,13 +171,13 @@ export function createWebsocketGateway(deps: WebsocketGatewayDeps): WebsocketGat
       return;
     }
 
-    const authFromJwt = authenticateFromJwt(deps.jwtSecret, payload.jwt as string);
-    if (!authFromJwt) {
+    const resolved = deps.authService.resolveJWT(payload.jwt as string);
+    if (!resolved.ok) {
       sendError(ws, makeError("INVALID_SESSION", "Invalid credentials."));
-      closePolicy(ws);
-      return;
+      closePolicy(ws); return;
     }
-
+    const session = resolved.value;
+    const authFromJwt: AuthContext = { sessionToken: session.sessionToken, userId: session.userId, userType: session.userType, tier: session.tier, mode: session.mode, ageVerified: session.ageVerified };
     authBySocket.set(ws, authFromJwt);
     lastHeartbeatBySocket.set(ws, nowMs());
     send(ws, "auth_ok", { userType: authFromJwt.userType, tier: authFromJwt.tier, mode: authFromJwt.mode });
@@ -278,7 +268,8 @@ export function createWebsocketGateway(deps: WebsocketGatewayDeps): WebsocketGat
 
       for (const ws of connections) {
         if (ws.readyState !== ws.OPEN) continue;
-        if (!authBySocket.has(ws)) continue;
+        const auth = requireAuthenticated(ws);
+        if (!auth || (deps.authorizeBroadcast && !deps.authorizeBroadcast(auth, type, payload))) continue;
         ws.send(message);
       }
     }

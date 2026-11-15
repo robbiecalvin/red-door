@@ -1,3 +1,7 @@
+import { createAnalyticsService } from "./services/analyticsService";
+import { analyticsRepository } from "./repositories/analyticsRepository";
+import { type AnalyticsCohort } from "../../shared/analytics";
+import { LAUNCH_END_MS } from "../../shared/plus";
 import { hasPlus, limits, type PlusData, type SavedSearch } from "../../shared/plus";
 import { stripeRequest, verifyStripeEvent, assertPlusPrice, signAlbumAccess, validAlbumAccess, billingConfiguration, inspectBilling } from "./services/subscriptionService";
 import http from "node:http";
@@ -296,6 +300,7 @@ async function main(): Promise<void> {
         host: smtpHost.trim(),
         port: smtpPortRaw,
         secure: smtpSecure,
+        requireTLS: !smtpSecure,
         auth: {
           user: smtpUser.trim(),
           pass: smtpPass
@@ -362,7 +367,7 @@ async function main(): Promise<void> {
         });
       return;
     }
-    console.log(`[RedDoor] Verification code for ${destination}: ${code}`);
+    console.warn("[RedDoor] Verification delivery is not configured; no code was sent.");
   };
 
   const blockService = createBlockService();
@@ -485,7 +490,7 @@ async function main(): Promise<void> {
   });
 
   const chatService = createChatService({
-    cruiseRetentionHours: 24 * 365,
+    cruiseRetentionHours: 72,
     maxHistoryDays: 365,
     persistenceFilePath: postgresPool ? undefined : path.resolve(process.cwd(), "backend/.data/chat.json"),
     initialState: initialChatState,
@@ -502,6 +507,23 @@ async function main(): Promise<void> {
     }
   });
 
+  const metricsRepo = postgresPool ? analyticsRepository(postgresPool) : null;
+  let metricsQueue: Promise<void> = Promise.resolve();
+  let metricsWriteError: unknown = null;
+  let metrics: ReturnType<typeof createAnalyticsService>;
+  try { metrics = createAnalyticsService({ secret: jwtSecret, enabled: process.env.ANALYTICS_ENABLED !== "false", initialState: metricsRepo ? await metricsRepo.load() : undefined, filePath: metricsRepo ? undefined : path.resolve(process.cwd(), "backend/.data/analytics.json"), onChange: metricsRepo ? state => { metricsQueue = metricsQueue.then(async () => { await metricsRepo.save(state); metricsWriteError = null; }).catch((error: unknown) => { metricsWriteError = error; console.error("[RedDoor] Analytics persistence failed."); }); } : undefined }); }
+  catch { console.error("[RedDoor] Analytics initialization failed; collection is disabled."); metrics = createAnalyticsService({ secret: jwtSecret, enabled: false }); }
+  const recordMetric = (action: () => void) => { try { action(); metricsWriteError = null; } catch (error) { metricsWriteError = error; console.error("[RedDoor] Analytics unavailable; application request continues."); } };
+  chatService.purgeExpired();
+  const chatCleanupTimer = setInterval(() => { try { chatService.purgeExpired(); } catch { console.error("[RedDoor] Chat retention cleanup failed."); } }, 3600000);
+  chatCleanupTimer.unref();
+  const metricsCleanupTimer = setInterval(() => recordMetric(() => metrics.cleanup()), 86400000);
+  metricsCleanupTimer.unref();
+  function cohortFor(user: NonNullable<ReturnType<typeof authService.getUser>>): AnalyticsCohort {
+    if (user.plusData?.stripeSubscriptionId && hasPlus(user)) return user.plusData.stripeLivemode === true ? "paid" : "other_plus";
+    if (user.plusExpiresAtMs === LAUNCH_END_MS) return "launch";
+    return hasPlus(user) ? "other_plus" : "free";
+  }
   const app = express();
   const allowedOrigins = parseAllowedOrigins(
     process.env.CORS_ALLOWED_ORIGINS ??
@@ -527,22 +549,24 @@ async function main(): Promise<void> {
     let event: any;
     try { event = verifyStripeEvent(req.body, String(req.headers["stripe-signature"] ?? ""), process.env.STRIPE_WEBHOOK_SECRET.trim()); }
     catch { return res.status(400).json({ message: "Invalid webhook signature." }); }
-    if (!["checkout.session.completed", "invoice.paid", "customer.subscription.updated", "customer.subscription.deleted"].includes(event.type)) return res.json({ received: true });
+    if (!["checkout.session.completed", "invoice.paid", "customer.subscription.updated", "customer.subscription.deleted", "invoice.payment_failed"].includes(event.type)) return res.json({ received: true });
     try {
       const object = event.data.object;
       const subscriptionId = object.object === "subscription" ? object.id : object.subscription ?? object.parent?.subscription_details?.subscription;
       if (typeof subscriptionId !== "string") return res.json({ received: true });
       // Retrieve canonical current state: replays and out-of-order events cannot extend access.
-      const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(subscriptionId)}?expand[]=items.data.price`);
+      const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(subscriptionId)}?expand[]=items.data.price&expand[]=latest_invoice`);
       const userId = subscription.metadata?.userId;
       const user = typeof userId === "string" ? authService.getUser(userId) : undefined;
       if (!user) return res.status(400).json({ message: "Unknown subscription account." });
       const price = subscription.items?.data?.[0]?.price;
-      assertPlusPrice(price);
+      assertPlusPrice(price, false);
       if (price.id !== process.env.STRIPE_PLUS_PRICE_ID?.trim()) return res.status(400).json({ message: "Unexpected subscription price." });
-      const plusData = { ...user.plusData, stripeCustomerId: String(subscription.customer), stripeSubscriptionId: subscription.id };
+      const plusData = { ...user.plusData, stripeCustomerId: String(subscription.customer), stripeSubscriptionId: subscription.id, stripeLivemode: price.livemode === true };
       const periodEnd = Number(subscription.current_period_end) * 1000;
-      if (subscription.status === "active" && Number.isFinite(periodEnd)) {
+      const paidInvoice = subscription.latest_invoice?.paid === true && subscription.latest_invoice?.status === "paid";
+      const grantPaidPeriod = subscription.status === "active" && paidInvoice && event.type !== "invoice.payment_failed" && Number.isFinite(periodEnd);
+      if (grantPaidPeriod) {
         authService.updatePlus(userId, { tier: "premium", plusExpiresAtMs: Math.max(user.plusExpiresAtMs ?? 0, periodEnd), plusData });
       } else {
         // Cancellation stops renewal; already paid or complimentary time remains available.
@@ -550,10 +574,21 @@ async function main(): Promise<void> {
       }
       await authPersistQueue;
       if (authPersistenceError) throw new Error("Subscription persistence failed.");
+      if (grantPaidPeriod && periodEnd > Date.now()) recordMetric(() => metrics.billing(price.livemode === true ? "subscription_activated" : "test_paid_period_confirmed", `${subscription.id}:${periodEnd}`, user.id));
+      if (event.type === "invoice.payment_failed") recordMetric(() => { if (price.livemode === true) metrics.billing("payment_failed", event.id); });
+      if (subscription.status === "canceled" || subscription.cancel_at_period_end === true) recordMetric(() => { if (price.livemode === true) metrics.billing("subscription_canceled", subscription.id); });
       return res.json({ received: true });
     } catch { return res.status(502).json({ message: "Unable to synchronize subscription. Retry webhook delivery." }); }
   });
   app.use(express.json({ limit: "8kb" }));
+  app.use((req, _res, next) => {
+    const token = getSessionToken(req);
+    if (token) {
+      const session = authService.getSession(token);
+      if (session.ok && session.value.userId && authService.getUser(session.value.userId)?.plusData?.analyticsConsent === true) recordMetric(() => metrics.activity(session.value.userId!));
+    }
+    next();
+  });
 
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
@@ -568,6 +603,21 @@ async function main(): Promise<void> {
     });
   });
 
+  const uploadTickets = new Map<string, { key: string; mimeType: string; sizeBytes: number; expires: number }>();
+  function secureUploadUrl(url: string, key: string, mimeType: string, sizeBytes: number) {
+    if (mediaStorageMode === "s3") return url;
+    for (const [id, ticket] of uploadTickets) if (ticket.expires <= Date.now()) uploadTickets.delete(id);
+    const token = randomUUID();
+    uploadTickets.set(token, { key, mimeType, sizeBytes, expires: Date.now() + 300000 });
+    return `${url}${url.includes("?") ? "&" : "?"}uploadToken=${token}`;
+  }
+  function takeUploadTicket(req: Request, key: string) {
+    const token = typeof req.query.uploadToken === "string" ? req.query.uploadToken : "";
+    const ticket = uploadTickets.get(token);
+    if (!ticket || ticket.key !== key || ticket.expires <= Date.now()) return null;
+    uploadTickets.delete(token);
+    return ticket;
+  }
   const handleLocalStorageUpload = (req: Request, res: Response): Response => {
     if (mediaStorageMode !== "local") {
       return res.status(404).json({ code: "NOT_FOUND", message: "Local storage endpoint is disabled." });
@@ -578,9 +628,13 @@ async function main(): Promise<void> {
       return res.status(400).json({ code: "INVALID_INPUT", message: "Missing object key." });
     }
     const key = decodeURIComponent(encodedKey);
-    const mimeTypeRaw = (req.query as any)?.mimeType;
+    const ticket = takeUploadTicket(req, key);
+    if (!ticket) return res.status(403).json({ message: "Upload authorization has expired or is invalid." });
+    const mimeTypeRaw = ticket.mimeType;
     const mimeType = typeof mimeTypeRaw === "string" && mimeTypeRaw.trim() ? mimeTypeRaw.trim() : "application/octet-stream";
-    const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? "");
+    if (!Buffer.isBuffer(req.body)) return res.status(400).json({ message: "Send the file with its declared Content-Type." });
+    const body = req.body;
+    if (body.length > ticket.sizeBytes) return res.status(413).json({ message: "Upload exceeds the declared size." });
     localStorage.putObject(key, body, mimeType);
     return res.status(200).end();
   };
@@ -597,7 +651,7 @@ async function main(): Promise<void> {
       return res.status(400).json({ code: "INVALID_INPUT", message: "Missing object key." });
     }
     const key = decodeURIComponent(encodedKey);
-    if (key.startsWith("private-profiles/")) return res.status(403).end();
+    if (key.startsWith("private-profiles/") || key.startsWith("chat/")) return res.status(403).end();
     const stored = localStorage.getObject(key);
     if (!stored) {
       return res.status(404).json({ code: "NOT_FOUND", message: "Object not found." });
@@ -619,9 +673,13 @@ async function main(): Promise<void> {
         return res.status(400).json({ code: "INVALID_INPUT", message: "Missing object key." });
       }
       const key = decodeURIComponent(encodedKey);
-      const mimeTypeRaw = (req.query as any)?.mimeType;
+    const ticket = takeUploadTicket(req, key);
+    if (!ticket) return res.status(403).json({ message: "Upload authorization has expired or is invalid." });
+      const mimeTypeRaw = ticket.mimeType;
       const mimeType = typeof mimeTypeRaw === "string" && mimeTypeRaw.trim() ? mimeTypeRaw.trim() : "application/octet-stream";
-      const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? "");
+      if (!Buffer.isBuffer(req.body)) return res.status(400).json({ message: "Send the file with its declared Content-Type." });
+    const body = req.body;
+    if (body.length > ticket.sizeBytes) return res.status(413).json({ message: "Upload exceeds the declared size." });
       await pgStorage.putObject(key, body, mimeType);
       return res.status(200).end();
     } catch {
@@ -646,7 +704,7 @@ async function main(): Promise<void> {
         return res.status(400).json({ code: "INVALID_INPUT", message: "Missing object key." });
       }
       const key = decodeURIComponent(encodedKey);
-    if (key.startsWith("private-profiles/")) return res.status(403).end();
+    if (key.startsWith("private-profiles/") || key.startsWith("chat/")) return res.status(403).end();
       const stored = await pgStorage.getObject(key);
       if (!stored) {
         return res.status(404).json({ code: "NOT_FOUND", message: "Object not found." });
@@ -694,6 +752,27 @@ async function main(): Promise<void> {
     res.setHeader("Cache-Control", "no-store");
     const diagnostic = await inspectBilling();
     return res.json(diagnostic);
+  });
+  app.get("/admin/analytics", (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(metrics.summary());
+  });
+  app.get("/account/privacy", (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    return res.json({ analyticsConsent: actor.user.plusData?.analyticsConsent === true });
+  });
+  app.put("/account/privacy", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    if (typeof req.body.analyticsConsent !== "boolean") return res.status(400).json({ message: "Choose whether to share usage statistics." });
+    const consent = req.body.analyticsConsent;
+    authService.updatePlus(actor.user.id, { plusData: { ...actor.user.plusData, analyticsConsent: consent } });
+    await authPersistQueue;
+    if (authPersistenceError) return res.status(503).json({ message: "Unable to save privacy preference." });
+    recordMetric(() => metrics.consent(actor.user.id, consent, cohortFor(actor.user), actor.user.createdAtMs));
+    await metricsQueue;
+    if (metricsWriteError) return res.status(503).json({ message: "Privacy preference saved, but measurement cleanup could not finish. Please retry." });
+    return res.json({ analyticsConsent: consent });
   });
   app.get("/plus", (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
@@ -788,6 +867,7 @@ async function main(): Promise<void> {
       authService.updatePlus(actor.user.id, { plusData: { ...latestUser.plusData, stripeCheckoutSessionId: checkout.id } });
       await authPersistQueue;
       if (authPersistenceError) return res.status(503).json({ message: "Unable to save checkout. Please retry." });
+      recordMetric(() => metrics.billing(price.livemode === true ? "checkout_started" : "test_checkout_started", checkout.id));
       return res.json({ url: checkout.url });
     } catch (e) { return res.status(502).json({ message: (e as Error).message }); }
   });
@@ -810,8 +890,11 @@ async function main(): Promise<void> {
     const email = (req.body as any)?.email;
     const password = (req.body as any)?.password;
     const phoneE164 = (req.body as any)?.phoneE164;
-    const result = authService.register(email, password, phoneE164, (req.body as any)?.promoCode);
+    const result = authService.register(email, password, phoneE164, (req.body as any)?.promoCode, req.body?.analyticsConsent === true);
     if (!result.ok) return sendError(res, result.error);
+    const created = authService.listUsers().find(user => user.email === result.value.email);
+    const user = created ? authService.getUser(created.id) : undefined;
+    if (user) recordMetric(() => metrics.registration(user.id, cohortFor(user), user.plusData?.analyticsConsent === true));
     return res.status(200).json(result.value);
   });
 
@@ -830,6 +913,28 @@ async function main(): Promise<void> {
     return res.status(200).json(result.value);
   });
 
+  app.post("/auth/password-reset/request", (req, res) => {
+    let resetBase: URL;
+    try { resetBase = new URL(process.env.PUBLIC_APP_URL?.trim() ?? ""); if (resetBase.protocol !== "https:") throw new Error("HTTPS required"); }
+    catch { return res.status(503).json({ message: "Account recovery is unavailable. Please contact support." }); }
+    if (!emailSender) return res.status(503).json({ message: "Account recovery is unavailable. Please contact support." });
+    const reset = authService.requestPasswordReset(req.body?.email);
+    if (reset) {
+      resetBase.hash = `reset=${reset.token}`;
+      void authPersistQueue.then(() => {
+        if (authPersistenceError) throw new Error("Persistence unavailable");
+        return emailSender.sendMail({ from: smtpFrom, to: reset.email, subject: "Reset your Red Door password", text: `Reset your password using this link: ${resetBase.toString()}\n\nIt expires in 15 minutes and can be used once. If you did not request this, ignore this email.` });
+      }).catch(() => console.error("[RedDoor] Password recovery delivery failed."));
+    }
+    return res.json({ message: "If an eligible account exists, a reset link will be sent. Check your email." });
+  });
+  app.post("/auth/password-reset/confirm", async (req, res) => {
+    const result = authService.resetPassword(req.body?.token, req.body?.password);
+    if (!result.ok) return sendError(res, result.error);
+    await authPersistQueue;
+    if (authPersistenceError) return res.status(503).json({ message: "Unable to save your password. Please retry." });
+    return res.json({ ok: true });
+  });
   app.post("/auth/login", (req, res) => {
     const email = (req.body as any)?.email;
     const password = (req.body as any)?.password;
@@ -907,6 +1012,7 @@ async function main(): Promise<void> {
       travelMode: (req.body as any)?.travelMode
     });
     if (!result.ok) return sendError(res, result.error);
+    if (authService.getUser(result.value.userId)?.plusData?.analyticsConsent === true) recordMetric(() => metrics.profileCompleted(result.value.userId));
     return res.status(200).json({ profile: result.value });
   });
 
@@ -951,7 +1057,7 @@ async function main(): Promise<void> {
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({
       ...result.value,
-      uploadUrl: absolutizeStorageUrl(req, result.value.uploadUrl)
+      uploadUrl: absolutizeStorageUrl(req, secureUploadUrl(result.value.uploadUrl, result.value.objectKey, req.body.mimeType, req.body.sizeBytes))
     });
   });
 
@@ -1428,7 +1534,20 @@ async function main(): Promise<void> {
   const gateway = createWebsocketGateway({
     wss,
     jwtSecret,
-    authService
+    authService,
+    authorizeBroadcast(auth, type, payload) {
+      if (!auth.ageVerified) return false;
+      const actor = auth.userId ? `user:${auth.userId}` : `session:${auth.sessionToken}`;
+      const data = payload as any;
+      if (type === "chat_message") {
+        const message = data?.message;
+        if (!message || blockService.isBlocked(message.fromKey, message.toKey)) return false;
+        return message.fromKey === actor || message.toKey === actor || (typeof message.toKey === "string" && message.toKey.startsWith("spot:") && !blockService.isBlocked(actor, message.fromKey));
+      }
+      if (type === "call_signal") return Boolean(data && (data.fromKey === actor || data.toKey === actor) && !blockService.isBlocked(data.fromKey, data.toKey));
+      if (type === "presence_update") return typeof data?.key === "string" && auth.mode !== "date" && !blockService.isBlocked(actor, data.key);
+      return false;
+    }
   });
 
   const presenceService = createPresenceService({
@@ -1538,8 +1657,10 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { chatKind, toKey, text, media } = req.body as any;
+    if (media && (typeof media.objectKey !== "string" || !media.objectKey.startsWith(`chat/${sessionResult.value.userId ? `user-${sessionResult.value.userId}` : `session-${sessionResult.value.sessionToken}`}/`))) return sendError(res, { code: "UNAUTHORIZED_ACTION", message: "Chat attachments must be uploaded by the sender." });
     const result = chatService.sendMessage(sessionResult.value, { chatKind, toKey, text, media });
     if (!result.ok) return sendError(res, result.error);
+    if (sessionResult.value.userId && typeof toKey === "string" && toKey.startsWith("user:") && authService.getUser(sessionResult.value.userId)?.plusData?.analyticsConsent === true && authService.getUser(toKey.slice(5))?.plusData?.analyticsConsent === true && !/^GROUP_INVITE_/.test(text ?? "")) recordMetric(() => metrics.message(sessionResult.value.userId!, toKey.slice(5)));
     safeBroadcast(gateway.broadcast, "chat_message", { message: result.value });
     return res.status(200).json({ message: result.value });
   });
@@ -1624,26 +1745,43 @@ async function main(): Promise<void> {
       mimeType,
       expiresInSeconds: 60 * 5
     });
-    return res.status(200).json({ objectKey, uploadUrl: absolutizeStorageUrl(req, uploadUrl), mimeType, expiresInSeconds: 300 });
+    return res.status(200).json({ objectKey, uploadUrl: absolutizeStorageUrl(req, secureUploadUrl(uploadUrl, objectKey, mimeType, sizeBytesRaw)), mimeType, expiresInSeconds: 300 });
   });
 
+  const chatDownloadTickets = new Map<string, { key: string; sessionToken: string; expires: number }>();
+  function mayReadChatMedia(session: AuthSession, key: string) {
+    if (!key.startsWith("chat/")) return false;
+    const actor = sessionKeyFromSession(session);
+    const messages = chatService.snapshotState().threads.flatMap(thread => thread.messages);
+    for (const message of messages) {
+      if (message.media?.objectKey !== key || blockService.isBlocked(message.fromKey, message.toKey)) continue;
+      const peer = message.fromKey === actor ? message.toKey : message.fromKey;
+      const visible = chatService.listMessages(session, message.chatKind, peer);
+      if (visible.ok && visible.value.some(row => row.media?.objectKey === key)) return true;
+    }
+    return false;
+  }
   app.get("/chat/media/url", async (req, res) => {
-    const token = getSessionToken(req);
-    const sessionResult = authService.getSession(token ?? "");
-    if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    if (sessionResult.value.ageVerified !== true) {
-      return sendError(res, { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Red Door.", context: { minimumAge: 18 } });
-    }
-    const objectKey = typeof req.query.objectKey === "string" ? req.query.objectKey.trim() : "";
-    if (!objectKey) {
-      return sendError(res, { code: "INVALID_INPUT", message: "objectKey is required." });
-    }
-    const downloadUrl = await mediaStorage.presignGetObject({
-      bucket: s3Bucket || "local-dev-bucket",
-      key: objectKey,
-      expiresInSeconds: 60 * 10
-    });
-    return res.status(200).json({ objectKey, downloadUrl: absolutizeStorageUrl(req, downloadUrl), expiresInSeconds: 600 });
+    const session = authService.getSession(getSessionToken(req) ?? "");
+    if (!session.ok) return sendError(res, session.error);
+    if (session.value.ageVerified !== true) return sendError(res, { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Red Door." });
+    const key = typeof req.query.objectKey === "string" ? req.query.objectKey : "";
+    if (!mayReadChatMedia(session.value, key)) return sendError(res, { code: "UNAUTHORIZED_ACTION", message: "Chat media is not available in your active conversations." });
+    for (const [id, ticket] of chatDownloadTickets) if (ticket.expires <= Date.now()) chatDownloadTickets.delete(id);
+    const ticket = randomUUID(); chatDownloadTickets.set(ticket, { key, sessionToken: session.value.sessionToken, expires: Date.now() + 60000 });
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ objectKey: key, downloadUrl: absolutizeStorageUrl(req, `/chat/media/download/${ticket}`), expiresInSeconds: 60 });
+  });
+  app.get("/chat/media/download/:ticket", async (req, res) => {
+    const ticket = chatDownloadTickets.get(req.params.ticket);
+    if (!ticket || ticket.expires <= Date.now()) return res.status(403).end();
+    const session = authService.getSession(ticket.sessionToken);
+    if (!session.ok || !mayReadChatMedia(session.value, ticket.key)) return res.status(403).end();
+    res.setHeader("Cache-Control", "no-store"); res.setHeader("Referrer-Policy", "no-referrer");
+    if (mediaStorageMode === "s3") return res.redirect(await mediaStorage.presignGetObject({ bucket: s3Bucket, key: ticket.key, expiresInSeconds: Math.max(1, Math.floor((ticket.expires - Date.now()) / 1000)) }));
+    const object = mediaStorageMode === "local" ? (mediaStorage as LocalObjectStorage).getObject(ticket.key) : await (mediaStorage as PostgresObjectStorage).getObject(ticket.key);
+    if (!object) return res.status(404).end();
+    res.setHeader("Content-Type", object.mimeType); return res.send(object.data);
   });
 
   app.post("/call/signal", (req, res) => {
@@ -1758,7 +1896,9 @@ async function main(): Promise<void> {
   });
 
   const shutdown = async (): Promise<void> => {
-    await Promise.allSettled([authPersistQueue, chatPersistQueue]);
+    clearInterval(metricsCleanupTimer);
+    clearInterval(chatCleanupTimer);
+    await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue]);
     if (postgresPool) {
       await postgresPool.end();
     }

@@ -15,7 +15,8 @@
     "pages:sync": "node scripts/sync-pages-static.mjs",
     "build:pages": "npm run build && npm run pages:sync",
     "build:obfuscated": "npm run build && node scripts/obfuscate-dist.cjs",
-    "preview": "vite preview --strictPort --port 5173"
+    "preview": "vite preview --strictPort --port 5173",
+    "test:smoke": "jest --runInBand --coverage=false tests/apiSmoke.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.997.0",

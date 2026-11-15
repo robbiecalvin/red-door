@@ -388,3 +388,11 @@ Based on `git log -n 30 --oneline`:
 Plus adds travel mode, advanced filters, saved searches, expanded favorites/pins and media limits, private albums, read receipts, and the existing three-person group chat flow for **CAD $7.99/month**. New registrations can use `THEREDDOORLAUNCH` for complimentary access through December 31, 2026 (Pacific time), without a card or automatic renewal. Redemption expires January 1, 2027.
 
 See [Plus subscription setup and behavior](docs/plus-subscriptions.md) for limits, Stripe backend configuration, promotion expiry, privacy rules, and deployment validation. Live purchases require Stripe credentials and a configured CAD monthly price on the backend host.
+
+## Reliability and measurement batch
+
+- Run `npm run test:smoke` for isolated core API and payment-lifecycle checks; no real Stripe charge is made.
+- Cruise retention is now enforced at 72 hours by the running server, including persisted messages with older expiry settings. Private chat/media delivery and upload authorization are checked server-side.
+- Login includes password recovery when SMTP and an HTTPS `PUBLIC_APP_URL` are configured. Password resets revoke HTTP and realtime sessions. New administrator access requires email verification.
+- Optional activity measurement is off by default. Users can opt in at registration or change the preference in profile settings. Administrators can open **Activity dashboard** from the account menu.
+- [Execution roadmap and live-release gates](docs/execution-roadmap.md) · [Metrics privacy and interpretation](docs/baseline-analytics.md).

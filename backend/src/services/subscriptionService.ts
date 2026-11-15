@@ -35,8 +35,8 @@ export async function stripeRequest(path: string, body?: URLSearchParams, idempo
   }
   return result;
 }
-export function assertPlusPrice(price: any): void {
-  if (!price?.active || price.currency !== PLUS_CURRENCY || price.unit_amount !== PLUS_PRICE_CENTS || price.recurring?.interval !== "month" || price.recurring?.interval_count !== 1) {
+export function assertPlusPrice(price: any, requireActive = true): void {
+  if (!price || (requireActive && !price.active) || price.currency !== PLUS_CURRENCY || price.unit_amount !== PLUS_PRICE_CENTS || price.recurring?.interval !== "month" || price.recurring?.interval_count !== 1) {
     throw new Error("Configure an active CAD $7.99 monthly Stripe price.");
   }
 }

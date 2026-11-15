@@ -1,3 +1,4 @@
+import { PrivacySettings } from "./PrivacySettings";
 import { hasPlus, limits } from "../../../shared/plus";
 import { openPlus } from "./PlusPanel";
 import { SavedSearches } from "./SavedSearches";
@@ -6216,6 +6217,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
       <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>Your profile</div>
+          <PrivacySettings api={api} session={session} />
           {session.userType === "guest" ? (
             <div style={{ color: "#b9bec9", fontSize: 13 }}>
               Guest profile data is temporary and clears on logout.

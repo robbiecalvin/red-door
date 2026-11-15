@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import http from "node:http";
 import jwt from "jsonwebtoken";
 import { WebSocket, WebSocketServer } from "ws";
@@ -123,14 +126,13 @@ describe("websocketGateway", () => {
 
   it("Given a JWT When a client sends an auth handshake Then the gateway responds with auth_ok", async () => {
     const now = 1_700_000_000_000;
-    const authService = createAuthService({ jwtSecret: "test_secret", nowMs: () => now });
-    const issued = authService.issueJWT({
-      id: "user_1",
-      email: "user@example.com",
-      userType: "registered",
-      tier: "free"
-    });
-    if (!issued.ok) throw new Error("unreachable");
+    const store = fs.mkdtempSync(path.join(os.tmpdir(), "reddoor-ws-jwt-"));
+    const authService = createAuthService({ jwtSecret: "test_secret", nowMs: () => now, userStoreFilePath: path.join(store, "users.json") });
+    const email = `ws-jwt-${Date.now()}@example.com`;
+    const created = authService.adminCreateUser(email, "Ws-Test123!", null, "registered", "free", "user");
+    if (!created.ok) throw new Error("create failed");
+    const issued = authService.login(email, "Ws-Test123!");
+    if (!issued.ok) throw new Error("login failed");
 
     const server = await createServer();
     const gateway = createWebsocketGateway({
@@ -143,7 +145,7 @@ describe("websocketGateway", () => {
     const ws = new WebSocket(server.url);
     try {
       await waitForOpen(ws);
-      ws.send(JSON.stringify({ type: "auth", payload: { jwt: issued.value } }));
+      ws.send(JSON.stringify({ type: "auth", payload: { jwt: issued.value.jwt } }));
 
       const msg = (await waitForMessage(ws)) as any;
       expect(msg.type).toBe("auth_ok");
@@ -154,6 +156,7 @@ describe("websocketGateway", () => {
       await waitForClose(ws);
       await gateway.close();
       await server.closeHttp();
+      fs.rmSync(store, { recursive: true });
     }
   });
 

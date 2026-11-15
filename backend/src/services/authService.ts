@@ -51,6 +51,8 @@ export type StoredUser = Readonly<{
   verificationCodeExpiresAtMs: number | null;
   passwordSaltB64: string;
   passwordHashB64: string;
+  passwordResetTokenHash?: string;
+  passwordResetExpiresAtMs?: number;
   createdAtMs: number;
 }>;
 
@@ -85,11 +87,14 @@ export type GuestSessionResult = Readonly<{
 }>;
 
 export type AuthService = Readonly<{
+  requestPasswordReset(email: unknown): { email: string; token: string } | null;
+  resetPassword(token: unknown, password: unknown): Result<void>;
   createGuestSession(): Result<GuestSessionResult>;
-  register(email: string, password: string, phoneE164: string, promoCode?: string): Result<RegisterResult>;
+  register(email: string, password: string, phoneE164: string, promoCode?: string, analyticsConsent?: boolean): Result<RegisterResult>;
   verifyEmail(email: string, code: string): Result<VerifyEmailResult>;
   resendVerificationCode(email: string): Result<RegisterResult>;
   login(email: string, password: string): Result<VerifyEmailResult>;
+  resolveJWT(token: string): Result<Session>;
   issueJWT(user: Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role">): Result<string>;
   getSession(sessionToken: string): Result<Session>;
   verifyAge(sessionToken: string, ageYears: number): Result<Session>;
@@ -211,7 +216,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     deps.onVerificationCodeIssued ??
     ((destination: string, code: string, channel: "sms" | "email") => {
       // Dev fallback when no SMTP provider is configured.
-      console.log(`[RedDoor] Verification code via ${channel} for ${destination}: ${code}`);
+      console.warn("[RedDoor] Verification delivery is not configured.");
     });
   const onStateChanged = deps.onStateChanged;
   const adminEmails = new Set((deps.adminEmails ?? []).map((value) => normalizeEmail(value)).filter((value) => value.length > 0));
@@ -300,7 +305,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         tier: c.tier,
         plusExpiresAtMs: typeof c.plusExpiresAtMs === "number" ? c.plusExpiresAtMs : undefined,
         plusData: c.plusData && typeof c.plusData === "object" ? c.plusData as PlusData : undefined,
-        role: c.role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "user",
+        role: c.role === "admin" ? "admin" : "user",
         ageVerified: c.ageVerified === true,
         emailVerified: c.emailVerified,
         bannedAtMs: typeof c.bannedAtMs === "number" ? c.bannedAtMs : null,
@@ -310,6 +315,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         verificationCodeExpiresAtMs: c.verificationCodeExpiresAtMs,
         passwordSaltB64: c.passwordSaltB64,
         passwordHashB64: c.passwordHashB64,
+        passwordResetTokenHash: typeof c.passwordResetTokenHash === "string" ? c.passwordResetTokenHash : undefined,
+        passwordResetExpiresAtMs: typeof c.passwordResetExpiresAtMs === "number" ? c.passwordResetExpiresAtMs : undefined,
         createdAtMs: c.createdAtMs
       };
       usersByEmail.set(user.email, user);
@@ -324,7 +331,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       const user: StoredUser = {
         ...candidate,
         email: normalizedEmail,
-        role: candidate.role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "user",
+        role: candidate.role === "admin" ? "admin" : "user",
         bannedAtMs: typeof candidate.bannedAtMs === "number" ? candidate.bannedAtMs : null,
         bannedReason: typeof candidate.bannedReason === "string" ? candidate.bannedReason : null
       };
@@ -375,7 +382,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     usersByEmail.set(updated.email, updated);
     usersById.set(updated.id, updated);
     persistUsers();
-    const destination = typeof updated.phoneE164 === "string" && isLikelyValidPhoneE164(updated.phoneE164) ? updated.phoneE164 : updated.email;
+    const destination = adminEmails.has(updated.email) ? updated.email : typeof updated.phoneE164 === "string" && isLikelyValidPhoneE164(updated.phoneE164) ? updated.phoneE164 : updated.email;
     const channel: "sms" | "email" = destination === updated.email ? "email" : "sms";
     onVerificationCodeIssued(destination, code, channel, {
       id: updated.id,
@@ -393,7 +400,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
   function issueJWTInternal(
     user: Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role">,
-    issuedAtMs: number
+    issuedAtMs: number,
+    sessionToken?: string
   ): string {
     return jwt.sign(
       {
@@ -401,6 +409,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         userType: user.userType,
         tier: user.tier,
         role: normalizeRole(user.role),
+        sid: sessionToken,
         iat: Math.floor(issuedAtMs / 1000)
       },
       jwtSecret,
@@ -491,13 +500,41 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     return ok(existing);
   }
 
+  const resetRequests = new Map<string, number>();
+  const verificationAttempts = new Map<string, { startedAt: number; count: number }>();
   return {
+    requestPasswordReset(email) {
+      if (typeof email !== "string" || !isLikelyValidEmail(email)) return null;
+      const normalized = normalizeEmail(email), now = nowMs();
+      const user = usersByEmail.get(normalized);
+      if (!user || typeof user.bannedAtMs === "number") return null;
+      const last = resetRequests.get(normalized);
+      if (last !== undefined && now - last < 60000) return null;
+      resetRequests.set(normalized, now);
+      for (const [key, time] of resetRequests) if (now - time > 900000) resetRequests.delete(key);
+      const token = crypto.randomBytes(32).toString("hex");
+      const next = { ...user, passwordResetTokenHash: crypto.createHash("sha256").update(token).digest("hex"), passwordResetExpiresAtMs: now + 900000 };
+      usersByEmail.set(normalized, next); usersById.set(next.id, next); persistUsers(); notifyStateChanged();
+      return { email: normalized, token };
+    },
+    resetPassword(token, password) {
+      if (typeof token !== "string" || !/^[a-f0-9]{64}$/i.test(token)) return err("UNAUTHORIZED_ACTION", "Invalid or expired reset link.");
+      if (typeof password !== "string" || !isStrongPassword(password)) return err("UNAUTHORIZED_ACTION", "Use at least 10 characters with uppercase, lowercase, number, and symbol.");
+      const digest = crypto.createHash("sha256").update(token).digest("hex");
+      const user = [...usersById.values()].find(candidate => candidate.passwordResetTokenHash === digest);
+      if (!user || !user.passwordResetExpiresAtMs || nowMs() >= user.passwordResetExpiresAtMs || typeof user.bannedAtMs === "number") return err("UNAUTHORIZED_ACTION", "Invalid or expired reset link.");
+      const salt = crypto.randomBytes(PASSWORD_SALT_BYTES);
+      const next: StoredUser = { ...user, passwordSaltB64: salt.toString("base64"), passwordHashB64: hashPassword(password, salt).toString("base64"), passwordResetTokenHash: undefined, passwordResetExpiresAtMs: undefined };
+      usersByEmail.set(next.email, next); usersById.set(next.id, next);
+      for (const [key, session] of sessionsByToken) if (session.userId === user.id) sessionsByToken.delete(key);
+      persistUsers(); notifyStateChanged(); return ok(undefined);
+    },
     createGuestSession(): Result<GuestSessionResult> {
       const session = createGuestSessionInternal(nowMs());
       return ok({ session });
     },
 
-    register(email: string, password: string, phoneE164: string, promoCode?: string): Result<RegisterResult> {
+    register(email: string, password: string, phoneE164: string, promoCode?: string, analyticsConsent?: boolean): Result<RegisterResult> {
       if (typeof email !== "string" || !isLikelyValidEmail(email)) {
         return err("UNAUTHORIZED_ACTION", "Invalid email.");
       }
@@ -539,10 +576,11 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         userType: "registered",
         tier: plusExpiresAtMs ? "premium" : "free",
         plusExpiresAtMs,
-        role: adminEmails.has(normalizedEmail) ? "admin" : "user",
+        plusData: { analyticsConsent: analyticsConsent === true },
+        role: "user",
         ageVerified: false,
         // Web build currently runs without verification-code UX; treat new registrations as verified.
-        emailVerified: skipEmailVerification,
+        emailVerified: skipEmailVerification && !adminEmails.has(normalizedEmail),
         bannedAtMs: null,
         bannedReason: null,
         verificationCodeSaltB64: null,
@@ -556,7 +594,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       usersByEmail.set(normalizedEmail, user);
       usersById.set(user.id, user);
       persistUsers();
-      if (!skipEmailVerification) {
+      if (!user.emailVerified) {
         setVerificationCode(user, now);
       }
       notifyStateChanged();
@@ -574,16 +612,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       }
       const banned = assertNotBanned(user);
       if (!banned.ok) return banned as Result<VerifyEmailResult>;
-      if (user.emailVerified) {
-        const now = nowMs();
-        const token = issueJWTInternal(user, now);
-        const session = createSessionForUser(user, now);
-        return ok({
-          user: userPublic(user),
-          jwt: token,
-          session
-        });
-      }
+      if (user.emailVerified) return err("INVALID_VERIFICATION_CODE", "Invalid or expired verification code. Sign in with your password.");
       if (
         typeof user.verificationCodeSaltB64 !== "string" ||
         typeof user.verificationCodeHashB64 !== "string" ||
@@ -595,6 +624,11 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return err("INVALID_VERIFICATION_CODE", "Invalid or expired verification code.");
       }
 
+      const time = nowMs();
+      const previous = verificationAttempts.get(user.id);
+      const attempts = previous && time - previous.startedAt < 900000 ? previous : { startedAt: time, count: 0 };
+      if (attempts.count >= 5) return err("RATE_LIMITED", "Too many verification attempts. Wait 15 minutes before requesting another code.");
+      attempts.count++; verificationAttempts.set(user.id, attempts);
       const salt = Buffer.from(user.verificationCodeSaltB64, "base64");
       const expectedHash = Buffer.from(user.verificationCodeHashB64, "base64");
       const actualHash = hashPassword(code.trim(), salt);
@@ -602,9 +636,11 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return err("INVALID_VERIFICATION_CODE", "Invalid or expired verification code.");
       }
 
+      verificationAttempts.delete(user.id);
       const verifiedUser: StoredUser = {
         ...user,
         emailVerified: true,
+        role: adminEmails.has(user.email) ? "admin" : normalizeRole(user.role),
         verificationCodeSaltB64: null,
         verificationCodeHashB64: null,
         verificationCodeExpiresAtMs: null
@@ -614,8 +650,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       persistUsers();
 
       const now = nowMs();
-      const token = issueJWTInternal(verifiedUser, now);
       const session = createSessionForUser(verifiedUser, now);
+      const token = issueJWTInternal(verifiedUser, now, session.sessionToken);
       return ok({
         user: userPublic(verifiedUser),
         jwt: token,
@@ -649,12 +685,6 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (!user) {
         return err("UNAUTHORIZED_ACTION", "Invalid credentials.");
       }
-      if (adminEmails.has(normalizedEmail) && user.role !== "admin") {
-        const promotedUser: StoredUser = { ...user, role: "admin" };
-        usersByEmail.set(promotedUser.email, promotedUser);
-        usersById.set(promotedUser.id, promotedUser);
-        persistUsers();
-      }
       const currentUser = usersByEmail.get(normalizedEmail) ?? user;
       const banned = assertNotBanned(currentUser);
       if (!banned.ok) return banned as Result<VerifyEmailResult>;
@@ -666,11 +696,15 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (!safeEqual(expectedHash, actualHash)) {
         return err("UNAUTHORIZED_ACTION", "Invalid credentials.");
       }
+      if (adminEmails.has(currentUser.email) && currentUser.role !== "admin") {
+        setVerificationCode({ ...currentUser, emailVerified: false }, nowMs());
+        return err("EMAIL_VERIFICATION_REQUIRED", "Email verification required before administrator access.", { email: currentUser.email });
+      }
       let loginUser = currentUser;
       if (!currentUser.emailVerified) {
-        if (!skipEmailVerification) {
+        if (!skipEmailVerification || adminEmails.has(currentUser.email)) {
           setVerificationCode(currentUser, nowMs());
-          return err("EMAIL_VERIFICATION_REQUIRED", "Phone verification required before login.", {
+          return err("EMAIL_VERIFICATION_REQUIRED", adminEmails.has(currentUser.email) ? "Email verification required before administrator access." : "Phone verification required before login.", {
             email: currentUser.email,
             phoneE164: currentUser.phoneE164
           });
@@ -689,8 +723,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       }
 
       const now = nowMs();
-      const token = issueJWTInternal(loginUser, now);
       const session = createSessionForUser(loginUser, now);
+      const token = issueJWTInternal(loginUser, now, session.sessionToken);
       return ok({
         user: userPublic(loginUser),
         jwt: token,
@@ -698,6 +732,15 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       });
     },
 
+    resolveJWT(token) {
+      try {
+        const claims = jwt.verify(token, jwtSecret, { algorithms: ["HS256"], clockTimestamp: Math.floor(nowMs() / 1000) });
+        if (typeof claims !== "object" || typeof claims.sid !== "string") return err("INVALID_SESSION", "Invalid credentials.");
+        const session = getSessionInternal(claims.sid);
+        if (!session.ok || session.value.userId !== claims.sub) return err("INVALID_SESSION", "Invalid credentials.");
+        return session;
+      } catch { return err("INVALID_SESSION", "Invalid credentials."); }
+    },
     issueJWT(user: Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role">): Result<string> {
       if (
         typeof user !== "object" ||

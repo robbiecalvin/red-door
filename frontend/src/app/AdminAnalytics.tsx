@@ -1,0 +1,18 @@
+import React, { useEffect, useState } from "react";
+import { type AnalyticsSummary } from "../../../shared/analytics";
+import { apiClient, type Session } from "./api";
+export function AdminAnalytics({ api, session, onClose }: { api: ReturnType<typeof apiClient>; session: Session; onClose(): void }): React.ReactElement {
+  const [data, setData] = useState<AnalyticsSummary | null>(null), [error, setError] = useState(""), [loading, setLoading] = useState(false);
+  async function refresh() { setLoading(true); setError(""); try { setData(await api.getAnalytics(session.sessionToken)); } catch(e) { setError((e as Error).message); } finally { setLoading(false); } }
+  useEffect(() => { void refresh(); }, [api, session.sessionToken]);
+  const cards = data ? [["Registrations", data.totals.registrations ?? 0], ["Checkouts started", data.totals.checkout_started ?? 0], ["Paid periods confirmed", data.totals.subscription_activated ?? 0], ["Payment failures", data.totals.payment_failed ?? 0], ["Sandbox checkouts", data.totals.test_checkout_started ?? 0], ["Sandbox paid periods", data.totals.test_paid_period_confirmed ?? 0], ["New conversations*", data.totals.conversations_started ?? 0], ["Conversations with replies*", data.totals.conversations_replied ?? 0]] : [];
+  return <div className="rd-plus-backdrop"><section className="rd-plus-panel rd-analytics-panel" role="dialog" aria-modal="true" aria-label="Activity dashboard" onKeyDown={e => { if (e.key === "Escape") onClose(); }}>
+    <div className="rd-plus-heading"><div><div className="rd-eyebrow">ADMIN ONLY</div><h1 style={{ fontSize: 28 }}>Activity dashboard</h1></div><button className="rd-btn" onClick={onClose}>Close</button></div>
+    <button className="rd-btn" disabled={loading} onClick={() => void refresh()}>{loading ? "Loading…" : "Refresh metrics"}</button>
+    {error ? <p role="alert" className="rd-error">{error}</p> : null}
+    {data ? <><p className="rd-plus-small">Last {data.windowDays} days · UTC daily buckets · {data.enabled ? "Collection enabled" : "Collection disabled"}. Only activity since measurement began is shown.</p><div className="rd-metric-grid">{cards.map(([label,value]) => <div className="rd-metric" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+    <h2 style={{ fontSize: 20 }}>Registration cohorts*</h2><p className="rd-plus-small">*These activation and return metrics cover opted-in participants. Both participants must opt in for conversation metrics. Cohort is assigned at registration; launch-code members and Stripe sandbox activity are excluded from paid conversion.</p>
+    <div className="rd-metric-table"><table><thead><tr><th>Cohort</th><th>Participants</th><th>Profile</th><th>First message</th><th>First reply</th><th>Paid conversions</th><th>Day 7 return</th></tr></thead><tbody>{data.cohorts.map(c => <tr key={c.cohort}><th>{c.cohort.replace("_", " ")}</th><td>{c.participants}</td><td>{c.profilesCompleted}</td><td>{c.firstMessages}</td><td>{c.firstReplies}</td><td>{c.paidConversions}</td><td>{c.sevenDayReturned} / {c.sevenDayEligible}</td></tr>)}</tbody></table></div>
+    <h2 style={{ fontSize: 20 }}>Daily activity*</h2>{data.daily.length ? <div className="rd-metric-table"><table><thead><tr><th>Day (UTC)</th><th>Active participants</th><th>Signups</th><th>Messages*</th></tr></thead><tbody>{[...data.daily].reverse().map(d => <tr key={d.day}><th>{d.day}</th><td>{d.activeParticipants}</td><td>{d.events.registrations ?? 0}</td><td>{d.events.messages_sent ?? 0}</td></tr>)}</tbody></table></div> : <p className="rd-plus-small">No measurements yet. Counts will appear after successful registrations and opted-in activity.</p>}</> : null}
+  </section></div>;
+}

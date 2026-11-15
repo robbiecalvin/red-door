@@ -1,3 +1,5 @@
+import { PasswordRecovery } from "./PasswordRecovery";
+import { AdminAnalytics } from "./AdminAnalytics";
 import { PlusPanel } from "./PlusPanel";
 import { LAUNCH_END_MS, hasPlus } from "../../../shared/plus";
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -327,6 +329,16 @@ export function App(): React.ReactElement {
   const [password, setPassword] = useState<string>("");
   const [phoneE164, setPhoneE164] = useState<string>("");
   const [registerDisplayName, setRegisterDisplayName] = useState<string>("");
+  const [recoveryToken, setRecoveryToken] = useState(() => /^#reset=([a-f0-9]{64})$/i.exec(window.location.hash)?.[1] ?? "");
+  const [recoveryOpen, setRecoveryOpen] = useState(() => /^#reset=([a-f0-9]{64})$/i.test(window.location.hash));
+  useEffect(() => { if (recoveryToken && window.location.hash.startsWith("#reset=")) window.history.replaceState(null, "", window.location.pathname + window.location.search); }, [recoveryToken]);
+  useEffect(() => {
+    const receiveResetLink = () => { const token = /^#reset=([a-f0-9]{64})$/i.exec(window.location.hash)?.[1]; if (token) { setRecoveryToken(token); setRecoveryOpen(true); window.history.replaceState(null, "", window.location.pathname + window.location.search); } };
+    window.addEventListener("hashchange", receiveResetLink);
+    return () => window.removeEventListener("hashchange", receiveResetLink);
+  }, []);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [promoCode, setPromoCode] = useState("");
   const [plusOpen, setPlusOpen] = useState(false);
   const [registerAge, setRegisterAge] = useState<string>("");
@@ -620,7 +632,7 @@ export function App(): React.ReactElement {
     setLastError(null);
     setAuthInfo("");
     try {
-      await api.register(email, password, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode });
+      await api.register(email, password, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent });
       setProfileSetupDraft((prev) => ({
         ...prev,
         displayName: normalizedDisplayName,
@@ -644,7 +656,7 @@ export function App(): React.ReactElement {
         setPendingVerificationEmail(email.trim());
         setAuthView("register");
         setVerificationCode("");
-        setAuthInfo("Verification code sent to your phone. Enter the 6-digit code.");
+        setAuthInfo("Check your email or phone for a verification code.");
       }
     } catch (e) {
       setLastError(normalizeUiError(e, "Register failed."));
@@ -919,7 +931,7 @@ export function App(): React.ReactElement {
   }, []);
   useEffect(() => {
     if (!session) return;
-    const refresh = () => { void api.getSession(session.sessionToken).then(r => setSession(r.session)).catch(() => {}); };
+    const refresh = () => { void api.getSession(session.sessionToken).then(r => setSession(r.session)).catch(e => { if (e?.code === "INVALID_SESSION" || e?.code === "SESSION_NOT_FOUND") onLogout(); }); };
     const timer = window.setInterval(refresh, 30_000);
     window.addEventListener("focus", refresh);
     return () => { clearInterval(timer); window.removeEventListener("focus", refresh); };
@@ -931,6 +943,8 @@ export function App(): React.ReactElement {
 
   return (
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav" : ""}`}>
+      {recoveryOpen ? <PasswordRecovery api={api} token={recoveryToken} onClose={() => { setRecoveryOpen(false); setRecoveryToken(""); }} onComplete={() => { onLogout(); setRecoveryOpen(false); setRecoveryToken(""); setAuthView("login"); setAuthInfo("Password updated. Sign in with your new password."); }} /> : null}
+      {analyticsOpen && session?.role === "admin" ? <AdminAnalytics api={api} session={session} onClose={() => setAnalyticsOpen(false)} /> : null}
       {plusOpen ? <PlusPanel api={api} session={session} onClose={() => setPlusOpen(false)} /> : null}
       {session ? (
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
@@ -964,6 +978,7 @@ export function App(): React.ReactElement {
       ) : null}
       {session && session.ageVerified === true && topMenuOpen ? (
         <div className="rd-top-collapse" role="dialog" aria-label="Account functions">
+          {session.role === "admin" ? <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setAnalyticsOpen(true); }} aria-label="Open activity dashboard"><Icon name="board" className="rd-ui-icon" /></button> : null}
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); openSelfProfilePreview(); }} aria-label="Open profile preview">
             <Icon name="user" className="rd-ui-icon" />
           </button>
@@ -1065,7 +1080,7 @@ export function App(): React.ReactElement {
                   {authInfo ? <div style={{ color: "#ff7a88", marginBottom: 12 }}>{authInfo}</div> : null}
                   {pendingVerificationEmail ? (
                     <div style={{ color: "var(--muted)", marginBottom: 12 }}>
-                      SMS delivery may not be configured yet. Use the 6-digit code printed in the backend terminal.
+                      Check the email or phone associated with your account. Contact support if your code does not arrive.
                     </div>
                   ) : null}
 
@@ -1132,6 +1147,7 @@ export function App(): React.ReactElement {
                       {authView === "register" ? (
                         <label className="rd-field"><span className="rd-label">Promo code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" />{Date.now() < LAUNCH_END_MS ? <span className="rd-launch-offer">Use <strong>THEREDDOORLAUNCH</strong> for complimentary Plus through December 31, 2026. Redeem before January 1, 2027, Pacific time. No card required; no automatic renewal.</span> : null}</label>
                       ) : null}
+                      {authView === "register" ? <label className="rd-field" style={{ fontSize: 12, color: "var(--muted)" }}><span><input type="checkbox" checked={analyticsConsent} onChange={e => setAnalyticsConsent(e.target.checked)} /> Help improve Red Door (optional)</span><span>Share activity counts using a protected account identifier. Daily activity is kept for 35 days; inactive measurement records are deleted after 35 days. No message content, photos, or location. Change this in settings anytime.</span></label> : null}
                       {authView === "register" ? (
                         <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
                           Password must be at least 6 characters for this web build.
@@ -1146,6 +1162,7 @@ export function App(): React.ReactElement {
                     </form>
                   ) : null}
 
+                  {authView === "login" ? <button type="button" className="rd-btn" onClick={() => { setRecoveryToken(""); setRecoveryOpen(true); }}>Forgot password?</button> : null}
                   {pendingVerificationEmail && (authView === "register" || authView === "login") ? (
                     <form
                       onSubmit={(e) => {

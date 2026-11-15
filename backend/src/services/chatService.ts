@@ -101,6 +101,7 @@ export type ChatService = Readonly<{
   markRead(session: Session, chatKind: ChatKind, otherKey: string): Result<{ readAtMs: number }>;
   getThread(chatKind: ChatKind, aKey: string, bKey: string): ChatThread;
   snapshotState(): ChatPersistenceState;
+  purgeExpired(): void;
 }>;
 
 export type ChatPersistenceState = Readonly<{
@@ -360,7 +361,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
     if (!list || list.length === 0) return false;
     const before = list.length;
     const minCreatedAtMs = now - historyWindowMs;
-    const remaining = list.filter((m) => m.createdAtMs >= minCreatedAtMs && (typeof m.expiresAtMs !== "number" || now < m.expiresAtMs));
+    const remaining = list.filter((m) => m.createdAtMs >= minCreatedAtMs && (chatKind !== "cruise" || now < m.createdAtMs + cruiseRetentionHours * 3600000) && (typeof m.expiresAtMs !== "number" || now < m.expiresAtMs));
     if (remaining.length === 0) {
       messagesByThread.delete(threadId);
     } else if (remaining.length !== before) {
@@ -649,6 +650,9 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       return { chatId: id, chatKind, aKey: x, bKey: y };
     },
 
+    purgeExpired() {
+      for (const [threadId, messages] of messagesByThread) if (messages[0]) purgeExpiredInThread(messages[0].chatKind, threadId, nowMs());
+    },
     snapshotState(): ChatPersistenceState {
       return snapshotStateInternal();
     }

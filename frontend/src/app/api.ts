@@ -1,3 +1,4 @@
+import { type AnalyticsSummary } from "../../../shared/analytics";
 import { hasPlus, limits, launchGrant, type PlusData, type SavedSearch } from "../../../shared/plus";
 export type ServiceError = Readonly<{
   code: string;
@@ -136,6 +137,7 @@ export type ProfileUpdatePayload = Readonly<{
 }>;
 
 export type RegistrationProfileInput = Readonly<{
+  analyticsConsent?: boolean;
   promoCode?: string;
   displayName: string;
   age: number;
@@ -2519,6 +2521,11 @@ export async function uploadToLocalSignedUrl(uploadUrl: string, file: Blob, mime
 }
 
 function createLocalApiClient(): Readonly<{
+  requestPasswordReset(email: string): Promise<{ message: string }>;
+  confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
+  getPrivacy(sessionToken: string): Promise<{ analyticsConsent: boolean }>;
+  setPrivacy(sessionToken: string, analyticsConsent: boolean): Promise<{ analyticsConsent: boolean }>;
+  getAnalytics(sessionToken: string): Promise<AnalyticsSummary>;
   getBillingHealth(sessionToken: string): Promise<BillingHealth>;
   getPlus(sessionToken: string): Promise<PlusStatus>;
   savePlusPreferences(sessionToken: string, data: PlusData): Promise<{ ok: true }>;
@@ -2663,6 +2670,11 @@ function createLocalApiClient(): Readonly<{
   const feeCents = 499;
 
   return {
+    async requestPasswordReset() { throw { message: "Account recovery requires the live backend and email delivery." }; },
+    async confirmPasswordReset() { throw { message: "Password reset links must be used with the live backend." }; },
+    async getPrivacy(token) { const state = readState(), session = requireUserSession(state, token); return { analyticsConsent: state.usersById[session.userId!]?.plusData?.analyticsConsent === true }; },
+    async setPrivacy(token, analyticsConsent) { const state = readState(), session = requireUserSession(state, token), user = state.usersById[session.userId!]; writeState({ ...state, usersById: { ...state.usersById, [user.id]: { ...user, plusData: { ...user.plusData, analyticsConsent } } } }); return { analyticsConsent }; },
+    async getAnalytics() { throw { message: "Activity metrics are available on the backend, not in browser-local demo mode." }; },
     async getBillingHealth() { throw { message: "Billing checks require the deployed backend. This browser is running in local demo mode." }; },
     async getPlus(token) {
       const state = readState(), session = requireUserSession(state, token);
@@ -2758,7 +2770,8 @@ function createLocalApiClient(): Readonly<{
         verified: true,
         userType: "registered",
         tier: plusExpiresAtMs ? "premium" : "free",
-        plusExpiresAtMs
+        plusExpiresAtMs,
+        plusData: { analyticsConsent: profile.analyticsConsent === true }
       };
       writeState({
         ...state,
@@ -3971,6 +3984,11 @@ function createLocalApiClient(): Readonly<{
 }
 
 export function apiClient(basePath = "/api"): Readonly<{
+  requestPasswordReset(email: string): Promise<{ message: string }>;
+  confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
+  getPrivacy(sessionToken: string): Promise<{ analyticsConsent: boolean }>;
+  setPrivacy(sessionToken: string, analyticsConsent: boolean): Promise<{ analyticsConsent: boolean }>;
+  getAnalytics(sessionToken: string): Promise<AnalyticsSummary>;
   getBillingHealth(sessionToken: string): Promise<BillingHealth>;
   getPlus(sessionToken: string): Promise<PlusStatus>;
   savePlusPreferences(sessionToken: string, data: PlusData): Promise<{ ok: true }>;
@@ -4123,6 +4141,11 @@ export function apiClient(basePath = "/api"): Readonly<{
   }
 
   return {
+    async requestPasswordReset(email) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/request`, { method: "POST", headers: headers(), body: JSON.stringify({ email }) })) as Promise<{ message: string }>; },
+    async confirmPasswordReset(token, password) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/confirm`, { method: "POST", headers: headers(), body: JSON.stringify({ token, password }) })) as Promise<{ ok: true }>; },
+    async getPrivacy(token) { return readJsonOrThrow(await fetch(`${basePath}/account/privacy`, { headers: headers(token) })) as Promise<{ analyticsConsent: boolean }>; },
+    async setPrivacy(token, analyticsConsent) { return readJsonOrThrow(await fetch(`${basePath}/account/privacy`, { method: "PUT", headers: headers(token), body: JSON.stringify({ analyticsConsent }) })) as Promise<{ analyticsConsent: boolean }>; },
+    async getAnalytics(token) { return readJsonOrThrow(await fetch(`${basePath}/admin/analytics`, { headers: headers(token) })) as Promise<AnalyticsSummary>; },
     async getBillingHealth(token) { return readJsonOrThrow(await fetch(`${basePath}/admin/billing/health`, { headers: headers(token) })) as Promise<BillingHealth>; },
     async getPlus(token) { return readJsonOrThrow(await fetch(`${basePath}/plus`, { headers: headers(token) })) as Promise<PlusStatus>; },
     async savePlusPreferences(token, data) { return readJsonOrThrow(await fetch(`${basePath}/plus/preferences`, { method: "PUT", headers: headers(token), body: JSON.stringify(data) })) as Promise<{ ok: true }>; },
@@ -4153,7 +4176,7 @@ export function apiClient(basePath = "/api"): Readonly<{
       const res = await fetch(`${basePath}/auth/register`, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ email, password, phoneE164, promoCode: profile.promoCode, displayName: profile.displayName, age: profile.age, stats: profile.stats ?? {} })
+        body: JSON.stringify({ email, password, phoneE164, promoCode: profile.promoCode, analyticsConsent: profile.analyticsConsent === true, displayName: profile.displayName, age: profile.age, stats: profile.stats ?? {} })
       });
       return (await readJsonOrThrow(res)) as RegisterResponse;
     },
