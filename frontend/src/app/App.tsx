@@ -1,3 +1,4 @@
+import { isPlusFeature, type PlusFeature } from "./PlusShowcase";
 import { NOTIFICATION_ENABLED, NOTIFICATION_DISCREET } from "./NotificationSettings";
 import afterDark from "../assets/after-dark.png";
 import { PasswordRecovery } from "./PasswordRecovery";
@@ -342,6 +343,7 @@ export function App(): React.ReactElement {
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [promoCode, setPromoCode] = useState("");
+  const [plusFeature, setPlusFeature] = useState<PlusFeature | undefined>();
   const [plusOpen, setPlusOpen] = useState(false);
   const [registerAge, setRegisterAge] = useState<string>("");
   const [verificationCode, setVerificationCode] = useState<string>("");
@@ -945,7 +947,7 @@ export function App(): React.ReactElement {
   }, [activeTab]);
 
   useEffect(() => {
-    const open = () => setPlusOpen(true);
+    const open = (event: Event) => { const feature = (event as CustomEvent<{feature?:unknown}>).detail?.feature; setPlusFeature(isPlusFeature(feature) ? feature : undefined); setPlusOpen(true); };
     window.addEventListener("rd:open-plus", open);
     return () => window.removeEventListener("rd:open-plus", open);
   }, []);
@@ -965,14 +967,14 @@ export function App(): React.ReactElement {
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav" : ""}`}>
       {recoveryOpen ? <PasswordRecovery api={api} token={recoveryToken} onClose={() => { setRecoveryOpen(false); setRecoveryToken(""); }} onComplete={() => { onLogout(); setRecoveryOpen(false); setRecoveryToken(""); setAuthView("login"); setAuthInfo("Password updated. Sign in with your new password."); }} /> : null}
       {analyticsOpen && session?.role === "admin" ? <AdminAnalytics api={api} session={session} onClose={() => setAnalyticsOpen(false)} /> : null}
-      {plusOpen ? <PlusPanel api={api} session={session} onClose={() => setPlusOpen(false)} /> : null}
+      {plusOpen ? <PlusPanel api={api} session={session} feature={plusFeature} onClose={() => setPlusOpen(false)} onRegister={() => { setPlusOpen(false); onLogout(); setAuthView("register"); }} /> : null}
       {session ? (
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
             {session.ageVerified === true ? (
               <div className="rd-topbar-session">
                 <div className="rd-brand" aria-label="Red Door">
-                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Red Door</div><button type="button" className="rd-plus-badge" onClick={() => setPlusOpen(true)} aria-label="Open Red Door Plus">{session && hasPlus(session) ? "PLUS" : "+"}</button>
+                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Red Door</div><button type="button" className="rd-plus-badge" onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Red Door Plus">{session && hasPlus(session) ? "PLUS ✓" : "PLUS +"}</button>
                 </div>
                 <button
                   type="button"

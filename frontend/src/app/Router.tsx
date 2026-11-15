@@ -1,3 +1,4 @@
+import { PlusMembershipCard } from "./PlusShowcase";
 import { displayNameForIdentity, isAnonymousIdentity } from "../../../shared/identity";
 import { Sheet } from "./Sheet";
 import { NotificationSettings } from "./NotificationSettings";
@@ -1092,7 +1093,7 @@ function CruiseSurface({
 
   async function handleTravelLocationSelected(coords: { lat: number; lng: number }): Promise<void> {
     if (!travelPickerArmed) return;
-    if (!hasPlus(session)) { openPlus(); return; }
+    if (!hasPlus(session)) { openPlus("travel"); return; }
     const lat = Number(coords.lat.toFixed(6));
     const lng = Number(coords.lng.toFixed(6));
     const confirmed = window.confirm(
@@ -1216,7 +1217,7 @@ function CruiseSurface({
       height="100%"
       visible={mobileTab === "map"}
       travelPickerArmed={travelPickerArmed}
-      onToggleTravelPicker={() => { if (!hasPlus(session)) { openPlus(); return; } setTravelPickerArmed((prev) => !prev); }}
+      onToggleTravelPicker={() => { if (!hasPlus(session)) { openPlus("travel"); return; } setTravelPickerArmed((prev) => !prev); }}
       onTravelLocationSelected={(coords) => void handleTravelLocationSelected(coords)}
     />
   );
@@ -2420,7 +2421,7 @@ function CruiseChat({
   }, [api, me, session.sessionToken]);
 
   async function addThirdMember(): Promise<void> {
-    if (!hasPlus(session)) { openPlus(); return; }
+    if (!hasPlus(session)) { openPlus("chats"); return; }
     if (!thirdCandidateKey.trim()) return;
     if (!peerKey.trim()) {
       setLastError("Select a user first.");
@@ -3591,7 +3592,7 @@ function ThreadsPanel({
   );
 
   async function sendThirdInvite(): Promise<void> {
-    if (!hasPlus(session)) { openPlus(); return; }
+    if (!hasPlus(session)) { openPlus("chats"); return; }
     if (!selectedPeerKey || !thirdCandidateKey) return;
     if (!rows.some((row) => row.key === thirdCandidateKey)) {
       setLastError("You can only add a third user you have previously messaged.");
@@ -3621,7 +3622,7 @@ function ThreadsPanel({
     const next = new Set(pinnedKeys);
     if (next.has(key)) next.delete(key);
     else {
-      if (next.size >= limits(session).pins) { openPlus(); return; }
+      if (next.size >= limits(session).pins) { openPlus("chats"); return; }
       next.add(key);
     }
     void api.savePlusPreferences(session.sessionToken, { pinnedKeys: [...next] }).then(() => setPinnedKeys(next)).catch(e => setLastError(normalizeErrorMessage(e)));
@@ -6296,7 +6297,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
                 disabled={saving}
                 onSelect={setVideoFile}
               />
-              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => { if (!hasPlus(session)) { openPlus(); return; } void upload("video", videoFile); }}>
+              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => { if (!hasPlus(session)) { openPlus("profile"); return; } void upload("video", videoFile); }}>
                 {hasPlus(session) ? "UPLOAD VIDEO" : "UNLOCK PROFILE VIDEO · PLUS"}
               </button>
             </div>
@@ -7260,7 +7261,7 @@ export function Router({
       {settingsSection === "profile" ? <SettingsProfile api={api} session={session} setLastError={setProfileError} /> : null}
       {settingsSection === "privacy" ? <PrivacySettings api={api} session={session} /> : null}
       {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings /></section> : null}
-      {settingsSection === "membership" ? <section className="rd-card rd-settings-body"><div className="rd-eyebrow">RED DOOR PLUS</div><h2>{hasPlus(session) ? "More possibilities. Already yours." : "Make every connection count."}</h2><p className="rd-muted">Advanced filters, saved searches, private albums, read receipts, and group chat invitations.</p><strong>CAD $7.99 / month</strong><button className="rd-btn primary" onClick={openPlus}>{hasPlus(session) ? "Manage membership" : "Explore Plus"}</button></section> : null}
+      {settingsSection === "membership" ? <PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /> : null}
       {settingsSection === "account" ? <SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /> : null}
       </div>
     </div>

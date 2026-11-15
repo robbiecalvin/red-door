@@ -20,6 +20,10 @@ The active frontend product emphasis is Cruise mode. Date and Hybrid logic exist
 - Guest screen names always show **Anon**, including legacy guest profiles. Guest sessions still keep separate identities and conversations.
 - Message sending status, retry on rejection, and a composer that fits the available mobile viewport.
 
+## Red Door Plus
+
+Plus now includes interactive benefit previews, a Free/Plus comparison, clear CAD $7.99 monthly pricing, and contextual upgrade entry points for filters, Travel mode, chat limits, and profile video. Active members get shortcuts into their benefits. Guest members can start registration directly from the Plus screen.
+
 ## Tech stack
 
 - Frontend: React 18, TypeScript, Vite 5, MapLibre GL
