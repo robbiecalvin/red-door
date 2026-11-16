@@ -179,3 +179,13 @@ and backup recovery, actual provider map rendering, hosted safety/reconnect flow
 physical phones, age-assurance requirements and business/provider eligibility remain
 unverified. Pricing, production account settings and current store rules were not
 assessed successfully. Native store delivery is a separate blocked decision.
+
+## Deployment follow-up
+
+The owner subsequently authorized publication. The initial push deployed Pages,
+but GitHub CI failed its test step. Reproduction under Node 20.20.2 produced exactly
+one failure: the Vancouver promotion-boundary check. Node 20's bundled tzdata 2025c
+reports the old winter offset; the validated Node 24.22.1 runtime uses tzdata 2026e.
+CI, Quality Gates and Pages now select Node 24 so builds/tests use current timezone
+rules. No age/email/payment assertions were disabled. Final workflow outcomes are
+reported in the deployment conversation; this note alone is not deployment evidence.
