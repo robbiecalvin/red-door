@@ -1,3 +1,4 @@
+import { InstallApp } from "./Pwa";
 import { permittedLocation } from "./location";
 import { AdminLaunchChecks } from "./AdminLaunchChecks";
 import { BillingSettings, PromoCodeForm } from "./BillingSettings";
@@ -7257,7 +7258,7 @@ export function Router({
   const setPromotedError = useMemo(() => makeScopedSetLastError("promoted"), [makeScopedSetLastError]);
 
   const unifiedSettingsSurface = (
-    <div className="rd-settings-page"><div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR SPACE</div><h1>Make it yours.</h1><p>Your profile, your privacy, your preferences.</p></div></div>
+    <div className="rd-settings-page"><div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR SPACE</div><h1>Make it yours.</h1><InstallApp /><p>Your profile, your privacy, your preferences.</p></div></div>
       <div className="rd-settings-tabs" role="tablist" aria-label="Settings sections">{["profile", "privacy", "notifications", "membership", "account"].map(section => <button key={section} role="tab" aria-selected={settingsSection === section} onClick={() => setSettingsSection(section)}>{section[0].toUpperCase() + section.slice(1)}</button>)}</div>
       <div role="tabpanel" aria-label={settingsSection}>
       {settingsSection === "profile" ? <div className="rd-profile-settings-stack"><SettingsProfile api={api} session={session} setLastError={setProfileError} /><MemberEditor api={api} session={session}/><PhotoVerificationPanel api={api} session={session}/></div> : null}

@@ -1,3 +1,4 @@
+import { InstallApp } from "./Pwa";
 import { AccountNotices } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { useLiveInbox } from "./useLiveInbox";
@@ -1023,6 +1024,7 @@ export function App(): React.ReactElement {
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("submissions"); }} aria-label="Open submissions">
             <Icon name="book" className="rd-ui-icon" />
           </button>
+          <InstallApp />
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); void onLogout(); }} aria-label="Log out">
             <Icon name="logout" className="rd-ui-icon" />
           </button>
@@ -1128,6 +1130,7 @@ export function App(): React.ReactElement {
                   ) : null}
 
                   <p className="rd-auth-note"><Icon name="shield" />For adults 18 and over. You choose what to share.</p>
+                  <InstallApp />
 
                   {authView === "register" || authView === "login" ? (
                     <form

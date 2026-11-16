@@ -15,11 +15,12 @@
     "pages:sync": "node scripts/sync-pages-static.mjs",
     "build:pages": "npm run build && npm run pages:sync",
     "build:obfuscated": "npm run build && node scripts/obfuscate-dist.cjs",
-    "preview": "vite preview --strictPort --port 5173",
+    "preview": "node scripts/preview.mjs",
     "test:smoke": "jest --runInBand --coverage=false tests/apiSmoke.test.ts",
     "launch:check": "node scripts/check-launch.mjs",
     "backup": "node scripts/backup.mjs",
-    "test:production": "node scripts/test-production-install.cjs"
+    "test:production": "node scripts/test-production-install.cjs",
+    "test:pwa": "node scripts/check-pwa-browser.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.997.0",

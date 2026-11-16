@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { writePwaBuild } from "./scripts/build-pwa.mjs";
 import react from "@vitejs/plugin-react";
 import { build } from "vite";
 
@@ -15,6 +16,7 @@ async function main() {
     logLevel: "info",
     root: "frontend",
     define: {
+      __DUALMODE_PWA_ENABLED__: true,
       __DUALMODE_MAP_STYLE_URL__: JSON.stringify(process.env.DUALMODE_MAP_STYLE_URL ?? "https://tiles.openfreemap.org/styles/dark"),
       __DUALMODE_DEFAULT_CENTER_LAT__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LAT ?? "0"),
       __DUALMODE_DEFAULT_CENTER_LNG__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LNG ?? "0"),
@@ -33,6 +35,7 @@ async function main() {
       emptyOutDir: true,
     },
   });
+  writePwaBuild();
   if(!publicBase.hostname.endsWith("github.io"))fs.writeFileSync("dist/CNAME",publicBase.hostname+"\n");
 }
 

@@ -11,6 +11,14 @@ Red Door is a cruise-first social platform with:
 
 The active frontend product emphasis is Cruise mode. Date and Hybrid logic exists server-side and in services/tests, with frontend behavior still cruise-first.
 
+## Install Red Door on your phone
+
+Red Door can be installed from the website as a PWA. Choose **Install Red Door** on the entrance screen or in settings. On iPhone/iPad, open Safari and choose **Share → Add to Home Screen**. On Android, use Chrome's **Install app** option when offered.
+
+Installation adds a home-screen icon and an app window where supported. Messages, people, photos and payments still need a connection. The offline page helps you reconnect; private conversations and photos are excluded from the PWA cache. Updates wait for you to choose Reload.
+
+See [installation, privacy and testing details](docs/pwa.md). Actual iPhone/Android installation and push delivery still require device rehearsal.
+
 ## UI refresh
 
 - Atmospheric red-door login artwork and a mobile-first black and red layout.

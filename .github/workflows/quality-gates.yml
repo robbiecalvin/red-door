@@ -31,6 +31,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check PWA installation, offline privacy and updates
+        run: |
+          export CHROMIUM_PATH="$(command -v google-chrome || command -v chromium || true)"
+          if [ -z "$CHROMIUM_PATH" ]; then
+            echo "A system Chromium browser is required for the PWA checks."
+            exit 1
+          fi
+          npm run test:pwa
+
       - name: Production-only backend startup
         run: npm run test:production
 
