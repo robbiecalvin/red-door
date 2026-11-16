@@ -4,7 +4,7 @@ Date: November 16, 2026 (America/Vancouver).
 Repository: robbiecalvin/red-door. Branch: `work`.
 Baseline commit: `033ddb710301310d1e03959676aa0ed5f6f994eb`.
 Tests below ran against the modified local source based on that commit; baseline CI
-is not evidence for this patch. The final local commit is recorded in Git history.
+is not evidence for this patch. Implementation commit: `85597e1315a65045eff0250e107dbc93403bc9dc`. Validation ran against the identical implementation immediately before that local commit. This subsequent report update records its SHA and changes no application code.
 Environment: Codex Cloud Linux, Node 24.22.1, npm 11.9.0, Chromium via Playwright;
 isolated JSON storage, real TLS SMTP fixture, local Stripe HTTP fixture and the
 PGlite PostgreSQL engine. No production data, credentials, charges or deployment.
