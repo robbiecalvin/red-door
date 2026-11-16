@@ -19,7 +19,7 @@ export function launchGrant(code: unknown, now = Date.now()): number | undefined
   if (now >= LAUNCH_END_MS) throw new Error("This promotion expired on January 1, 2027 (Pacific time).");
   return LAUNCH_END_MS;
 }
-export const PLUS_FEATURES = ["Travel mode", "Advanced filters", "Saved searches", "100 favorites and 50 pinned chats", "20-photo private album with sharing controls", "12 gallery photos and profile video", "Read receipts", "Group chats", "Remembered discovery preferences", "MD nearby companion directory (MD subscription sold separately)"] as const;
+export const PLUS_FEATURES = ["Travel mode", "Advanced filters", "Saved searches", "100 favorites and 50 pinned chats", "20-photo private album with sharing controls", "12 gallery photos and profile video", "Read receipts", "Group chats", "Remembered discovery preferences"] as const;
 export function limits(identity: PlusIdentity, now = Date.now()) {
   return hasPlus(identity, now)
     ? { favorites: 100, pins: 50, gallery: 12, privateAlbum: 20 }

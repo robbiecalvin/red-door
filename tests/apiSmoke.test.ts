@@ -1,4 +1,4 @@
-import { mdSignature, validMdSignature } from "../backend/src/services/mdBridge";
+import { createTlsMail } from "./fixtures/tlsMail";
 import { WebSocket } from "ws";
 import { createAuthService } from "../backend/src/services/authService";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -18,12 +18,10 @@ const periodEnd = Math.floor(Date.now() / 1000) + 30 * 86400;
 let providerState: any = { id: "sub_smoke", object: "subscription", customer: "cus_smoke", metadata: {}, status: "active", latest_invoice: { paid: true, status: "paid" }, current_period_end: periodEnd, items: { data: [{ price }] } };
 let resetToken = "";
 const MD_SECRET="smoke-only-shared-md-secret-at-least-32-characters";
-let mdBuyerId="",mdReceiptRevoked=false,checkoutParams=new URLSearchParams(),setupCustomer="cus_renewal",setupUserId="",scheduleCreates=0,scheduleState:any={id:"sched_launch",status:"not_started",metadata:{}},setupCheckout:any=null;
-const FRIENDLY_CODE="frog-banana-door-mango-lantern-otter";
-async function mdRequest(route:string,data:unknown,expected=200,nonce=crypto.randomUUID()){
-  const raw=JSON.stringify(data),timestamp=String(Math.floor(Date.now()/1000));const result=await fetch(base+route,{method:"POST",headers:{"content-type":"application/json","x-md-timestamp":timestamp,"x-md-nonce":nonce,"x-md-signature":mdSignature(MD_SECRET,timestamp,nonce,"POST",route,raw)},body:raw});const body=await result.json();expect({route,status:result.status}).toEqual({route,status:expected});return body;
-}
+let checkoutParams=new URLSearchParams(),setupCustomer="cus_renewal",setupUserId="",scheduleCreates=0,scheduleState:any={id:"sched_launch",status:"not_started",metadata:{}},setupCheckout:any=null;
+let mail: Awaited<ReturnType<typeof createTlsMail>>;
 async function customWebhook(type:string,object:unknown,id:string){const raw=JSON.stringify({id,type,data:{object}}),timestamp=Math.floor(Date.now()/1000),mac=crypto.createHmac("sha256",WEBHOOK_SECRET).update(`${timestamp}.${raw}`).digest("hex");return fetch(base+"/billing/webhook",{method:"POST",headers:{"content-type":"application/json","stripe-signature":`t=${timestamp},v1=${mac}`},body:raw});}
+let upstreamRequests=0;
 let providerPosts = 0, backend: ChildProcess, stub: http.Server, base: string, root: string;
 async function freePort() { const server = net.createServer(); server.listen(0, "127.0.0.1"); await once(server, "listening"); const port = (server.address() as net.AddressInfo).port; await new Promise<void>(r => server.close(() => r())); return port; }
 async function request(route: string, data?: unknown, token?: string, method?: string, expected = 200): Promise<any> {
@@ -32,7 +30,14 @@ async function request(route: string, data?: unknown, token?: string, method?: s
 }
 async function account(name: string, consent = false, promoCode?: string) {
   const email = name === "admin" ? "smoke-admin@example.com" : `${name}@example.com`;
-  if (name !== "admin") await request("/auth/register", { email, password: "Smoke-test123!", phoneE164: "", analyticsConsent: consent, promoCode });
+  if (name !== "admin") {
+    const before=mail.messages.length;
+    await request("/auth/register", { email, password: "Smoke-test123!", phoneE164: "", age:25, analyticsConsent: consent, promoCode });
+    await request("/auth/login", {email,password:"Smoke-test123!"},undefined,undefined,403);
+    const message=await mail.next(before),code=/verification code is (\d{6})/.exec(message)?.[1];
+    expect(code).toMatch(/^\d{6}$/);
+    await request("/auth/verify-email", {email,code});
+  }
   const login = await request("/auth/login", { email, password: "Smoke-test123!" });
   const token = login.session.sessionToken, id = login.session.userId;
   await request("/auth/verify-age", { sessionToken: token, ageYears: 25 });
@@ -48,7 +53,7 @@ let admin: { token: string; id: string }, alice: { token: string; id: string }, 
 let backendCwd: string | undefined;
 async function startBackend(){
   backend = spawn(process.execPath, ["--import", require.resolve("tsx"), "--import", path.resolve(__dirname, "fixtures/stripe-fetch.mjs"), path.resolve(__dirname, "../backend/src/server.ts")], {
-    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", SMTP_HOST: "", TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
+    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", NODE_EXTRA_CA_CERTS:mail.ca, SMTP_HOST: "127.0.0.1", SMTP_PORT:String(mail.port), SMTP_SECURE:"true", SMTP_USER:"fixture-user", SMTP_PASS:"fixture-pass", SMTP_FROM:"noreply@example.com", TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
   });
   let startup = ""; backend.stderr?.on("data", chunk => { startup += chunk; });
   let ready = false;
@@ -62,16 +67,14 @@ async function startBackend(){
 }
 beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "reddoor-api-smoke-"));
+  mail=await createTlsMail(root);
   const seed = createAuthService({ jwtSecret: "smoke-only-test-key", userStoreFilePath: path.join(root, "backend/.data/auth-users.json"), skipEmailVerification: true });
   seed.adminCreateUser("smoke-admin@example.com", "Smoke-test123!", null, "registered", "free", "admin");
   seed.adminCreateUser("reset-smoke@example.com", "Smoke-test123!", null, "registered", "free", "user");
   resetToken = seed.requestPasswordReset("reset-smoke@example.com")!.token;
   stub = http.createServer(async (req, res) => {
+    upstreamRequests++;
     const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const raw=Buffer.concat(chunks).toString("utf8");const params=new URLSearchParams(raw);
-    if(req.url==="/integrations/red-door/chat/redeem"){
-      const valid=validMdSignature(MD_SECRET,String(req.headers["x-md-timestamp"]),String(req.headers["x-md-nonce"]),"POST",req.url,raw,String(req.headers["x-md-signature"]));const input=JSON.parse(raw);
-      res.setHeader("content-type","application/json");if(!valid||input.viewerId!==mdBuyerId||input.providerId!=="md-provider-one"||input.code!==FRIENDLY_CODE||mdReceiptRevoked){res.statusCode=403;return res.end(JSON.stringify({message:"Invalid paid grant"}));}return res.end(JSON.stringify({paid:true,viewerId:mdBuyerId,providerId:input.providerId,grantId:"md-grant-one",expiresAtMs:Date.now()+30*86400000}));
-    }
     if(req.url==="/v1/customers"&&req.method==="POST")return res.end(JSON.stringify({id:setupCustomer}));
     if(req.url?.startsWith("/v1/customers/")&&req.method==="POST")return res.end(JSON.stringify({id:setupCustomer,invoice_settings:{default_payment_method:"pm_saved"}}));
     if(req.url?.startsWith("/v1/setup_intents/"))return res.end(JSON.stringify({id:"seti_launch",status:"succeeded",customer:setupCustomer,payment_method:"pm_saved",metadata:{userId:setupUserId}}));
@@ -96,6 +99,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (backend && backend.exitCode === null) { backend.kill("SIGTERM"); await once(backend, "exit"); }
   if (stub?.listening) await new Promise<void>(resolve => stub.close(() => resolve()));
+  if(mail)await mail.close();
   if (root) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -262,10 +266,11 @@ describe("Core API and payment lifecycle smoke checks", () => {
       expect((await request("/auth/login", { email: "reset-smoke@example.com", password: "Changed-Smoke123!" })).session.userId).toBeTruthy();
     } finally { ws.terminate(); }
   });
-  it("Given missing mail delivery When any account requests recovery Then returns the same unavailable result", async () => {
-    const known = await request("/auth/password-reset/request", { email: "alice@example.com" }, undefined, undefined, 503);
-    const unknown = await request("/auth/password-reset/request", { email: "unknown@example.com" }, undefined, undefined, 503);
+  it("Given configured mail delivery When known or unknown accounts request recovery Then returns the same safe response", async () => {
+    const known = await request("/auth/password-reset/request", { email: "alice@example.com" });
+    const unknown = await request("/auth/password-reset/request", { email: "unknown@example.com" });
     expect(known).toEqual(unknown);
+    await mail.next(mail.messages.length-1);
     await request("/auth/password-reset/confirm", { token: "invalid", password: "New-Smoke123!" }, undefined, undefined, 400);
   });
   it("Given a private photo object key When requested through the chat-media signer Then rejects it", async () => {
@@ -347,10 +352,10 @@ describe("Core API and payment lifecycle smoke checks", () => {
     await request("/block",{targetKey:`user:${bob.id}`},token);await request("/chat/send",{chatKind:"cruise",toKey:publicKey,text:"Blocked reply"},bob.token,undefined,403);
   });
 
-  it("Given gift codes When redeemed during or after registration Then records one use per account and only the provider code requests a tutorial",async()=>{
+  it("Given gift codes When redeemed during or after registration Then records one use per account without provider tutorials",async()=>{
     const gifted=await account("gifted-existing");await request("/plus/redeem",{code:"REDDOORUNLOCKED"},gifted.token);let state=await request("/plus",undefined,gifted.token);expect(state.active).toBe(true);expect(state.expiresAtMs).toBe(LAUNCH_END_MS);expect(state.providerTutorialPending).toBe(false);await request("/plus/redeem",{code:"REDDOORUNLOCKED"},gifted.token,undefined,409);
-    await request("/plus/redeem",{code:"REDDOORLAUNCH"},gifted.token);state=await request("/plus",undefined,gifted.token);expect(state.providerTutorialPending).toBe(true);await request("/plus/tutorial/dismiss",{},gifted.token);expect((await request("/plus",undefined,gifted.token)).providerTutorialPending).toBe(false);
-    const registered=await account("gifted-at-registration",false,"REDDOORLAUNCH");expect((await request("/plus",undefined,registered.token)).providerTutorialPending).toBe(true);
+    await request("/plus/redeem",{code:"REDDOORLAUNCH"},gifted.token);state=await request("/plus",undefined,gifted.token);expect(state.providerTutorialPending).toBe(false);await request("/plus/tutorial/dismiss",{},gifted.token,undefined,410);expect((await request("/plus",undefined,gifted.token)).providerTutorialPending).toBe(false);
+    const registered=await account("gifted-at-registration",false,"REDDOORLAUNCH");expect((await request("/plus",undefined,registered.token)).providerTutorialPending).toBe(false);
   });
   it("Given launch access When saving billing Then requires consent and schedules January 1 without extending complimentary access or reenrolling after cancellation",async()=>{
     const member=await account("renewal-enrollment",false,"REDDOORUNLOCKED");await request("/billing/enroll",{acceptRenewal:false},member.token,undefined,400);
@@ -360,35 +365,36 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect((await customWebhook("checkout.session.completed",setupCheckout,"evt_setup_replay")).status).toBe(200);expect(scheduleCreates).toBe(1);
     await request("/billing/enrollment/cancel",{},member.token);expect((await request("/plus",undefined,member.token)).autoRenew).toBe(false);expect((await customWebhook("checkout.session.completed",setupCheckout,"evt_setup_replay_after_cancel")).status).toBe(200);expect(scheduleCreates).toBe(1);expect((await request("/plus",undefined,member.token)).autoRenew).toBe(false);
   });
-  it("Given a linked MD provider When signed live assertions and paid chat grants arrive Then enforces Plus, distance, ownership, code binding, idempotence and revocation",async()=>{
-    const provider=await account("md-provider",false,"REDDOORLAUNCH"),buyer=await account("md-buyer",false,"REDDOORUNLOCKED"),other=await account("md-other",false,"REDDOORUNLOCKED");mdBuyerId=buyer.id;
-    await request("/md/discover",{lat:49.28,lng:-123.12},bob.token,undefined,402);await request("/md/account/key",{acknowledge:false},provider.token,undefined,400);
-    const key=await request("/md/account/key",{acknowledge:true},provider.token);expect(key.key).toMatch(/^rd_link_/);expect(JSON.stringify(await request("/md/account",undefined,provider.token))).not.toContain(key.key);
-    const data={email:"md-provider@example.com",key:key.key,providerId:"md-provider-one",paid:true,liveProfile:true,adultVerified:true,paidUntilMs:Date.now()+30*86400000,name:"MD companion",photoUrl:"https://meetdiscreet.ca/photos/test.png",profileUrl:"https://meetdiscreet.ca/providers/md-provider-one",lat:49.28,lng:-123.12};
-    await request("/integrations/md/link",data,undefined,undefined,401);const nonce=crypto.randomUUID();const link=await mdRequest("/integrations/md/link",data,200,nonce);await mdRequest("/integrations/md/link",data,409,nonce);await mdRequest("/integrations/md/live",{...data,linkId:link.linkId,active:true});
-    const nearby=await request("/md/discover",{lat:49.28,lng:-123.12},buyer.token);expect(nearby.providers).toHaveLength(1);expect(JSON.stringify(nearby)).not.toContain(provider.id);expect(nearby.providers[0].lat).toBeUndefined();expect(nearby.providers[0].liveUntilMs).toBeLessThanOrEqual(Date.now()+600000);
-    expect((await request("/md/discover",{lat:51,lng:-123.12},buyer.token)).providers).toHaveLength(0);
-    const handoff=await request("/md/handoff",{providerId:data.providerId},buyer.token),ticket=new URL(handoff.url).searchParams.get("rd_handoff");expect(new URL(handoff.url).origin).toBe("https://meetdiscreet.ca");expect((await mdRequest("/integrations/md/handoff",{ticket,providerId:data.providerId})).viewerId).toBe(buyer.id);
-    await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token,undefined,403);await request("/md/chat/redeem",{providerId:data.providerId,code:"frog"},buyer.token,undefined,400);await request("/md/chat/redeem",{providerId:data.providerId,code:FRIENDLY_CODE},other.token,undefined,403);await request("/md/chat/redeem",{providerId:data.providerId,code:FRIENDLY_CODE},buyer.token);
-    const mdSocket=new WebSocket(base.replace("http:","ws:"));await once(mdSocket,"open");const authReply=once(mdSocket,"message");mdSocket.send(JSON.stringify({type:"auth",payload:{sessionToken:buyer.token}}));await authReply;
-    const mdFrame=once(mdSocket,"message");
-    const id=crypto.randomUUID(),sent=await request("/md/messages",{providerId:data.providerId,text:"Hello from Red Door",clientMessageId:id},buyer.token);const repeated=await request("/md/messages",{providerId:data.providerId,text:"Hello from Red Door",clientMessageId:id},buyer.token);expect(repeated.message.messageId).toBe(sent.message.messageId);
-    const frame=JSON.parse(String((await mdFrame)[0]));mdSocket.terminate();expect(frame.type).toBe("md_message");expect(frame.payload.memberIds).toBeUndefined();expect(JSON.stringify(frame)).not.toContain(provider.id);
-    const response=await mdRequest("/integrations/md/messages",{linkId:link.linkId,providerId:data.providerId,viewerId:buyer.id,text:"Hello from MD",clientMessageId:crypto.randomUUID()});expect(response.message.fromKey).toBe("md:md-provider-one");expect(JSON.stringify(response)).not.toContain(provider.id);
-    expect((await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token)).messages).toHaveLength(2);await request(`/md/messages?providerId=${data.providerId}&viewerId=${buyer.id}`,undefined,other.token,undefined,403);
-    await request("/block",{targetKey:`user:${provider.id}`},buyer.token);expect((await mdRequest("/integrations/md/inbox",{linkId:link.linkId,providerId:data.providerId})).threads).toHaveLength(0);await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token,undefined,403);await request("/unblock",{targetKey:`user:${provider.id}`},buyer.token);
-    await mdRequest("/integrations/md/chat/revoke",{grantId:"md-grant-one",providerId:data.providerId});mdReceiptRevoked=true;await request(`/md/messages?providerId=${data.providerId}`,undefined,buyer.token,undefined,403);
-    await request("/md/account/key",{acknowledge:true},provider.token);expect((await request("/md/discover",{lat:49.28,lng:-123.12},buyer.token)).providers).toHaveLength(0);await mdRequest("/integrations/md/link",data,403);
+  it("Given registration or guest entry When age is missing, invalid or under eighteen Then enforces the server boundary",async()=>{
+    for(const age of [undefined,null,"18",17,18.5,121]){
+      const result=await request("/auth/register",{email:"age-check@example.com",password:"Smoke-test123!",age},undefined,undefined,400);
+      expect(result.code).toBe("AGE_GATE_REQUIRED");
+    }
+    const guest=await request("/auth/guest",{});
+    await request("/chat/send",{chatKind:"cruise",toKey:`user:${alice.id}`,text:"Missing age declaration"},guest.session.sessionToken,undefined,403);
+    for(const ageYears of [undefined,null,"18",17,18.5,121])await request("/auth/verify-age",{sessionToken:guest.session.sessionToken,ageYears},undefined,undefined,ageYears===17?403:400);
+    expect((await request("/auth/verify-age",{sessionToken:guest.session.sessionToken,ageYears:18})).session.ageVerified).toBe(true);
+  });
+
+  it("Given the standalone release When any MD boundary is requested Then denies all methods without upstream calls or data mutation",async()=>{
+    const before=upstreamRequests;
+    const file=path.join(backendCwd ?? root,"backend/.data/community.json");
+    const snapshot=fs.existsSync(file)?fs.readFileSync(file,"utf8"):null;
+    for(const route of ["/api/md/account","/api/integrations/md/link","/md/account","/md/account/key","/md/discover","/md/handoff","/md/chat/redeem","/md/messages","/md/inbox","/integrations/md/link","/integrations/md/live","/integrations/md/messages","/integrations/md/chat/revoke"]){
+      for(const method of ["GET","POST","DELETE"]){const result=await request(route,method==="GET"?undefined:{},alice.token,method,404);expect(result.code).toBe("FEATURE_DISABLED");}
+    }
+    expect(upstreamRequests).toBe(before);
+    expect(fs.existsSync(file)?fs.readFileSync(file,"utf8"):null).toBe(snapshot);
   });
 
   it("Given launch diagnostics When accessed by admins Then reports actual configuration and never treats connection checks as launch approval",async()=>{
     await request("/admin/launch/health",undefined,undefined,undefined,401);
     await request("/admin/launch/health",undefined,bob.token,undefined,403);
     const health=await request("/admin/launch/health",undefined,admin.token);
-    expect(health.checks.stripe.status).toBe("passed");expect(health.checks.smtp.status).toBe("needs_configuration");expect(health.checks.storage.status).toBe("needs_configuration");expect(health.automatedChecksPassed).toBe(false);expect(health.launchApproved).toBe(false);
+    expect(health.checks.stripe.status).toBe("passed");expect(health.checks.smtp.status).toBe("passed");expect(health.checks.md).toBeUndefined();expect(health.checks.storage.status).toBe("needs_configuration");expect(health.automatedChecksPassed).toBe(false);expect(health.launchApproved).toBe(false);
     expect(JSON.stringify(health)).not.toContain(WEBHOOK_SECRET);expect(JSON.stringify(health)).not.toContain(MD_SECRET);
     const cli=await new Promise<{code:number|null;output:string}>(resolve=>{const child=spawn(process.execPath,[path.resolve(__dirname,"../scripts/check-launch.mjs"),"--api-url",base,"--site-url",base,"--allow-local"],{env:{...process.env,REDDOOR_ADMIN_SESSION_TOKEN:admin.token}});let output="";child.stdout.on("data",chunk=>{output+=chunk;});child.on("exit",code=>resolve({code,output}));});
-    const cliReport=JSON.parse(cli.output);expect(cliReport.checks.apiHealth.status).toBe("passed");expect(cliReport.checks.smtp.status).toBe("needs_configuration");expect(cli.code).toBe(1);expect(cli.output).not.toContain(admin.token);
+    const cliReport=JSON.parse(cli.output);expect(cliReport.checks.apiHealth.status).toBe("passed");expect(cliReport.checks.smtp.status).toBe("passed");expect(cli.code).toBe(1);expect(cli.output).not.toContain(admin.token);
 
   });
   it("Given persisted accounts and private state When the backend restarts and an offline backup is restored Then preserves entitlements, messages, safety, media and favorites",async()=>{
@@ -401,8 +407,6 @@ describe("Core API and payment lifecycle smoke checks", () => {
 
     await request("/report/user",{targetKey:`user:${peer.id}`,reason:"Restore drill safety report"},member.token);
     await request("/block",{targetKey:`user:${peer.id}`},member.token);
-    const key=await request("/md/account/key",{acknowledge:true},member.token);expect(key.key).toMatch(/^rd_link_/);
-    const nonce=crypto.randomUUID();await mdRequest("/integrations/md/status",{linkId:"restore-check",providerId:"restore-check"},200,nonce);
     const bytes=Buffer.from("restore drill media"),upload=await request("/profile/media/initiate",{kind:"photo_main",mimeType:"image/png",sizeBytes:bytes.length},member.token);
     expect((await fetch(upload.uploadUrl,{method:"PUT",headers:{"content-type":"image/png"},body:bytes})).status).toBe(200);await request("/profile/media/complete",{mediaId:upload.mediaId},member.token);
     async function assertRestored(){
@@ -410,7 +414,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
       await request("/session",undefined,member.token,undefined,401);
       for(const identity of [member,peer,admin]){const email=identity===member?"restore-member@example.com":identity===peer?"restore-peer@example.com":"smoke-admin@example.com";const login=await request("/auth/login",{email,password:"Smoke-test123!"});identity.token=login.session.sessionToken;expect(login.session.ageVerified).toBe(true);}
       expect((await request("/session",undefined,member.token)).session.userId).toBe(member.id);
-      const plus=await request("/plus",undefined,member.token);expect(plus.active).toBe(true);expect(plus.redeemedPromoCodes).toContain("REDDOORLAUNCH");expect(plus.providerTutorialPending).toBe(true);
+      const plus=await request("/plus",undefined,member.token);expect(plus.active).toBe(true);expect(plus.redeemedPromoCodes).toContain("REDDOORLAUNCH");expect(plus.providerTutorialPending).toBe(false);
       expect((await request("/profile/me",undefined,member.token)).profile.displayName).toBe("Restore Member");
       expect((await request("/members/me",undefined,member.token)).preferences.hideProfile).toBe(true);
       expect((await request("/favorites",undefined,member.token)).favorites).toContain(peer.id);
@@ -418,11 +422,9 @@ describe("Core API and payment lifecycle smoke checks", () => {
       const renewal=await request("/auth/login",{email:"renewal-enrollment@example.com",password:"Smoke-test123!"}),billing=await request("/plus",undefined,renewal.session.sessionToken);expect(billing.hasPaymentMethod).toBe(true);expect(billing.autoRenew).toBe(false);
       expect((await customWebhook("checkout.session.completed",setupCheckout,"evt_restore_setup_replay")).status).toBe(200);expect((await request("/plus",undefined,renewal.session.sessionToken)).autoRenew).toBe(false);expect(scheduleCreates).toBe(1);
 
-      expect((await request("/md/account",undefined,member.token)).hasKey).toBe(true);
       expect((await request("/admin/safety-reports",undefined,admin.token)).reports.some((r:any)=>r.reason==="Restore drill safety report")).toBe(true);
       await request("/chat/send",{chatKind:"cruise",toKey:`user:${member.id}`,text:"Blocked after restore"},peer.token,undefined,403);
       const media=await request(`/media/public/${upload.mediaId}/url`);expect(Buffer.from(await (await fetch(media.downloadUrl)).arrayBuffer())).toEqual(bytes);
-      await mdRequest("/integrations/md/status",{linkId:"restore-check",providerId:"restore-check"},409,nonce);
     }
     backend.kill("SIGTERM");await once(backend,"exit");await startBackend();await assertRestored();
     await request("/unblock",{targetKey:`user:${peer.id}`},member.token);expect((await request(`/chat/messages?chatKind=cruise&otherKey=user:${peer.id}`,undefined,member.token)).messages.some((m:any)=>m.messageId===sent.message.messageId)).toBe(true);await request("/block",{targetKey:`user:${peer.id}`},member.token);

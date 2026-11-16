@@ -28,8 +28,7 @@ try {
   let response = get(api + "/health"); record("apiHealth", response, json(response)?.ok === true);
   response = get(api + "/config"); record("publicConfig", response, typeof json(response)?.emailDeliveryConfigured === "boolean");
   response = get(site); record("frontend", response, response.text.includes('property="og:image"') && response.text.includes("Red Door"));
-  const mdSite = option("--md-site-url");
-  if (mdSite) { response = get(mdSite); record("mdWebsite", response, response.text.length > 0); }
+  if (option("--md-site-url")) throw new Error("MD checks are disabled in the standalone release.");
   const token = process.env.REDDOOR_ADMIN_SESSION_TOKEN;
   if (token) {
     if (/[\r\n]/.test(token)) throw new Error("Invalid admin session token format.");

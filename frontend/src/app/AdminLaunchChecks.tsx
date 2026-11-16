@@ -9,7 +9,7 @@ type Report = {
 export function AdminLaunchChecks({ api, session }: { api: ReturnType<typeof apiClient>; session: Session }) {
   const [report, setReport] = useState<Report | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState("");
   if (session.role !== "admin") return null;
-  const labels: Record<string, string> = { database: "Database", smtp: "Email connection", stripe: "Stripe price and configuration", md: "MD configuration", storage: "Persistent storage", persistence: "Recent storage writes" };
+  const labels: Record<string, string> = { database: "Database", smtp: "Email connection", stripe: "Stripe price and configuration", storage: "Persistent storage", persistence: "Recent storage writes" };
   async function check() {
     setBusy(true); setError("");
     try { setReport(await api.memberRequest<Report>(session.sessionToken, "/admin/launch/health")); }

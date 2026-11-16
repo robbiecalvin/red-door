@@ -1,6 +1,6 @@
 # Red Door (Web + Optional Backend)
 
-Last updated: 2026-11-15
+Last updated: 2026-11-16
 
 ## What this project is
 
@@ -14,7 +14,7 @@ The active frontend product emphasis is Cruise mode. Date and Hybrid logic exist
 ## UI refresh
 
 - Atmospheric red-door login artwork and a mobile-first black and red layout.
-- Map/People switch with shared filters, filter counts, readable profile cards, and approximate distance bands. The map stays in light mode.
+- Map/People switch with shared filters, filter counts, readable profile cards, and approximate distance bands. The map defaults to a dark vector style, with bounded recovery and a People fallback.
 - Shared bottom sheets for profiles, filters, and conversation actions; desktop navigation and split discovery/conversation layouts.
 - Profile, Privacy, Notifications, Membership, and Account settings sections. Browser notifications are optional and work while the app is open in the background.
 - Guest screen names always show **Anon**, including legacy guest profiles. Guest sessions still keep separate identities and conversations.
@@ -24,15 +24,18 @@ The active frontend product emphasis is Cruise mode. Date and Hybrid logic exist
 
 Plus now includes interactive benefit previews, a Free/Plus comparison, clear CAD $7.99 monthly pricing, and contextual upgrade entry points for filters, Travel mode, chat limits, and profile video. Active members get shortcuts into their benefits. Guest members can start registration directly from the Plus screen.
 
-## MD linking and launch membership
+## Standalone release changes
 
-- Plus members can generate a one-time secret in Account settings to link a paid, live Meet Discreet provider profile. The MD directory replaces promoted profiles and rotates linked live providers within 50 km.
-- Provider subscriptions are a separate $11.99 purchase on MD. Red Door unlocks messages only after the MD backend verifies an account-bound paid-chat code.
-- Registration and Account settings accept `REDDOORLAUNCH` (Plus + provider linking tutorial) and `REDDOORUNLOCKED` (Plus). Each code is redeemable once per account; complimentary access ends January 1, 2027 at midnight Pacific. The existing launch code remains supported.
-- Dismissible reminders appear on explicit login when billing needs attention. Stripe-hosted enrollment requires consent to CAD $7.99 monthly starting January 1; paid subscriptions then renew monthly. No card numbers are stored in Red Door.
-- **Hide my profile** is free in Privacy settings and removes the personal profile from the grid and map.
+- MD navigation, linking, provider discovery and paid cross-platform messaging are disabled. Preserved integration code/data is not registered in this release.
+- Ordinary accounts require email ownership verification; phone numbers are optional. Configure SMTP before enabling registration or recovery. Age entry is self-declaration, not independent identity verification.
+- The dark map keeps its canvas during recoverable errors, loads a bundled MapLibre worker, and offers bounded retries and People fallback. Denying GPS never publishes the default map center as your presence.
+- API requests have finite deadlines; mutations are not automatically replayed.
 
-MD's backend must implement the [integration contract](docs/md-integration-contract.md) before linking/payments work across sites. See [deployment and billing setup](docs/md-launch-deployment.md) before switching to the new domains.
+See [standalone launch evidence and remaining gates](docs/standalone-launch-report.md),
+[email ownership rollout](docs/email-ownership-rollout.md),
+[map provider and browser checks](docs/map-provider-and-recovery.md),
+[hosting and growth](docs/hosting-growth-plan.md), and
+[mobile eligibility and delivery](docs/mobile-release-plan.md).
 
 ## Community and connection features
 
@@ -96,7 +99,7 @@ See [rollout validation and deployment notes](docs/community-rollout-validation.
 - Cruising spots: list/create/check-in/check-in listing/spot actions
 - Favorites: list + toggle
 - Submissions (stories): list/create/view/rate
-- Plus-only MD provider discovery, account linking, verified paid-chat codes, and a separate MD inbox. Legacy promoted-profile purchases are retired.
+- MD and legacy promoted-profile routes are unavailable in the standalone release.
 
 ### Chat, messaging, and real-time
 

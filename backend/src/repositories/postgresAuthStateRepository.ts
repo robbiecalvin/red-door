@@ -64,6 +64,15 @@ function parseStoredUser(row: Record<string, unknown>): StoredUser | null {
     role: asRole(row.role),
     ageVerified: asBoolean(row.age_verified),
     emailVerified: asBoolean(row.email_verified),
+    ...(row.verification_security && typeof row.verification_security === "object" ? (()=>{
+      const security=row.verification_security as Record<string,unknown>;
+      return {
+        emailOwnershipVerifiedAtMs:typeof security.emailOwnershipVerifiedAtMs==="number"?security.emailOwnershipVerifiedAtMs:undefined,
+        verificationLastSentAtMs:typeof security.verificationLastSentAtMs==="number"?security.verificationLastSentAtMs:undefined,
+        verificationAttemptCount:typeof security.verificationAttemptCount==="number"?security.verificationAttemptCount:undefined,
+        verificationAttemptStartedAtMs:typeof security.verificationAttemptStartedAtMs==="number"?security.verificationAttemptStartedAtMs:undefined,
+      };
+    })():{}),
     bannedAtMs: (() => {
       const n = row.banned_at_ms;
       if (n === null || n === undefined) return null;
@@ -117,7 +126,7 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
         pool.query(
           `SELECT id, email, phone_e164, user_type, tier, role, age_verified, email_verified, banned_at_ms, banned_reason,
                   verification_code_salt_b64, verification_code_hash_b64, verification_code_expires_at_ms,
-                  password_salt_b64, password_hash_b64, created_at_ms, plus_expires_at_ms, plus_data, password_reset_token_hash, password_reset_expires_at_ms
+                  password_salt_b64, password_hash_b64, created_at_ms, plus_expires_at_ms, plus_data, password_reset_token_hash, password_reset_expires_at_ms, verification_security
            FROM auth_users`
         ),
         pool.query(
@@ -151,11 +160,11 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
             `INSERT INTO auth_users (
               id, email, phone_e164, user_type, tier, role, age_verified, email_verified, banned_at_ms, banned_reason,
               verification_code_salt_b64, verification_code_hash_b64, verification_code_expires_at_ms,
-              password_salt_b64, password_hash_b64, created_at_ms, plus_expires_at_ms, plus_data, password_reset_token_hash, password_reset_expires_at_ms
+              password_salt_b64, password_hash_b64, created_at_ms, plus_expires_at_ms, plus_data, password_reset_token_hash, password_reset_expires_at_ms, verification_security
             ) VALUES (
               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
               $11, $12, $13,
-              $14, $15, $16, $17, $18::jsonb, $19, $20
+              $14, $15, $16, $17, $18::jsonb, $19, $20, $21::jsonb
             )
             ON CONFLICT (id) DO UPDATE SET
               email = EXCLUDED.email,
@@ -174,7 +183,7 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
               password_hash_b64 = EXCLUDED.password_hash_b64,
               created_at_ms = EXCLUDED.created_at_ms,
               plus_expires_at_ms = EXCLUDED.plus_expires_at_ms, plus_data = EXCLUDED.plus_data,
-              password_reset_token_hash = EXCLUDED.password_reset_token_hash, password_reset_expires_at_ms = EXCLUDED.password_reset_expires_at_ms`,
+              password_reset_token_hash = EXCLUDED.password_reset_token_hash, password_reset_expires_at_ms = EXCLUDED.password_reset_expires_at_ms, verification_security = EXCLUDED.verification_security`,
             [
               user.id,
               user.email,
@@ -191,7 +200,7 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
               user.verificationCodeExpiresAtMs,
               user.passwordSaltB64,
               user.passwordHashB64,
-              user.createdAtMs, user.plusExpiresAtMs ?? null, JSON.stringify(user.plusData ?? {}), user.passwordResetTokenHash ?? null, user.passwordResetExpiresAtMs ?? null
+              user.createdAtMs, user.plusExpiresAtMs ?? null, JSON.stringify(user.plusData ?? {}), user.passwordResetTokenHash ?? null, user.passwordResetExpiresAtMs ?? null, JSON.stringify({emailOwnershipVerifiedAtMs:user.emailOwnershipVerifiedAtMs,verificationLastSentAtMs:user.verificationLastSentAtMs,verificationAttemptCount:user.verificationAttemptCount,verificationAttemptStartedAtMs:user.verificationAttemptStartedAtMs})
             ]
           );
         }

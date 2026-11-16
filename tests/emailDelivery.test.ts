@@ -60,7 +60,7 @@ describe("Verification and password recovery over authenticated TLS SMTP", () =>
   });
   it("Given a new administrator When verifying ownership Then sends a real TLS email and rejects an incorrect code", async () => {
     const before = messages.length;
-    expect((await post("/auth/register", { email: "mail-admin@example.com", password, phoneE164: "" })).status).toBe(200);
+    expect((await post("/auth/register", { email: "mail-admin@example.com", password, age:25, phoneE164: "" })).status).toBe(200);
     const mail = await nextMail(before), code = /verification code is (\d{6})/.exec(mail)?.[1];
     expect(code).toMatch(/^\d{6}$/);
     expect((await post("/auth/verify-email", { email: "mail-admin@example.com", code: code === "000000" ? "111111" : "000000" })).status).toBe(400);
@@ -71,7 +71,10 @@ describe("Verification and password recovery over authenticated TLS SMTP", () =>
     expect(JSON.stringify(report)).not.toContain("fixture-pass");
   });
   it("Given a recovery request When the emailed link is used Then resets once, revokes sessions and does not reveal the token in HTTP", async () => {
-    const email = "mail-member@example.com"; await post("/auth/register", { email, password, phoneE164: "" });
+    const beforeVerify=messages.length; const email = "mail-member@example.com"; await post("/auth/register", { email, password, age:25, phoneE164: "" });
+    expect((await post("/auth/login",{email,password})).body.code).toBe("EMAIL_VERIFICATION_REQUIRED");
+    const verification=await nextMail(beforeVerify),code=/verification code is (\d{6})/.exec(verification)?.[1];
+    expect((await post("/auth/verify-email",{email,code})).status).toBe(200);
     const old = await post("/auth/login", { email, password }), before = messages.length;
     const requested = await post("/auth/password-reset/request", { email }); expect(requested.status).toBe(200);
     const unknown = await post("/auth/password-reset/request", { email: "unknown@example.com" }); expect(unknown).toEqual(requested);

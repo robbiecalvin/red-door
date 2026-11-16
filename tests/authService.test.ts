@@ -119,10 +119,10 @@ describe("authService", () => {
     if (login.ok) throw new Error("unreachable");
     expect(login.error).toEqual({
       code: "EMAIL_VERIFICATION_REQUIRED",
-      message: "Phone verification required before login.",
+      message: "Email verification required before login.",
       context: { email: "user@example.com", phoneE164: "+15555551234" }
     });
-    expect(sent.length).toBeGreaterThanOrEqual(2);
+    expect(sent.length).toBeGreaterThanOrEqual(1);
   });
 
   it("Given an issued code When verifyEmail is called with a valid code Then it verifies and returns JWT + session", () => {
@@ -488,7 +488,9 @@ describe("authService", () => {
 
   it("Given resend verification scenarios When resendVerificationCode is called Then deterministic outcomes are returned", () => {
     const sent: Array<{ destination: string; code: string }> = [];
+    let now=1800000000000;
     const svc = createAuthService({
+      nowMs:()=>now,
       jwtSecret: "test_secret",
       userStoreFilePath: tempStorePath(),
       onVerificationCodeIssued: (destination, code) => sent.push({ destination, code })
@@ -505,6 +507,7 @@ describe("authService", () => {
 
     const reg = svc.register("user@example.com", "StrongPass1!", "+15555551234");
     expect(reg.ok).toBe(true);
+    now+=60001;
     const resent = svc.resendVerificationCode("user@example.com");
     expect(resent.ok).toBe(true);
     if (!resent.ok) throw new Error("unreachable");

@@ -1,5 +1,4 @@
 import { installLaunchReadiness } from "./services/launchReadiness";
-import { installMdBridge } from "./services/mdBridge";
 import { scheduleParameters } from "./services/renewalEnrollment";
 import { createCommunityRepository } from "./repositories/communityRepository";
 import { createPushService } from "./services/pushService";
@@ -8,7 +7,7 @@ import { publicMember, hidesDiscovery, hidesPresence } from "./services/memberSe
 import { createAnalyticsService } from "./services/analyticsService";
 import { analyticsRepository } from "./repositories/analyticsRepository";
 import { type AnalyticsCohort } from "../../shared/analytics";
-import { LAUNCH_END_MS, launchGrant, promoCode, PROVIDER_LAUNCH_CODE } from "../../shared/plus";
+import { LAUNCH_END_MS, launchGrant, promoCode } from "../../shared/plus";
 import { hasPlus, limits, type PlusData, type SavedSearch } from "../../shared/plus";
 import { stripeRequest, verifyStripeEvent, assertPlusPrice, signAlbumAccess, validAlbumAccess, billingConfiguration, inspectBilling } from "./services/subscriptionService";
 import http from "node:http";
@@ -272,6 +271,7 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
 }
 
 async function main(): Promise<void> {
+  if (process.env.REDDOOR_ENV === "staging" && process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_SECRET_KEY.startsWith("sk_test_")) throw new Error("Staging requires a Stripe test-mode key.");
   const port = (() => {
     const raw = process.env.PORT ?? "3000";
     const n = Number(raw);
@@ -371,11 +371,10 @@ async function main(): Promise<void> {
           html
         })
         .then(() => {
-          console.log(`[RedDoor] Verification email sent to ${user.email}`);
+          console.log("[RedDoor] Verification email accepted by SMTP.");
         })
         .catch((e: unknown) => {
-          const message = e instanceof Error ? e.message : String(e);
-          console.error(`[RedDoor] Failed to send verification email to ${user.email}: ${message}`);
+          console.error("[RedDoor] Verification delivery failed. Inspect SMTP configuration securely.");
         });
       return;
     }
@@ -435,7 +434,7 @@ async function main(): Promise<void> {
 
   const rawAuthService = createAuthService({
     jwtSecret,
-    skipEmailVerification: true,
+    emailOnlyVerification: true,
     adminEmails: parseAdminEmails(process.env.ADMIN_EMAILS),
     onVerificationCodeIssued: verificationCodeSender,
     initialState: initialAuthState,
@@ -447,7 +446,7 @@ async function main(): Promise<void> {
   let guestPersistQueue:Promise<unknown>=Promise.resolve(),guestPersistError:unknown=null;
   let persistGuests=()=>{};
   const authService:AuthService={...rawAuthService,
-    getSession(token){const result=rawAuthService.getSession(token);if(result.ok && result.value.userType==="guest" && !securedGuests.has(publicGuestId(token)))return {ok:false,error:{code:"INVALID_SESSION",message:"Start a fresh guest session to continue."}};return result;},
+    getSession(token){const result=rawAuthService.getSession(token);if(result.ok && result.value.userId && rawAuthService.getUser(result.value.userId)?.emailVerified!==true)return {ok:false,error:{code:"EMAIL_VERIFICATION_REQUIRED",message:"Verify your email before continuing."}};if(result.ok && result.value.userType==="guest" && !securedGuests.has(publicGuestId(token)))return {ok:false,error:{code:"INVALID_SESSION",message:"Start a fresh guest session to continue."}};return result;},
     createGuestSession(){const result=rawAuthService.createGuestSession();if(result.ok){securedGuests.set(publicGuestId(result.value.session.sessionToken),result.value.session.expiresAtMs);persistGuests();}return result;}
   };
   const domainSession=(session:AuthSession):AuthSession=>session.userType==="guest"?{...session,sessionToken:publicGuestId(session.sessionToken)}:session;
@@ -842,16 +841,16 @@ async function main(): Promise<void> {
   app.get("/plus", (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const data = actor.user.plusData ?? {};
-    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.user.plusExpiresAtMs, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: billingConfiguration().configured, hasBillingAccount: Boolean(data.stripeCustomerId), hasPaymentMethod:data.stripePaymentMethodSaved===true, autoRenew:data.stripeAutoRenew===true,nextBillingAtMs:data.stripeNextBillingAtMs,redeemedPromoCodes:data.redeemedPromoCodes ?? [],providerTutorialPending:data.providerTutorialPending===true,renewalScheduled:Boolean(data.stripeScheduleId && !["canceled","aborted","completed","released"].includes(data.stripeScheduleStatus ?? "")),subscriptionStatus:data.stripeSubscriptionStatus });
+    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.user.plusExpiresAtMs, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: billingConfiguration().configured, hasBillingAccount: Boolean(data.stripeCustomerId), hasPaymentMethod:data.stripePaymentMethodSaved===true, autoRenew:data.stripeAutoRenew===true,nextBillingAtMs:data.stripeNextBillingAtMs,redeemedPromoCodes:data.redeemedPromoCodes ?? [],providerTutorialPending:false,renewalScheduled:Boolean(data.stripeScheduleId && !["canceled","aborted","completed","released"].includes(data.stripeScheduleStatus ?? "")),subscriptionStatus:data.stripeSubscriptionStatus });
   });
   app.post("/plus/redeem",async(req,res)=>{const actor=plusUser(req,res);if(!actor)return;
     try {const code=promoCode(req.body?.code),expires=launchGrant(code)!;const user=authService.getUser(actor.user.id)!;if(user.plusData?.redeemedPromoCodes?.includes(code))return res.status(409).json({message:"You already used this promo code."});
       const permanent=hasPlus(user)&&user.plusExpiresAtMs===undefined;
-      authService.updatePlus(user.id,{tier:"premium",...(permanent?{}:{plusExpiresAtMs:Math.max(user.plusExpiresAtMs ?? 0,expires)}),plusData:{...user.plusData,redeemedPromoCodes:[...(user.plusData?.redeemedPromoCodes ?? []),code],providerTutorialPending:code===PROVIDER_LAUNCH_CODE || user.plusData?.providerTutorialPending===true}});
-      await authPersistQueue;if(authPersistenceError)return res.status(503).json({message:"Unable to save this promotion. Please retry."});return res.json({ok:true,providerTutorial:code===PROVIDER_LAUNCH_CODE,expiresAtMs:expires});
+      authService.updatePlus(user.id,{tier:"premium",...(permanent?{}:{plusExpiresAtMs:Math.max(user.plusExpiresAtMs ?? 0,expires)}),plusData:{...user.plusData,redeemedPromoCodes:[...(user.plusData?.redeemedPromoCodes ?? []),code]}});
+      await authPersistQueue;if(authPersistenceError)return res.status(503).json({message:"Unable to save this promotion. Please retry."});return res.json({ok:true,providerTutorial:false,expiresAtMs:expires});
     }catch(e){return res.status(400).json({message:(e as Error).message});}
   });
-  app.post("/plus/tutorial/dismiss",async(req,res)=>{const actor=plusUser(req,res);if(!actor)return;authService.updatePlus(actor.user.id,{plusData:{...actor.user.plusData,providerTutorialPending:false}});await authPersistQueue;if(authPersistenceError)return res.status(503).json({message:"Unable to save this preference."});return res.json({ok:true});});
+  app.post("/plus/tutorial/dismiss",(_req,res)=>res.status(410).json({code:"FEATURE_DISABLED",message:"Provider tutorials are unavailable in the standalone release."}));
   app.put("/plus/preferences", async (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const data: PlusData = { ...actor.user.plusData };
@@ -977,7 +976,21 @@ async function main(): Promise<void> {
     return res.status(200).json({...result.value,session:clientSession(result.value.session)});
   });
 
+  const authRequestWindows = new Map<string, { start: number; count: number }>();
+  app.use("/auth", (req, res, next) => {
+    if (req.method !== "POST") return next();
+    const now = Date.now();
+    for (const [key, value] of authRequestWindows) if (now - value.start >= 900000) authRequestWindows.delete(key);
+    const key = `${req.socket.remoteAddress}:${req.path}`;
+    const window = authRequestWindows.get(key) ?? { start: now, count: 0 };
+    if (window.count >= 60) return res.status(429).json({ code: "RATE_LIMITED", message: "Too many attempts. Please wait 15 minutes." });
+    window.count++; authRequestWindows.set(key, window); next();
+  });
+
   app.post("/auth/register", (req, res) => {
+    if(!emailSender)return res.status(503).json({code:"SERVICE_UNAVAILABLE",message:"Registration email is unavailable. Please try later or contact support."});
+    const age = req.body?.age;
+    if (!Number.isInteger(age) || age < 18 || age > 120) return res.status(400).json({ code: "AGE_GATE_REQUIRED", message: "Declare an age between 18 and 120 to register." });
     const email = (req.body as any)?.email;
     const password = (req.body as any)?.password;
     const phoneE164 = (req.body as any)?.phoneE164;
@@ -998,6 +1011,7 @@ async function main(): Promise<void> {
   });
 
   app.post("/auth/resend-verification", (req, res) => {
+    if(!emailSender)return res.status(503).json({code:"SERVICE_UNAVAILABLE",message:"Verification email is unavailable. Please try later or contact support."});
     const email = (req.body as any)?.email;
     const result = authService.resendVerificationCode(email);
     if (!result.ok) return sendError(res, result.error);
@@ -1553,17 +1567,13 @@ async function main(): Promise<void> {
   });
 
   // Promoted profiles (safe paid listings)
-  app.get("/promoted-profiles", (_req, res) => {
-    const result = promotedProfilesService.listListings();
-    if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ listings: result.value, feeCents: 2000 });
-  });
+  app.get("/promoted-profiles", (_req, res) => res.status(410).json({ code: "FEATURE_DISABLED", message: "Promoted profiles are unavailable in the standalone release." }));
 
-  app.post("/promoted-profiles/payment/start",(_req,res)=>res.status(410).json({message:"Promoted profiles have retired. Visit MD in Red Door Plus."}));
+  app.post("/promoted-profiles/payment/start",(_req,res)=>res.status(410).json({message:"Promoted profiles are unavailable in the standalone release."}));
 
-  app.post("/promoted-profiles/payment/confirm",(_req,res)=>res.status(410).json({message:"Promoted profiles have retired. Visit MD in Red Door Plus."}));
+  app.post("/promoted-profiles/payment/confirm",(_req,res)=>res.status(410).json({message:"Promoted profiles are unavailable in the standalone release."}));
 
-  app.post("/promoted-profiles",(_req,res)=>res.status(410).json({message:"Promoted profiles have retired. Visit MD in Red Door Plus."}));
+  app.post("/promoted-profiles",(_req,res)=>res.status(410).json({message:"Promoted profiles are unavailable in the standalone release."}));
 
   // Session helper endpoint (debug-friendly; still enforces INVALID_SESSION deterministically).
   app.get("/session", (req, res) => {
@@ -1605,12 +1615,11 @@ async function main(): Promise<void> {
     wss,
     jwtSecret,
     authService,
-    publicBroadcastPayload(type,payload){if(type==="md_message"){const {memberIds,...visible}=payload as {memberIds:unknown;[key:string]:unknown};return visible;}return payload;},
     authorizeBroadcast(auth, type, payload) {
       if (!auth.ageVerified) return false;
       const actor = auth.userId ? `user:${auth.userId}` : `session:${publicGuestId(auth.sessionToken ?? "")}`;
       const data = payload as any;
-      if(type==="md_message")return Boolean(auth.userId && data?.memberIds?.includes(auth.userId) && hasPlus(authService.getUser(auth.userId) ?? {userType:"guest"}));
+      if(type.startsWith("md_"))return false;
       if (type === "chat_message") {
         const message = data?.message;
         if (!message || blockService.isBlocked(message.fromKey, message.toKey)) return false;
@@ -1632,8 +1641,9 @@ async function main(): Promise<void> {
     }
   });
 
-  const mdBridge = installMdBridge(app,{auth:authService,repository:communityRepository,member:plusUser,persist:async()=>{await authPersistQueue;if(authPersistenceError)throw new Error("Persistence unavailable");},blocked:(a,b)=>blockService.isBlocked(a,b),secret:process.env.MD_SHARED_SECRET?.trim() ?? "",keySecret:jwtSecret,appUrl:process.env.PUBLIC_APP_URL?.trim() || "https://thereddoor.app",notify:id=>pushService.notify(id,"md"),broadcast:(type,payload)=>safeBroadcast(gateway.broadcast,type,payload)});
-  installLaunchReadiness(app,{admin:requireAdminSession,databasePing:postgresPool?()=>postgresPool.query("SELECT 1"):undefined,verifyMail:emailSender?()=>emailSender.verify():undefined,mediaMode:mediaStorageMode,mdConfigured:mdBridge.configured,persistenceHealthy:()=>!authPersistenceError&&!chatPersistenceError&&!safetyPersistenceError&&!favoritesPersistenceError&&!guestPersistError&&!metricsWriteError});
+  // Standalone release: the preserved bridge module is deliberately not registered.
+  app.use(["/md", "/integrations/md", "/api/md", "/api/integrations/md"], (_req, res) => res.status(404).json({ code: "FEATURE_DISABLED", message: "This feature is unavailable in the standalone release." }));
+  installLaunchReadiness(app,{admin:requireAdminSession,databasePing:postgresPool?()=>postgresPool.query("SELECT 1"):undefined,verifyMail:emailSender?()=>emailSender.verify():undefined,mediaMode:mediaStorageMode,persistenceHealthy:()=>!authPersistenceError&&!chatPersistenceError&&!safetyPersistenceError&&!favoritesPersistenceError&&!guestPersistError&&!metricsWriteError});
   installMemberRoutes(app,{
     auth:authService,profiles:profileRepo,media:mediaRepo,storage:mediaStorage,bucket:s3Bucket || "local-dev-bucket",repository:communityRepository,
     privacyChanged:(key,hideProfile)=>safeBroadcast(gateway.broadcast,"presence_removed",{key,hideProfile}),

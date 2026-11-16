@@ -44,6 +44,10 @@ export type StoredUser = Readonly<{
   role?: UserRole;
   ageVerified: boolean;
   emailVerified: boolean;
+  emailOwnershipVerifiedAtMs?: number;
+  verificationLastSentAtMs?: number;
+  verificationAttemptCount?: number;
+  verificationAttemptStartedAtMs?: number;
   bannedAtMs?: number | null;
   bannedReason?: string | null;
   verificationCodeSaltB64: string | null;
@@ -123,6 +127,7 @@ export type AuthServiceDeps = Readonly<{
   verificationCodeTtlMinutes?: number;
   verificationCodeGenerator?: () => string;
   skipEmailVerification?: boolean;
+  emailOnlyVerification?: boolean;
   initialState?: AuthStateSnapshot;
   onStateChanged?: (state: AuthStateSnapshot) => void;
   onVerificationCodeIssued?: (
@@ -310,6 +315,10 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         role: c.role === "admin" ? "admin" : "user",
         ageVerified: c.ageVerified === true,
         emailVerified: c.emailVerified,
+        emailOwnershipVerifiedAtMs: typeof c.emailOwnershipVerifiedAtMs === "number" ? c.emailOwnershipVerifiedAtMs : undefined,
+        verificationLastSentAtMs: typeof c.verificationLastSentAtMs === "number" ? c.verificationLastSentAtMs : undefined,
+        verificationAttemptCount: typeof c.verificationAttemptCount === "number" ? c.verificationAttemptCount : undefined,
+        verificationAttemptStartedAtMs: typeof c.verificationAttemptStartedAtMs === "number" ? c.verificationAttemptStartedAtMs : undefined,
         bannedAtMs: typeof c.bannedAtMs === "number" ? c.bannedAtMs : null,
         bannedReason: typeof c.bannedReason === "string" ? c.bannedReason : null,
         verificationCodeSaltB64: c.verificationCodeSaltB64,
@@ -377,6 +386,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     const hash = hashPassword(code, salt);
     const updated: StoredUser = {
       ...user,
+      verificationLastSentAtMs: now,
       verificationCodeSaltB64: salt.toString("base64"),
       verificationCodeHashB64: hash.toString("base64"),
       verificationCodeExpiresAtMs: now + verificationCodeTtlMinutes * 60 * 1000
@@ -384,7 +394,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     usersByEmail.set(updated.email, updated);
     usersById.set(updated.id, updated);
     persistUsers();
-    const destination = adminEmails.has(updated.email) ? updated.email : typeof updated.phoneE164 === "string" && isLikelyValidPhoneE164(updated.phoneE164) ? updated.phoneE164 : updated.email;
+    const destination = deps.emailOnlyVerification || adminEmails.has(updated.email) ? updated.email : typeof updated.phoneE164 === "string" && isLikelyValidPhoneE164(updated.phoneE164) ? updated.phoneE164 : updated.email;
     const channel: "sms" | "email" = destination === updated.email ? "email" : "sms";
     onVerificationCodeIssued(destination, code, channel, {
       id: updated.id,
@@ -485,6 +495,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         notifyStateChanged();
         return err("INVALID_SESSION", "Invalid session.");
       }
+      if (deps.emailOnlyVerification && !user.emailVerified) return err("EMAIL_VERIFICATION_REQUIRED", "Verify your email before continuing.");
       const banned = assertNotBanned(user);
       if (!banned.ok) {
         sessionsByToken.delete(sessionToken);
@@ -541,10 +552,10 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return err("UNAUTHORIZED_ACTION", "Invalid email.");
       }
       const normalizedPhone = typeof phoneE164 === "string" ? phoneE164.trim() : "";
-      if (!skipEmailVerification && !isLikelyValidPhoneE164(normalizedPhone)) {
+      if (!deps.emailOnlyVerification && !skipEmailVerification && !isLikelyValidPhoneE164(normalizedPhone)) {
         return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
       }
-      if (skipEmailVerification && normalizedPhone.length > 0 && !isLikelyValidPhoneE164(normalizedPhone)) {
+      if ((skipEmailVerification || deps.emailOnlyVerification) && normalizedPhone.length > 0 && !isLikelyValidPhoneE164(normalizedPhone)) {
         return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
       }
       const passwordValid = skipEmailVerification
@@ -578,10 +589,10 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         userType: "registered",
         tier: plusExpiresAtMs ? "premium" : "free",
         plusExpiresAtMs,
-        plusData: { analyticsConsent: analyticsConsent === true, ...(plusExpiresAtMs ? {redeemedPromoCodes:[normalizePromoCode(promoCode)],providerTutorialPending:normalizePromoCode(promoCode)===PROVIDER_LAUNCH_CODE} : {}) },
+        plusData: { analyticsConsent: analyticsConsent === true, ...(plusExpiresAtMs ? {redeemedPromoCodes:[normalizePromoCode(promoCode)],providerTutorialPending:!deps.emailOnlyVerification && normalizePromoCode(promoCode)===PROVIDER_LAUNCH_CODE} : {}) },
         role: "user",
         ageVerified: false,
-        // Web build currently runs without verification-code UX; treat new registrations as verified.
+        // The standalone server never enables the legacy verification bypass.
         emailVerified: skipEmailVerification && !adminEmails.has(normalizedEmail),
         bannedAtMs: null,
         bannedReason: null,
@@ -628,9 +639,12 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
       const time = nowMs();
       const previous = verificationAttempts.get(user.id);
-      const attempts = previous && time - previous.startedAt < 900000 ? previous : { startedAt: time, count: 0 };
+      const saved = previous ?? { startedAt: user.verificationAttemptStartedAtMs ?? 0, count: user.verificationAttemptCount ?? 0 };
+      const attempts = time - saved.startedAt < 900000 ? saved : { startedAt: time, count: 0 };
       if (attempts.count >= 5) return err("RATE_LIMITED", "Too many verification attempts. Wait 15 minutes before requesting another code.");
       attempts.count++; verificationAttempts.set(user.id, attempts);
+      const attempted = { ...user, verificationAttemptCount: attempts.count, verificationAttemptStartedAtMs: attempts.startedAt };
+      usersById.set(user.id, attempted); usersByEmail.set(user.email, attempted); persistUsers(); notifyStateChanged();
       const salt = Buffer.from(user.verificationCodeSaltB64, "base64");
       const expectedHash = Buffer.from(user.verificationCodeHashB64, "base64");
       const actualHash = hashPassword(code.trim(), salt);
@@ -642,6 +656,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       const verifiedUser: StoredUser = {
         ...user,
         emailVerified: true,
+        emailOwnershipVerifiedAtMs: time,
+        verificationAttemptCount: 0,
         role: adminEmails.has(user.email) ? "admin" : normalizeRole(user.role),
         verificationCodeSaltB64: null,
         verificationCodeHashB64: null,
@@ -673,6 +689,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (user.emailVerified) {
         return err("UNAUTHORIZED_ACTION", "Email already verified.");
       }
+      if (typeof user.verificationLastSentAtMs === "number" && nowMs() - user.verificationLastSentAtMs < 60000) return err("RATE_LIMITED", "Wait one minute before requesting another code.");
       setVerificationCode(user, nowMs());
       notifyStateChanged();
       return ok({ email: normalizedEmail, verificationRequired: true });
@@ -699,14 +716,20 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return err("UNAUTHORIZED_ACTION", "Invalid credentials.");
       }
       if (adminEmails.has(currentUser.email) && currentUser.role !== "admin") {
-        setVerificationCode({ ...currentUser, emailVerified: false }, nowMs());
+        if (!currentUser.verificationLastSentAtMs || nowMs() - currentUser.verificationLastSentAtMs >= 60000) {
+          setVerificationCode({ ...currentUser, emailVerified: false }, nowMs());
+          notifyStateChanged();
+        }
         return err("EMAIL_VERIFICATION_REQUIRED", "Email verification required before administrator access.", { email: currentUser.email });
       }
       let loginUser = currentUser;
       if (!currentUser.emailVerified) {
         if (!skipEmailVerification || adminEmails.has(currentUser.email)) {
-          setVerificationCode(currentUser, nowMs());
-          return err("EMAIL_VERIFICATION_REQUIRED", adminEmails.has(currentUser.email) ? "Email verification required before administrator access." : "Phone verification required before login.", {
+          if (!currentUser.verificationLastSentAtMs || nowMs() - currentUser.verificationLastSentAtMs >= 60000) {
+            setVerificationCode(currentUser, nowMs());
+            notifyStateChanged();
+          }
+          return err("EMAIL_VERIFICATION_REQUIRED", adminEmails.has(currentUser.email) ? "Email verification required before administrator access." : "Email verification required before login.", {
             email: currentUser.email,
             phoneE164: currentUser.phoneE164
           });
@@ -768,7 +791,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       const sessionResult = getSessionInternal(sessionToken);
       if (!sessionResult.ok) return sessionResult;
 
-      if (!Number.isFinite(ageYears)) {
+      if (!Number.isInteger(ageYears) || ageYears > 120) {
         return err("UNAUTHORIZED_ACTION", "Invalid age.");
       }
       if (ageYears < 18) {

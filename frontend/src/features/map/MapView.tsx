@@ -1,11 +1,15 @@
+import mapWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Map as MlMap, Marker as MlMarker, NavigationControl } from "maplibre-gl";
 import type { LngLat, MapMarker, MapViewOptions } from "./map.types";
 
-type MapStatus = { kind: "ready" } | { kind: "error"; message: string };
+import { MapRecovery, type MapState } from "./mapRecovery";
+import { mapStyleUrl } from "./mapConfig";
+declare const __DUALMODE_MAP_STYLE_URL__: string | undefined;
 
 type MapLibreRuntime = {
+  setWorkerUrl(url: string): void;
   Map: new (options: Record<string, unknown>) => MlMap;
   Marker: new (options: Record<string, unknown>) => MlMarker;
   NavigationControl: new (options: Record<string, unknown>) => NavigationControl;
@@ -16,7 +20,9 @@ async function loadMapLibre(): Promise<MapLibreRuntime> {
   // Keep the map library out of the initial module graph to avoid blank-screen failures on load.
   const mod = (await import("maplibre-gl")) as unknown;
   const candidate = (mod as { default?: unknown }).default ?? mod;
-  return candidate as MapLibreRuntime;
+  const runtime=candidate as MapLibreRuntime;
+  runtime.setWorkerUrl(mapWorkerUrl);
+  return runtime;
 }
 
 function escapeHtml(s: string): string {
@@ -36,30 +42,6 @@ function escapeHtml(s: string): string {
         return c;
     }
   });
-}
-
-function defaultRasterStyle(): Record<string, unknown> {
-  // Public OpenStreetMap tiles do not require an API key.
-  return {
-    version: 8,
-    sources: {
-      basemap: {
-        type: "raster",
-        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-        tileSize: 256,
-        maxzoom: 19,
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-      }
-    },
-    layers: [
-      { id: "background", type: "background", paint: { "background-color": "#eeece8" } },
-      {
-        id: "basemap",
-        type: "raster",
-        source: "basemap"
-      }
-    ]
-  };
 }
 
 function markerEl(m: MapMarker): HTMLButtonElement {
@@ -122,7 +104,9 @@ export function MapView({
   const onMapClickRef = useRef<typeof onMapClick>(onMapClick);
   const userAdjustedViewRef = useRef<boolean>(false);
 
-  const [status, setStatus] = useState<MapStatus>({ kind: "ready" });
+  const [status, setStatus] = useState<MapState>("loading");
+  const [mapVersion, setMapVersion] = useState(0);
+  const recoveryRef=useRef<MapRecovery|null>(null);
 
   const initialCenter: LngLat = useMemo(() => initialView.center, [initialView.center]);
   const isInteractive = interactive !== false;
@@ -141,6 +125,19 @@ export function MapView({
     let onDragStart: (() => void) | null = null;
     let onZoomStart: (() => void) | null = null;
 
+    let resourceFailed=false;
+    const controller=new MapRecovery(setStatus,()=>{
+      resourceFailed=false;
+      const map=mapRef.current;
+      if(map)map.setStyle(mapStyleUrl(typeof __DUALMODE_MAP_STYLE_URL__==="string"?__DUALMODE_MAP_STYLE_URL__:undefined));
+    });
+    recoveryRef.current=controller;
+    const online=()=>controller.connectivity(navigator.onLine);
+    window.addEventListener("online",online); window.addEventListener("offline",online);
+    let resume: (()=>void)|undefined;
+    let contextLost: ((e:Event)=>void)|undefined;
+    let contextRestored: (()=>void)|undefined;
+
     async function init(): Promise<void> {
       if (!containerRef.current) return;
       if (mapRef.current) return;
@@ -156,7 +153,7 @@ export function MapView({
 
         const map = new ml.Map({
           container: containerRef.current,
-          style: defaultRasterStyle(),
+          style: mapStyleUrl(typeof __DUALMODE_MAP_STYLE_URL__ === "string" ? __DUALMODE_MAP_STYLE_URL__ : undefined),
           center: [initialCenter.lng, initialCenter.lat],
           zoom: initialView.zoom,
           interactive: isInteractive
@@ -164,6 +161,16 @@ export function MapView({
 
         map.addControl(new ml.NavigationControl({ showCompass: false }), "top-right");
         mapRef.current = map;
+        setMapVersion(n=>n+1);
+        contextLost=(e)=>{e.preventDefault();controller.error();};
+        contextRestored=()=>{map.resize();controller.retry();};
+        map.getCanvas().addEventListener("webglcontextlost",contextLost);
+        map.getCanvas().addEventListener("webglcontextrestored",contextRestored);
+        resume=()=>{if(document.visibilityState==="visible"){map.resize();if(!resourceFailed && map.areTilesLoaded())controller.ready();else controller.error();}};
+        document.addEventListener("visibilitychange",resume);
+        window.addEventListener("pageshow",resume);
+        window.addEventListener("orientationchange",resume);
+        if(!navigator.onLine)controller.connectivity(false);
 
         const resize = () => {
           map.resize();
@@ -177,17 +184,11 @@ export function MapView({
         map.on("error", (evt: unknown) => {
           const message = (evt as { error?: { message?: string } }).error?.message ?? "Map error.";
           if (cancelled) return;
-          // Tile/source request failures can be transient; keep the map mounted.
-          if (message.toLowerCase().includes("failed to fetch") || message.toLowerCase().includes("network")) {
-            return;
-          }
-          setStatus({ kind: "error", message });
+          resourceFailed=true;
+          controller.error(/webgl|shader|context.*(create|initializ)|invalid style/i.test(message));
         });
-
-        map.once("load", () => {
-          if (cancelled) return;
-          setStatus({ kind: "ready" });
-        });
+        map.on("idle",()=>{if(!cancelled && !resourceFailed && map.isStyleLoaded() && map.areTilesLoaded())controller.ready();});
+        map.on("load",()=>{if(!cancelled && !resourceFailed && map.areTilesLoaded())controller.ready();});
 
         mapClickHandler = (evt: unknown) => {
           const handler = onMapClickRef.current;
@@ -208,7 +209,7 @@ export function MapView({
         map.on("zoomstart", onZoomStart);
       } catch (e) {
         if (cancelled) return;
-        setStatus({ kind: "error", message: e instanceof Error ? e.message : "Map error." });
+        controller.error(true);
       }
     }
 
@@ -216,6 +217,11 @@ export function MapView({
 
     return () => {
       cancelled = true;
+      controller.dispose(); recoveryRef.current=null;
+      window.removeEventListener("online",online);window.removeEventListener("offline",online);
+      if(resume){document.removeEventListener("visibilitychange",resume);window.removeEventListener("pageshow",resume);window.removeEventListener("orientationchange",resume);}
+      if(mapRef.current && contextLost)mapRef.current.getCanvas().removeEventListener("webglcontextlost",contextLost);
+      if(mapRef.current && contextRestored)mapRef.current.getCanvas().removeEventListener("webglcontextrestored",contextRestored);
       if (rafId !== null) window.cancelAnimationFrame(rafId);
       if (resizeHandler) window.removeEventListener("resize", resizeHandler);
       ro?.disconnect();
@@ -305,42 +311,11 @@ export function MapView({
       marker.addTo(map);
       markersRef.current.push(marker);
     }
-  }, [markers]);
+  }, [markers, mapVersion]);
 
-  if (status.kind === "error") {
-    return (
-      <div
-        style={{
-          background: "#000000",
-          color: "#F22F2F",
-          border: "2px solid #C00000",
-          borderRadius: 8,
-          padding: 12,
-          fontFamily: "var(--ui)",
-          fontSize: 14,
-          lineHeight: 1.4
-        }}
-        role="alert"
-        aria-live="polite"
-      >
-        Map error: {status.message}
-      </div>
-    );
-  }
-
-  return (
-    <div
-      ref={containerRef}
-      className="rd-maplibre"
-      style={{
-        width: "100%",
-        height: "100%",
-        background: "#000000",
-        borderRadius: 8,
-        overflow: "hidden",
-        cursor: cursor === "crosshair" ? "crosshair" : "default"
-      }}
-      aria-label="Cruise map"
-    />
-  );
+  const messages:Record<MapState,string>={loading:"Loading dark map…",ready:"",degraded:"Map coverage is incomplete. People and chat are still available.",offline:"You are offline. Map tiles may be unavailable.",fatal:"Map rendering is unavailable on this device. Use People to continue."};
+  return <div style={{position:"relative",width:"100%",height:"100%",background:"#141418"}}>
+    <div ref={containerRef} className="rd-maplibre" style={{width:"100%",height:"100%",background:"#141418",borderRadius:8,overflow:"hidden",cursor:cursor==="crosshair"?"crosshair":"default"}} aria-label="Cruise map"/>
+    {status!=="ready"?<div className="rd-map-status" role="status" aria-live="polite"><span>{messages[status]}</span>{status!=="loading" && status!=="fatal"?<button className="rd-btn" onClick={()=>recoveryRef.current?.retry()} disabled={status==="offline"}>Retry map</button>:null}<button className="rd-btn" onClick={()=>{window.location.hash="#/discover-chat";window.dispatchEvent(new CustomEvent("rd:discover-control",{detail:{action:"show_people"}}));}}>Open People</button></div>:null}
+  </div>;
 }

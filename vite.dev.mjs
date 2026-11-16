@@ -45,6 +45,7 @@ async function main() {
     logLevel: "info",
     root: "frontend",
     define: {
+      __DUALMODE_MAP_STYLE_URL__: JSON.stringify(process.env.DUALMODE_MAP_STYLE_URL ?? "https://tiles.openfreemap.org/styles/dark"),
       __DUALMODE_DEFAULT_CENTER_LAT__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LAT ?? "0"),
       __DUALMODE_DEFAULT_CENTER_LNG__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LNG ?? "0"),
       __DUALMODE_API_BASE_PATH__: JSON.stringify(process.env.DUALMODE_API_BASE_PATH ?? "__local__"),

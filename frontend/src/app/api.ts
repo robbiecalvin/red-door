@@ -1,3 +1,4 @@
+import { boundedFetch as fetch } from "./request";
 import { actorKey } from "../../../shared/identity";
 import type { PublicMember } from "../../../shared/member";
 import { type AnalyticsSummary } from "../../../shared/analytics";

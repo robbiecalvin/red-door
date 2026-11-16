@@ -176,7 +176,8 @@ export function CruiseMap({
         </div>
       ) : null}
 
-      <div style={{ flex: 1, minHeight: 0, background: "#eeece8", border: 0, borderRadius: 0, overflow: "hidden", height: typeof height === "number" || typeof height === "string" ? height : 520, position: "relative" }}>
+      {geo.kind !== "granted" ? <p className="rd-caption" role="status">Showing the default map view. This does not publish your location.</p> : null}
+      <div style={{ flex: 1, minHeight: 0, background: "#141418", border: 0, borderRadius: 0, overflow: "hidden", height: typeof height === "number" || typeof height === "string" ? height : 520, position: "relative" }}>
         <MapView
           initialView={view}
           markers={markers}

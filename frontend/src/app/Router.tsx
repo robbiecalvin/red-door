@@ -1,5 +1,5 @@
+import { permittedLocation } from "./location";
 import { AdminLaunchChecks } from "./AdminLaunchChecks";
-import { MdPanel, MdAccountSettings } from "./MdPanel";
 import { BillingSettings, PromoCodeForm } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { CommunityPanel } from "./CommunityPanel";
@@ -1045,39 +1045,19 @@ function CruiseSurface({
   }
 
   async function updatePresenceFromGeo(): Promise<void> {
-    const fallbackCenter = travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng };
-    if (!navigator.geolocation) {
-      setSelfCoords(fallbackCenter);
-      try {
-        await api.updatePresence(session.sessionToken, fallbackCenter.lat, fallbackCenter.lng, "online");
-      } catch {
-        // best-effort fallback
-      }
+    // A default camera position is never a presence assertion.
+    if (travelCenter) {
+      setSelfCoords(travelCenter);
+      await api.updatePresence(session.sessionToken, travelCenter.lat, travelCenter.lng, "online").catch(e=>setLastError(normalizeErrorMessage(e)));
       return;
     }
-    try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: false,
-          timeout: 15_000,
-          maximumAge: 30_000
-        });
-      });
-      setSelfCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      await api.updatePresence(session.sessionToken, pos.coords.latitude, pos.coords.longitude, "online");
-    } catch (e) {
-      setSelfCoords(fallbackCenter);
-      try {
-        await api.updatePresence(session.sessionToken, fallbackCenter.lat, fallbackCenter.lng, "online");
-      } catch {
-        const msg =
-          e && typeof e === "object" && "message" in e && typeof (e as { message?: unknown }).message === "string"
-            ? (e as { message: string }).message
-            : null;
-        setLastError(msg ?? normalizeErrorMessage(e));
-      }
-    }
+    const coordinates=await permittedLocation();
+    setSelfCoords(coordinates);
+    if (!coordinates) return;
+    try { await api.updatePresence(session.sessionToken, coordinates.lat, coordinates.lng, "online"); }
+    catch(e) { setLastError(normalizeErrorMessage(e)); }
   }
+
 
   useEffect(() => {
     void updatePresenceFromGeo();
@@ -1140,7 +1120,6 @@ function CruiseSurface({
   }
 
   const mapPresence = useMemo(() => {
-    const hasSelf = mergedPresence.some((p) => p.key === meKey);
     const peoplePresence = mergedPresence.filter((row) => {
       if (row.key === meKey) return true;
       if (filteredPeopleKeys && !filteredPeopleKeys.has(row.key)) return false;
@@ -1149,17 +1128,7 @@ function CruiseSurface({
       return true;
     });
     const filteredPresence = mapVisibility.people ? peoplePresence : peoplePresence.filter((row) => row.key === meKey);
-    if (hasSelf) return filteredPresence;
-    const fallbackCenter = selfCoords ?? travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng };
-    const syntheticSelf: CruisePresenceUpdate = {
-      key: meKey,
-      userType: session.userType,
-      lat: fallbackCenter.lat,
-      lng: fallbackCenter.lng,
-      status: "online",
-      updatedAtMs: Date.now()
-    };
-    return [syntheticSelf, ...filteredPresence];
+    return filteredPresence;
   }, [filteredPeopleKeys, blockedKeys, mapVisibility.people, meKey, mergedPresence, selfCoords, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter, visibleProfileKeys]);
 
   const avatarUrlByKey = useMemo(() => {
@@ -7295,7 +7264,7 @@ export function Router({
       {settingsSection === "privacy" ? <div className="rd-profile-settings-stack"><MemberPrivacy api={api} session={session}/><PrivacySettings api={api} session={session}/><PrivacyBlockList api={api} session={session}/></div> : null}
       {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings api={api} session={session} /></section> : null}
       {settingsSection === "membership" ? <div className="rd-profile-settings-stack"><PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /><BillingSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/></div> : null}
-      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><MdAccountSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
+      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
       </div>
     </div>
   );
@@ -7500,7 +7469,7 @@ export function Router({
       {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setSubmissionsError} /> : null}
-      {activeTab === "promoted" || activeTab === "md" ? <MdPanel api={api} session={session}/> : null}
+      {activeTab === "promoted" || activeTab === "md" ? <p role="status">This feature is unavailable. Open Explore or Inbox to continue.</p> : null}
     </div>
   );
 }

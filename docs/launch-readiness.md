@@ -1,5 +1,7 @@
 # Launch readiness: current URLs
 
+> Historical rehearsal notes follow. For the current standalone scope and evidence, use [standalone-launch-report.md](standalone-launch-report.md). MD is disabled; prior MD checks are not standalone acceptance requirements.
+
 Updated November 15, 2026 (America/Vancouver). Domains are not required for these checks. This records evidence, not an estimated completion percentage.
 
 ## Completed in the isolated rehearsal

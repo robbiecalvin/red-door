@@ -37,7 +37,7 @@ type ProfileSetupDraft = Readonly<{
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
 const DEFAULT_SHARED_API_BASE = "https://red-door-api.onrender.com";
-const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "cruise", "profile", "settings", "submissions", "promoted", "md"]);
+const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "cruise", "profile", "settings", "submissions"]);
 const DEFAULT_TAB: TopTab = "discover";
 const FULL_PAGE_TAB_NAV = false;
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
@@ -238,7 +238,7 @@ function tabFromPathname(): TopTab | null {
 }
 
 function tabFromLocation(): TopTab {
-  // Return links from MD and Stripe land on the root document with a hash route.
+  // Return links from Stripe land on the root document with a hash route.
   if (window.location.hash.startsWith("#/")) return tabFromHash();
   const fromPath = tabFromPathname();
   if (fromPath) return fromPath;
@@ -670,7 +670,7 @@ export function App(): React.ReactElement {
         setPendingVerificationEmail(email.trim());
         setAuthView("register");
         setVerificationCode("");
-        setAuthInfo("Check your email or phone for a verification code.");
+        setAuthInfo("Check your email for a verification code. Codes expire; you can resend after one minute.");
       }
     } catch (e) {
       setLastError(normalizeUiError(e, "Register failed."));
@@ -740,7 +740,7 @@ export function App(): React.ReactElement {
         const targetEmail = typeof err.context?.email === "string" ? err.context.email : email;
         setPendingVerificationEmail(targetEmail);
         setAuthView("login");
-        setAuthInfo("Verify your phone before login. A fresh code was sent.");
+        setAuthInfo("Verify your email before login. Check your inbox or resend the code.");
         return;
       }
       setLastError(msg);
@@ -758,7 +758,7 @@ export function App(): React.ReactElement {
       const res = await api.verifyAge(session.sessionToken, age);
       setSession(res.session);
     } catch (e) {
-      setLastError(normalizeUiError(e, "Age verification failed."));
+      setLastError(normalizeUiError(e, "Age declaration failed."));
     } finally {
       setBusy(false);
     }
@@ -1023,9 +1023,6 @@ export function App(): React.ReactElement {
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("submissions"); }} aria-label="Open submissions">
             <Icon name="book" className="rd-ui-icon" />
           </button>
-          <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("md"); }} aria-label="Open MD">
-            <span className="rd-md-nav-label">MD</span>
-          </button>
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); void onLogout(); }} aria-label="Log out">
             <Icon name="logout" className="rd-ui-icon" />
           </button>
@@ -1033,7 +1030,7 @@ export function App(): React.ReactElement {
       ) : null}
 
       {showBottomNav ? <nav className="rd-desktop-nav" aria-label="Main navigation">{([
-        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["groups", "groups", "Community"], ["md", "shield", "MD"], ["profile", "user", "Profile"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
+        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["groups", "groups", "Community"], ["profile", "user", "Profile"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
       <div className="rd-inbox-live-status" role="status" hidden={activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
@@ -1188,7 +1185,7 @@ export function App(): React.ReactElement {
                       {authView === "register" ? <label className="rd-field" style={{ fontSize: 12, color: "var(--muted)" }}><span><input type="checkbox" checked={analyticsConsent} onChange={e => setAnalyticsConsent(e.target.checked)} /> Help improve Red Door (optional)</span><span>Share activity counts using a protected account identifier. Daily activity is kept for 35 days; inactive measurement records are deleted after 35 days. No message content, photos, or location. Change this in settings anytime.</span></label> : null}
                       {authView === "register" ? (
                         <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
-                          Password must be at least 6 characters for this web build.
+                          Use at least 10 characters with uppercase, lowercase, a number and a symbol.
                         </div>
                       ) : null}
 
@@ -1247,8 +1244,8 @@ export function App(): React.ReactElement {
             </>
           ) : null}
 
-          {session && session.userType === "guest" && session.ageVerified !== true ? (
-            <section className="rd-card" aria-label="Age gate">
+          {session && session.ageVerified !== true ? (
+            <section className="rd-card" aria-label="Age gate"><p className="rd-caption">Adults 18+ only. This is your age declaration, not independent identity or age verification.</p>
               <div className="rd-card-head">
                 <div className="rd-card-title">Before you step inside</div>
                 <div className="rd-card-sub">18+ required</div>
@@ -1265,8 +1262,8 @@ export function App(): React.ReactElement {
                   <input className="rd-input" value={ageYears} onChange={(e) => setAgeYears(e.target.value)} aria-label="Age in years" />
                 </label>
                 <div className="rd-row">
-                  <button type="button" className="rd-btn primary" onClick={() => void submitAgeGate()} disabled={busy} aria-label="Verify age">
-                    Verify
+                  <button type="button" className="rd-btn primary" onClick={() => void submitAgeGate()} disabled={busy} aria-label="Confirm age">
+                    Confirm
                   </button>
                 </div>
               </div>
@@ -1443,7 +1440,6 @@ export function App(): React.ReactElement {
             <Icon name="board" className="rd-ui-icon rd-mobile-nav-image" /><span>Board</span>
           </button>
           <button className={`rd-mobile-nav-btn ${activeTab === "groups" ? "is-active" : ""}`} aria-label="Community plans" aria-current={activeTab === "groups" ? "page" : undefined} onClick={()=>setTabAndRoute("groups")}><Icon name="groups" className="rd-ui-icon"/><span>Community</span></button>
-          <button className={`rd-mobile-nav-btn ${activeTab === "md" || activeTab === "promoted" ? "is-active" : ""}`} aria-label="MD companions" aria-current={activeTab === "md" ? "page" : undefined} onClick={()=>setTabAndRoute("md")}><span className="rd-md-nav-label">MD</span><span>MD</span></button>
         </nav>
       ) : null}
     </div>

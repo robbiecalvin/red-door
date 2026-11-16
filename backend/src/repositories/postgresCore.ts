@@ -35,7 +35,7 @@ export function createPostgresPool(settings: PostgresSettings): Pool {
     max: 20,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
-    ssl: settings.ssl === true ? { rejectUnauthorized: false } : undefined
+    ssl: settings.ssl === true ? { rejectUnauthorized: true } : undefined
   });
 }
 
@@ -150,4 +150,6 @@ export async function ensurePostgresSchema(pool: Pool): Promise<void> {
       read_at_ms BIGINT NOT NULL
     )
   `);
+  await pool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS verification_security JSONB NOT NULL DEFAULT '{}'::jsonb`);
+
 }
