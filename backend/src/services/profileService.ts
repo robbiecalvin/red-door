@@ -1,3 +1,4 @@
+import { parseProfileDetails, type ProfileDetails } from "../../../shared/profileDetails";
 import { hasPlus, limits } from "../../../shared/plus";
 import { containsDisallowedKidVariation } from "./contentPolicy";
 
@@ -16,7 +17,7 @@ export type Result<T> = ResultOk<T> | ResultErr;
 export type ProfileCutStatus = "cut" | "uncut";
 export type ProfilePosition = "top" | "bottom" | "side";
 
-export type ProfileStats = Readonly<{
+export type ProfileStats = ProfileDetails & Readonly<{
   heightInches?: number;
   race?: string;
   cockSizeInches?: number;
@@ -221,7 +222,12 @@ function validateStats(v: unknown): Result<ProfileStats> {
   })();
   if (position === null) return err("INVALID_INPUT", "Position must be 'top', 'bottom', or 'side'.");
 
+  let details: ProfileDetails;
+  try { details = parseProfileDetails(stats); } catch (error) {
+    return err("INVALID_INPUT", (error as Error).message);
+  }
   return ok({
+    ...details,
     heightInches,
     race,
     cockSizeInches: cockSize,

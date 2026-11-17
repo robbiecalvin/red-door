@@ -1,3 +1,5 @@
+import { ProfileDetailsEditor, ProfileDetailsView } from "./ProfileDetails";
+import { parseProfileDetails, type ProfileDetails } from "../../../shared/profileDetails";
 import { InstallApp } from "./Pwa";
 import { permittedLocation } from "./location";
 import { AdminLaunchChecks } from "./AdminLaunchChecks";
@@ -89,6 +91,7 @@ type ProfileDraft = Readonly<{
   travelLat: string;
   travelLng: string;
   lookingForMore: string;
+  details: ProfileDetails;
 }>;
 
 function cardStyle(): React.CSSProperties {
@@ -477,7 +480,7 @@ function CruiseSurface({
     member?: PublicMember;
     age: number;
     bio: string;
-    stats?: {
+    stats?: ProfileDetails & {
       race?: string;
       heightInches?: number;
       weightLbs?: number;
@@ -499,7 +502,7 @@ function CruiseSurface({
     member?: PublicMember;
     age: number;
     bio: string;
-    stats?: {
+    stats?: ProfileDetails & {
       race?: string;
       heightInches?: number;
       weightLbs?: number;
@@ -1311,6 +1314,7 @@ function CruiseSurface({
                 <div>Cock Size: {selectedPublicProfile?.stats?.cockSizeInches ?? "-"}</div>
                 <div>Cut / Uncut: {selectedPublicProfile?.stats?.cutStatus ?? "-"}</div>
                 <div>Position: {selectedPublicProfile?.stats?.position ?? "-"}</div>
+                <ProfileDetailsView stats={selectedPublicProfile?.stats} />
                 <div style={{ marginTop: 8 }}>Bio: {selectedPublicProfile?.bio ?? "-"}</div>
               </div>
               <div style={{ display: "grid", gap: 8 }}>
@@ -1566,7 +1570,7 @@ function CruiseChat({
     member?: PublicMember;
     age: number;
     bio: string;
-    stats?: {
+    stats?: ProfileDetails & {
       race?: string;
       heightInches?: number;
       weightLbs?: number;
@@ -3730,6 +3734,7 @@ function ThreadsPanel({
                   <div>Cock Size: {threadProfile?.stats?.cockSizeInches ?? "-"}</div>
                   <div>Cut / Uncut: {threadProfile?.stats?.cutStatus ?? "-"}</div>
                   <div>Position: {threadProfile?.stats?.position ?? "-"}</div>
+                  <ProfileDetailsView stats={threadProfile?.stats} />
                   <div style={{ marginTop: 8 }}>Bio: {threadProfile?.bio ?? "-"}</div>
                 </div>
                 <div>
@@ -5041,6 +5046,7 @@ function PublicPostings({
                 <div>Height: {profileForBoardUser?.stats?.heightInches ?? "-"}</div>
                 <div>Weight: {profileForBoardUser?.stats?.weightLbs ?? "-"}</div>
                 <div>Position: {profileForBoardUser?.stats?.position ?? "-"}</div>
+                <ProfileDetailsView stats={profileForBoardUser?.stats} />
                 <div style={{ marginTop: 6 }}>Bio: {profileForBoardUser?.bio ?? "-"}</div>
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
@@ -5416,7 +5422,7 @@ function PromotedProfilesPanel({
     member?: PublicMember;
     age: number;
     bio: string;
-    stats?: {
+    stats?: ProfileDetails & {
       race?: string;
       heightInches?: number;
       weightLbs?: number;
@@ -5788,6 +5794,7 @@ function PromotedProfilesPanel({
             <div style={{ color: "#ced3dc", marginTop: 2 }}>Cock Size: {selectedProfile.stats?.cockSizeInches ?? "-"}</div>
             <div style={{ color: "#ced3dc", marginTop: 2 }}>Cut / Uncut: {selectedProfile.stats?.cutStatus ?? "-"}</div>
             <div style={{ color: "#ced3dc", marginTop: 2 }}>Position: {selectedProfile.stats?.position ?? "-"}</div>
+            <ProfileDetailsView stats={selectedProfile.stats} />
             <div style={{ color: "#ced3dc", marginTop: 10, whiteSpace: "pre-wrap" }}>{selectedProfile.bio}</div>
             <div style={{ marginTop: 10 }}>
               <button type="button" style={buttonSecondary(false)} onClick={() => setSelectedProfile(null)}>
@@ -5816,7 +5823,8 @@ function emptyProfileDraft(): ProfileDraft {
     travelEnabled: false,
     travelLat: "",
     travelLng: "",
-    lookingForMore: ""
+    lookingForMore: "",
+    details: {}
   };
 }
 
@@ -5836,7 +5844,8 @@ function toProfileDraft(profile: UserProfile): ProfileDraft {
     travelEnabled: profile.travelMode?.enabled === true,
     travelLat: typeof profile.travelMode?.lat === "number" ? String(profile.travelMode.lat) : "",
     travelLng: typeof profile.travelMode?.lng === "number" ? String(profile.travelMode.lng) : "",
-    lookingForMore: parsedBio.lookingForMore
+    lookingForMore: parsedBio.lookingForMore,
+    details: parseProfileDetails(profile.stats)
   };
 }
 
@@ -6007,6 +6016,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         age: Math.trunc(ageNum),
         bio: mergedBio,
         stats: {
+          ...parseProfileDetails(draft.details),
           heightInches: parseOptionalInt(draft.heightInches),
           race: draft.race.trim() || undefined,
           cockSizeInches: parseOptionalNumber(draft.cockSizeInches),
@@ -6214,6 +6224,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
       <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 18, fontWeight: 700 }}>Profile details</div>
+          <ProfileDetailsEditor value={draft.details} onChange={details => setDraft(d => ({ ...d, details }))} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span className="rd-label">Height (in)</span>
@@ -6375,6 +6386,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
                 <div style={{ color: "#ced3dc", fontSize: 14 }}>Cock Size: {profile.stats.cockSizeInches ?? "-"}</div>
                 <div style={{ color: "#ced3dc", fontSize: 14 }}>Cut / Uncut: {profile.stats.cutStatus ?? "-"}</div>
                 <div style={{ color: "#ced3dc", fontSize: 14 }}>Position: {profile.stats.position ?? "-"}</div>
+                <ProfileDetailsView stats={profile.stats} />
                 <div style={{ color: "#ced3dc", fontSize: 14, whiteSpace: "pre-wrap" }}>{profile.bio || "-"}</div>
               </div>
             </div>

@@ -1,3 +1,4 @@
+import { parseProfileDetails, type ProfileDetails } from "../../../shared/profileDetails";
 import { boundedFetch as fetch } from "./request";
 import { actorKey } from "../../../shared/identity";
 import type { PublicMember } from "../../../shared/member";
@@ -90,7 +91,7 @@ export type UserProfile = Readonly<{
   displayName: string;
   age: number;
   bio: string;
-  stats: Readonly<{
+  stats: ProfileDetails & Readonly<{
     heightInches?: number;
     race?: string;
     cockSizeInches?: number;
@@ -112,7 +113,7 @@ export type PublicProfile = Readonly<{
   displayName: string;
   age: number;
   bio: string;
-  stats: Readonly<{
+  stats: ProfileDetails & Readonly<{
     heightInches?: number;
     race?: string;
     cockSizeInches?: number;
@@ -131,7 +132,7 @@ export type ProfileUpdatePayload = Readonly<{
   displayName: string;
   age: number;
   bio: string;
-  stats: Readonly<{
+  stats: ProfileDetails & Readonly<{
     heightInches?: number;
     race?: string;
     cockSizeInches?: number;
@@ -2243,7 +2244,10 @@ function createProfileFromInput(
     displayName: parseLocalDisplayName(input.displayName),
     age: parseLocalAge(input.age),
     bio,
-    stats: nextStats,
+    stats: (() => {
+      try { return { ...nextStats, ...parseProfileDetails(nextStats) }; }
+      catch (error) { throw { code: "INVALID_INPUT", message: (error as Error).message } as ServiceError; }
+    })(),
     discreetMode: nextDiscreetMode,
     travelMode: nextTravelMode,
     mainPhotoMediaId: existing?.mainPhotoMediaId,

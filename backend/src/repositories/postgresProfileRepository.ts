@@ -1,3 +1,4 @@
+import { parseProfileDetails } from "../../../shared/profileDetails";
 import type { Pool } from "pg";
 
 import type { Profile, ProfileRepository, ProfileStats } from "../services/profileService";
@@ -6,6 +7,7 @@ function parseStats(value: unknown): ProfileStats {
   if (typeof value !== "object" || value === null) return {};
   const raw = value as Record<string, unknown>;
   return {
+    ...parseProfileDetails(raw),
     heightInches: typeof raw.heightInches === "number" ? raw.heightInches : undefined,
     race: typeof raw.race === "string" ? raw.race : undefined,
     cockSizeInches: typeof raw.cockSizeInches === "number" ? raw.cockSizeInches : undefined,
