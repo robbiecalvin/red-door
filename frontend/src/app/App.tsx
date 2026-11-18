@@ -988,7 +988,7 @@ export function App(): React.ReactElement {
             {session.ageVerified === true ? (
               <div className="rd-topbar-session">
                 <div className="rd-brand" aria-label="Red Door">
-                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Red Door</div><button type="button" className="rd-plus-badge" onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Red Door Plus">{session && hasPlus(session) ? "PLUS ✓" : "PLUS +"}</button>
+                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><button type="button" className="rd-plus-badge" onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Red Door Plus">{session && hasPlus(session) ? "PLUS ✓" : "PLUS +"}</button>
                 </div>
                 <button
                   type="button"
@@ -1044,9 +1044,9 @@ export function App(): React.ReactElement {
                 <div className="rd-card-body">
                   <div className="rd-welcome-brand"><span className="rd-door-mark" aria-hidden="true" />RED DOOR<span className="rd-adult-badge">18+</span></div>
                   <img className="rd-afterdark-art" src={afterDark} alt="" aria-hidden="true" />
-                  <div className="rd-eyebrow">AFTER DARK. ON YOUR TERMS.</div>
-                  <h1 className="rd-home-title">Come a little<br /><span>closer.</span></h1>
-                  <p className="rd-home-copy">A space for gay men to explore, chat, and connect. Step inside and see who’s nearby.</p>
+                  <div className="rd-eyebrow">SEE WHOSE INSIDE.</div>
+                  <h1 className="rd-home-title">Badehaus<br /><span>X</span></h1>
+                  <p className="rd-home-copy">A space for gay men to explore, chat, and connect. Livestreaming. Group Chats & more.</p>
                   <div className="rd-welcome-features"><span><Icon name="map" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
                 </div>
               </section>
@@ -1067,7 +1067,7 @@ export function App(): React.ReactElement {
                     role="tab"
                     aria-selected={authView === "guest"}
                   >
-                    Guest
+                    Anon
                   </button>
                   <button
                     type="button"
