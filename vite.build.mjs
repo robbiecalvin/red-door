@@ -35,6 +35,15 @@ async function main() {
       emptyOutDir: true,
     },
   });
+  const backroom = fs.readFileSync("dist/index.html", "utf8")
+    .replaceAll('"./', '"../')
+    .replaceAll("<title>Badehaus X</title>", "<title>The Backroom · Badehaus X</title>")
+    .replace('name="description" content="Explore nearby. Start a conversation. Connect your way with Badehaus X."',
+      'name="description" content="Queer stories, culture, and community from The Backroom at Badehaus X."')
+    .replace(`rel="canonical" href="${normalizedUrl}"`, `rel="canonical" href="${normalizedUrl}thebackroom/"`)
+    .replace(`property="og:url" content="${normalizedUrl}"`, `property="og:url" content="${normalizedUrl}thebackroom/"`);
+  fs.mkdirSync("dist/thebackroom", { recursive: true });
+  fs.writeFileSync("dist/thebackroom/index.html", backroom);
   writePwaBuild();
   if(!publicBase.hostname.endsWith("github.io"))fs.writeFileSync("dist/CNAME",publicBase.hostname+"\n");
 }

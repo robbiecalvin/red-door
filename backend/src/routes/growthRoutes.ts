@@ -1,5 +1,7 @@
+import { backroomLaunch } from "../../../shared/backroomLaunch";
+import { publishedArticles } from "./backroomRoutes";
 import type { PayoutContact } from "../../../shared/payoutContact";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { MARKETING_CONSENT_VERSION, type MarketingConsent } from "../../../shared/marketing";
 import { hasPlus } from "../../../shared/plus";
@@ -26,6 +28,8 @@ export function installGrowthRoutes(app: Express, deps: {
   persist(): Promise<void>;
   send?: (message: { to: string; subject: string; text: string; headers?: Record<string, string> }) => Promise<unknown>;
   sendSummary?: (to: string, body: string) => Promise<unknown>;
+  displayName(userId: string): Promise<string | undefined>;
+  analytics(): { enabled: boolean; daily: Array<{ day: string; events: { registrations?: number } }> };
   notify(userId: string, subject: string, message: string): void;
 }) {
   const users = () => deps.auth.listRegisteredUserIds().flatMap(id => {
@@ -164,6 +168,66 @@ export function installGrowthRoutes(app: Express, deps: {
     deps.auth.updatePlus(actor.user.id, { plusData: { ...actor.user.plusData, payoutContact: contact } });
     await deps.persist();
     return res.json({ contact: contact ?? null });
+  }));
+
+  app.get("/admin/growth/newsletter-draft", route(async (req, res) => {
+    if (!deps.admin(req, res)) return;
+    const weekEnd = new Date().toISOString().slice(0, 10);
+    const weekStart = new Date(Date.parse(weekEnd) - 7 * 86400000).toISOString().slice(0, 10);
+    const articles = (await publishedArticles(deps.repository)).filter(article =>
+      article.publishedAtMs! >= Date.parse(weekStart) && article.publishedAtMs! < Date.parse(weekEnd));
+    const analytics = deps.analytics();
+    const signupCount = analytics.enabled && req.query.includeSignups === "true"
+      ? analytics.daily.filter(day => day.day >= weekStart && day.day < weekEnd)
+        .reduce((total, day) => total + (day.events.registrations ?? 0), 0)
+      : null;
+    const sections = [`Badehaus X weekly · ${weekStart} to ${weekEnd} (UTC, end exclusive)`];
+    if (signupCount !== null) sections.push(`New registrations: ${signupCount}`);
+    const launchDay = "2026-11-19";
+    const editorial = [
+      ...(launchDay >= weekStart && launchDay < weekEnd ? backroomLaunch.map(article => ({
+        ...article, url: `https://badehausx.com/thebackroom/${article.slug}/`
+      })) : []),
+      ...articles.map(article => ({ ...article, url: `https://badehausx.com/thebackroom/#${article.slug}` }))
+    ];
+    if (editorial.length) {
+      sections.push("New in The Backroom");
+      for (const article of editorial) {
+        const item = `${article.title}\n${article.synopsis}\n${article.url}`;
+        if (sections.join("\n\n").length + item.length + 2 > 3500) break;
+        sections.push(item);
+      }
+    }
+    return res.json({ subject: `Badehaus X weekly · ${weekEnd}`, body: sections.join("\n\n") });
+  }));
+
+  const sheetsSecret = process.env.PRIORITY_SHEETS_SYNC_TOKEN;
+  app.get("/integrations/priority-sheets", route(async (req, res) => {
+    if (!sheetsSecret || sheetsSecret.length < 32) return res.sendStatus(404);
+    const expected = Buffer.from(`Bearer ${sheetsSecret}`);
+    const provided = Buffer.from(req.get("authorization") ?? "");
+    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) return res.sendStatus(401);
+    const byOwner = new Map<string, Awaited<ReturnType<typeof deps.ledger.list>>>();
+    for (const credit of await deps.ledger.list()) {
+      if (!credit.live) continue;
+      const ownerCredits = byOwner.get(credit.ownerId) ?? [];
+      ownerCredits.push(credit);
+      byOwner.set(credit.ownerId, ownerCredits);
+    }
+    const rows = (await Promise.all(users().map(async user => {
+      const priority = user.plusData?.priorityApprovedAtMs !== undefined;
+      const credits = byOwner.get(user.id) ?? [];
+      if (!priority && !credits.length) return null;
+      const summary = summarizeReferrals(credits, priority);
+      return {
+        memberId: user.id, displayName: await deps.displayName(user.id) ?? "Badehaus X member",
+        contact: user.plusData?.payoutContact?.value ?? "",
+        referralCode: user.plusData?.priorityReferralCode ?? "",
+        referrals: summary.lifetimeReferrals, earnedCents: summary.lifetimeReferrals * commissionCents,
+        paidCents: summary.paidCents, monthlyReferrals: summary.monthlyReferrals, unpaidCents: summary.unpaidCents
+      };
+    }))).filter(row => row !== null);
+    return res.json({ rows });
   }));
 
   app.get("/membership/referrals", route(async (req, res) => {
