@@ -1,6 +1,6 @@
 # Badehaus X four-week social campaign
 
-Draft for owner approval. Weeks start on the first Monday after launch approval. Each row lists the proposed posting day, draft caption, visual brief and action. Use only rights-cleared assets. Check feature availability against the live site before approving every post.
+The owner approved the campaign copy and calendar on November 19, 2026. Visuals and scheduling remain pending. Weeks start on the first Monday after launch approval. Each row lists the proposed posting day, draft caption, visual brief and action. Use only rights-cleared assets. Check feature availability against the live site before approving every post.
 
 | Week and channel | Day | Draft caption | Visual brief | Action |
 | --- | --- | --- | --- | --- |

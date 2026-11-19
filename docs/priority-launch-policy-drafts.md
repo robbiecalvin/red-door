@@ -1,6 +1,6 @@
 # Badehaus X launch policy package
 
-Draft for owner and legal review. Publication requires the operator's legal name, jurisdiction, effective date, and verified support, privacy and reporting contacts. Confirm the product practices described here against production configuration and current law before approval.
+The owner approved the policy drafts on November 19, 2026. Publication requires the operator's legal name, jurisdiction, effective date, and verified support, privacy and reporting contacts. Confirm the product practices described here against production configuration and current law before approval.
 
 ## Terms of Service
 
