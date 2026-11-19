@@ -292,11 +292,12 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(data.cohorts.find((c: any) => c.cohort === "launch").paidConversions).toBe(0);
   });
   it("Given privacy opt-out When applied Then removes participant metrics and retains anonymous totals", async () => {
+    const before = await request("/admin/analytics", undefined, admin.token);
     await request("/account/privacy", { analyticsConsent: false }, bob.token, "PUT");
     expect((await request("/account/privacy", undefined, bob.token)).analyticsConsent).toBe(false);
     const data = await request("/admin/analytics", undefined, admin.token);
     expect(data.cohorts.find((c: any) => c.cohort === "free").participants).toBe(1);
-    expect(data.totals.registrations).toBe(Date.now() < LAUNCH_END_MS ? 3 : 2);
+    expect(data.totals.registrations).toBe(before.totals.registrations);
   });
   it("Given a Stripe sandbox payment When confirmed Then separates it from real paid conversion", async () => {
     const user = await account("sandbox", true);

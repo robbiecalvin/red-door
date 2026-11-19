@@ -5,8 +5,8 @@ import { createProfileService, type Profile } from "../backend/src/services/prof
 
 const free = { sessionToken: "sender", userId: "sender", userType: "registered" as const, tier: "free" as const, ageVerified: true, mode: "cruise" as const };
 const paid = { ...free, tier: "premium" as const };
-// Acceptance: free messaging/read tracking continues, but read receipts and group invitations
-// require Plus. Privacy and ownership apply to media regardless of plan.
+// Acceptance: free messaging/read tracking continues, but read receipts require Plus. Group invitations use the group endpoint.
+// Privacy and ownership apply to media regardless of plan.
 describe("Plus feature enforcement", () => {
   it("Given free access When sending direct messages and reading Then keeps unread tracking but hides sender read receipts", () => {
     let now = 1000;
@@ -19,7 +19,7 @@ describe("Plus feature enforcement", () => {
     expect(hidden.value[0].readAtMs).toBeUndefined();
     expect(visible.value[0].readAtMs).toBe(1100);
     expect(svc.sendMessage(free, { chatKind: "cruise", toKey: "user:recipient", text: "GROUP_INVITE_REQUEST|id|user:sender|user:other" }).ok).toBe(false);
-    expect(svc.sendMessage(paid, { chatKind: "cruise", toKey: "user:recipient", text: "GROUP_INVITE_REQUEST|id|user:sender|user:other" }).ok).toBe(true);
+    expect(svc.sendMessage(paid, { chatKind: "cruise", toKey: "user:recipient", text: "GROUP_INVITE_REQUEST|id|user:sender|user:other" }).ok).toBe(false);
   });
   it("Given the free favorite limit When adding another favorite Then rejects while allowing removal and a Plus upgrade", () => {
     const svc = createFavoritesService();
