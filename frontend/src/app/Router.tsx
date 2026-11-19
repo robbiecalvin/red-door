@@ -1198,6 +1198,8 @@ function CruiseSurface({
     />
   );
 
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const [discoveryChoice,setDiscoveryChoice]=useState<DiscoveryChoice>({intent:"",interest:"",verifiedOnly:false});
 
   const [unreadByProfileKey, setUnreadByProfileKey] = useState<Record<string, number>>({});
@@ -1231,9 +1233,27 @@ function CruiseSurface({
 
   return (
     <div className={`rd-explore-surface ${mobileTab === "map" ? "is-map" : "is-people"}`}>
-      <div className="rd-explore-toolbar"><div><span className="rd-eyebrow">EXPLORE</span><strong>{travelCenter ? "Your travel location" : selfCoords ? "People nearby" : "Discover people"}</strong></div><div className="rd-view-switch" aria-label="Explore view"><button aria-pressed={mobileTab === "map"} onClick={() => onDiscoverScreenChange("map")}>Map</button><button aria-pressed={mobileTab === "chat"} onClick={() => onDiscoverScreenChange("chat")}>People</button></div><button className="rd-btn" onClick={() => window.dispatchEvent(new CustomEvent("rd:discover-control", {detail:{action:"open_filters"}}))}>Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button></div>
-      <div className="rd-explore-layout">
-        <aside className="rd-explore-sidebar" aria-label="Status and discovery preferences">
+      <div className="rd-explore-toolbar">
+        <div><span className="rd-eyebrow">EXPLORE</span><strong>{travelCenter ? "Your travel location" : selfCoords ? "People nearby" : "Discover people"}</strong></div>
+        <div className="rd-view-switch" aria-label="Explore view">
+          <button aria-pressed={mobileTab === "map"} onClick={() => onDiscoverScreenChange("map")}>Map</button>
+          <button aria-pressed={mobileTab === "chat"} onClick={() => onDiscoverScreenChange("chat")}>People</button>
+        </div>
+        <button type="button" className="rd-btn" onClick={() => window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "open_filters" } }))}>
+          Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}
+        </button>
+        <button type="button" className="rd-btn" ref={sidebarToggleRef} aria-expanded={sidebarOpen}
+          aria-controls="explore-preferences" aria-label={sidebarOpen ? "Hide status and discovery preferences" : "Show status and discovery preferences"}
+          onClick={() => setSidebarOpen(open => !open)}>Status</button>
+      </div>
+      <div className={`rd-explore-layout${sidebarOpen ? "" : " is-sidebar-hidden"}`}>
+        <aside id="explore-preferences" className="rd-explore-sidebar" hidden={!sidebarOpen} aria-label="Status and discovery preferences">
+          <div className="rd-explore-sidebar-actions">
+            <button type="button" className="rd-btn" aria-label="Close status and discovery preferences" onClick={() => {
+              setSidebarOpen(false);
+              sidebarToggleRef.current?.focus();
+            }}>×</button>
+          </div>
           <IntentControl api={api} session={session} />
           <DiscoveryChoices api={api} session={session} value={discoveryChoice} onChange={setDiscoveryChoice} />
         </aside>
@@ -7009,7 +7029,7 @@ export function Router({
       {settingsSection === "privacy" ? <div className="rd-profile-settings-stack"><MemberPrivacy api={api} session={session}/><PrivacySettings api={api} session={session}/><PrivacyBlockList api={api} session={session}/></div> : null}
       {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings api={api} session={session} /></section> : null}
       {settingsSection === "membership" ? <div className="rd-profile-settings-stack"><MembershipPrograms api={api} session={session}/><PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /><BillingSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/></div> : null}
-      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><MarketingPreferences api={api} session={session}/><GrowthDashboard api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
+      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><MarketingPreferences api={api} session={session}/><GrowthDashboard api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /><a href="./legal/">Policies</a></div> : null}
       </div>
     </div>
   );

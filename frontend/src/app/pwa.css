@@ -20,3 +20,20 @@
   .rd-topbar-session .rd-brand { grid-column: 1 / -1; }
   .rd-topbar-session .rd-top-actions { justify-self: end; }
 }
+
+.rd-topbar .rd-backroom-link {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 4px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+@media (max-width: 420px) {
+  .rd-topbar .rd-brand { flex-wrap: wrap; gap: 6px; }
+  .rd-topbar .rd-backroom-link { min-height: 32px; padding-inline: 6px; font-size: 10px; }
+  .rd-topbar .rd-plus-badge { white-space: nowrap; }
+}
