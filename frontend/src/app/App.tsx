@@ -335,8 +335,10 @@ export function App(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<TopTab>(() => tabFromLocation());
   const [discoverScreen, setDiscoverScreen] = useState<DiscoverScreen>(() => discoverScreenFromHash());
   const [discoverFilter, setDiscoverFilter] = useState<DiscoverFilter>("all");
-  const [email, setEmail] = useState<string>("");
-  const [password, setPassword] = useState<string>("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
   const [phoneE164, setPhoneE164] = useState<string>("");
   const [registerDisplayName, setRegisterDisplayName] = useState<string>("");
   const [recoveryToken, setRecoveryToken] = useState(() => /^#reset=([a-f0-9]{64})$/i.exec(window.location.hash)?.[1] ?? "");
@@ -356,7 +358,7 @@ export function App(): React.ReactElement {
   const [plusOpen, setPlusOpen] = useState(false);
   const [registerAge, setRegisterAge] = useState<string>("");
   const [verificationCode, setVerificationCode] = useState<string>("");
-  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string>("");
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [authInfo, setAuthInfo] = useState<string>("");
   const [ageYears, setAgeYears] = useState<string>("");
   const [profileSetupDraft, setProfileSetupDraft] = useState<ProfileSetupDraft>(() => emptyProfileSetupDraft());
@@ -502,6 +504,7 @@ export function App(): React.ReactElement {
     const meKey = actorKey(activeSession);
 
     async function safeListThreads(chatKind: "cruise" | "date"): Promise<ReadonlyArray<Readonly<{ otherKey: string }>>> {
+      if (activeSession.mode !== "hybrid" && activeSession.mode !== chatKind) return [];
       try {
         const res = await api.listChatThreads(activeSession.sessionToken, chatKind);
         return Array.isArray(res.threads) ? (res.threads as ReadonlyArray<Readonly<{ otherKey: string }>>) : [];
@@ -578,6 +581,15 @@ export function App(): React.ReactElement {
     };
   }, [api, session]);
 
+  function switchAuthView(view: AuthView): void {
+    if (view === authView) return;
+    setAuthView(view);
+    setPendingVerificationEmail(null);
+    setVerificationCode("");
+    setAuthInfo("");
+    setLastError(null);
+  }
+
   function onLogout(): void {
     if(session?.userId)void disablePush(api,session).catch(()=>{});
     clearPersistedSessionToken();
@@ -587,6 +599,12 @@ export function App(): React.ReactElement {
     setLastError(null);
     setAuthInfo("");
     setAuthView("guest");
+    setLoginEmail("");
+    setLoginPassword("");
+    setRegisterEmail("");
+    setRegisterPassword("");
+    setPendingVerificationEmail(null);
+    setVerificationCode("");
     setProfileSetupRequired(false);
     setProfileSetupChecking(false);
     setProfileSetupDraft(emptyProfileSetupDraft());
@@ -646,29 +664,28 @@ export function App(): React.ReactElement {
     setLastError(null);
     setAuthInfo("");
     try {
-      await api.register(email, password, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent });
+      await api.register(registerEmail, registerPassword, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent });
       setProfileSetupDraft((prev) => ({
         ...prev,
         displayName: normalizedDisplayName,
         age: String(registerAgeNumber)
       }));
       try {
-        const loginRes = await api.login(email, password);
+        const loginRes = await api.login(registerEmail, registerPassword);
         const nextSession = await autoVerifyAgeForRegisteredSession(loginRes.session, registerAgeNumber);
         persistSessionToken(loginRes.session.sessionToken);
         setSessionToken(loginRes.session.sessionToken);
         setSession(nextSession);
       setLoginSequence(n=>n+1);
-        setPendingVerificationEmail("");
+        setPendingVerificationEmail(null);
         setVerificationCode("");
         setAuthInfo("");
       } catch (loginError) {
-        const message = normalizeUiError(loginError, "Register failed.");
         const requiresVerification = isVerificationRequiredError(loginError);
         if (!requiresVerification) {
           throw loginError;
         }
-        setPendingVerificationEmail(email.trim());
+        setPendingVerificationEmail(registerEmail.trim());
         setAuthView("register");
         setVerificationCode("");
         setAuthInfo("Check your email for a verification code. Codes expire; you can resend after one minute.");
@@ -681,12 +698,16 @@ export function App(): React.ReactElement {
   }
 
   async function submitVerifyEmail(): Promise<void> {
+    const targetEmail = pendingVerificationEmail?.trim();
+    if (!targetEmail) {
+      setLastError("Email is required.");
+      return;
+    }
     requestLocationPermission();
     setBusy(true);
     setLastError(null);
     setAuthInfo("");
     try {
-      const targetEmail = pendingVerificationEmail || email;
       const res = await api.verifyEmail(targetEmail, verificationCode.trim());
       const ageFromRegister = Number(registerAge);
       const preferredAge = Number.isFinite(ageFromRegister) ? ageFromRegister : undefined;
@@ -702,8 +723,8 @@ export function App(): React.ReactElement {
   }
 
   async function resendVerificationCode(): Promise<void> {
-    const targetEmail = pendingVerificationEmail || email;
-    if (!targetEmail.trim()) {
+    const targetEmail = pendingVerificationEmail?.trim();
+    if (!targetEmail) {
       setLastError("Email is required.");
       return;
     }
@@ -727,7 +748,7 @@ export function App(): React.ReactElement {
     setLastError(null);
     setAuthInfo("");
     try {
-      const res = await api.login(email, password);
+      const res = await api.login(loginEmail, loginPassword);
       const nextSession = await autoVerifyAgeForRegisteredSession(res.session);
       persistSessionToken(res.session.sessionToken);
       setSessionToken(res.session.sessionToken);
@@ -738,7 +759,7 @@ export function App(): React.ReactElement {
       const msg = normalizeUiError(e, "Login failed.");
       const needsVerification = isVerificationRequiredError(e);
       if (needsVerification) {
-        const targetEmail = typeof err.context?.email === "string" ? err.context.email : email;
+        const targetEmail = typeof err.context?.email === "string" ? err.context.email : loginEmail;
         setPendingVerificationEmail(targetEmail);
         setAuthView("login");
         setAuthInfo("Verify your email before login. Check your inbox or resend the code.");
@@ -1032,7 +1053,7 @@ export function App(): React.ReactElement {
       ) : null}
 
       {showBottomNav ? <nav className="rd-desktop-nav" aria-label="Main navigation">{([
-        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["groups", "groups", "Community"], ["profile", "user", "Profile"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
+        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["groups", "groups", "Community"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
       <div className="rd-inbox-live-status" role="status" hidden={activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
@@ -1061,7 +1082,7 @@ export function App(): React.ReactElement {
                   <button
                     type="button"
                     className={`rd-tab ${authView === "guest" ? "active" : ""}`}
-                    onClick={() => setAuthView("guest")}
+                    onClick={() => switchAuthView("guest")}
                     disabled={busy}
                     aria-label="Anon login"
                     role="tab"
@@ -1072,7 +1093,7 @@ export function App(): React.ReactElement {
                   <button
                     type="button"
                     className={`rd-tab ${authView === "register" ? "active" : ""}`}
-                    onClick={() => setAuthView("register")}
+                    onClick={() => switchAuthView("register")}
                     disabled={busy}
                     aria-label="Register"
                     role="tab"
@@ -1083,7 +1104,7 @@ export function App(): React.ReactElement {
                   <button
                     type="button"
                     className={`rd-tab ${authView === "login" ? "active" : ""}`}
-                    onClick={() => setAuthView("login")}
+                    onClick={() => switchAuthView("login")}
                     disabled={busy}
                     aria-label="Login"
                     role="tab"
@@ -1115,7 +1136,7 @@ export function App(): React.ReactElement {
                   ) : null}
 
                   {authInfo ? <div style={{ color: "#ff7a88", marginBottom: 12 }}>{authInfo}</div> : null}
-                  {pendingVerificationEmail ? (
+                  {pendingVerificationEmail !== null ? (
                     <div style={{ color: "var(--muted)", marginBottom: 12 }}>
                       Check the email or phone associated with your account. Contact support if your code does not arrive.
                     </div>
@@ -1134,6 +1155,7 @@ export function App(): React.ReactElement {
 
                   {authView === "register" || authView === "login" ? (
                     <form
+                      key={authView}
                       onSubmit={(e) => {
                         e.preventDefault();
                         void (authView === "register" ? submitRegister() : submitLogin());
@@ -1141,12 +1163,16 @@ export function App(): React.ReactElement {
                     >
                       <label className="rd-field">
                         <span className="rd-label">Email</span>
-                        <input className="rd-input" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email" />
+                        <input className="rd-input" value={authView === "register" ? registerEmail : loginEmail}
+                          onChange={(e) => (authView === "register" ? setRegisterEmail : setLoginEmail)(e.target.value)}
+                          type="email" autoComplete="username" autoCapitalize="none" aria-label="Email" />
                       </label>
 
                       <label className="rd-field">
                         <span className="rd-label">Password</span>
-                        <input className="rd-input" value={password} onChange={(e) => setPassword(e.target.value)} type="password" aria-label="Password" />
+                        <input className="rd-input" value={authView === "register" ? registerPassword : loginPassword}
+                          onChange={(e) => (authView === "register" ? setRegisterPassword : setLoginPassword)(e.target.value)}
+                          type="password" autoComplete={authView === "register" ? "new-password" : "current-password"} aria-label="Password" />
                       </label>
 
                       {authView === "register" ? (
@@ -1201,7 +1227,7 @@ export function App(): React.ReactElement {
                   ) : null}
 
                   {authView === "login" ? <button type="button" className="rd-btn" onClick={() => { setRecoveryToken(""); setRecoveryOpen(true); }}>Forgot password?</button> : null}
-                  {pendingVerificationEmail && (authView === "register" || authView === "login") ? (
+                  {pendingVerificationEmail !== null && (authView === "register" || authView === "login") ? (
                     <form
                       onSubmit={(e) => {
                         e.preventDefault();
@@ -1212,12 +1238,9 @@ export function App(): React.ReactElement {
                         <span className="rd-label">Email</span>
                         <input
                           className="rd-input"
-                          value={pendingVerificationEmail || email}
-                          onChange={(e) => {
-                            setPendingVerificationEmail(e.target.value);
-                            setEmail(e.target.value);
-                          }}
-                          aria-label="Verification email"
+                          value={pendingVerificationEmail}
+                          onChange={(e) => setPendingVerificationEmail(e.target.value)}
+                          type="email" autoComplete="email" autoCapitalize="none" aria-label="Verification email"
                         />
                       </label>
 

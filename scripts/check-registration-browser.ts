@@ -25,7 +25,16 @@ async function main(){
   await page.goto(`http://127.0.0.1:${uiPort}`);
   await page.getByRole('tab',{name:'Register',exact:true}).click();
   await page.getByLabel('Email',{exact:true}).fill('controlled-browser@example.com');await page.getByLabel('Password',{exact:true}).fill('Browser-Fixture123!');await page.getByLabel('Display name',{exact:true}).fill('Controlled Browser');await page.getByLabel('Age',{exact:true}).fill('25');
+  await page.getByRole('tab',{name:'Login',exact:true}).click();
+  assert.equal(await page.getByLabel('Email',{exact:true}).inputValue(), '');
+  assert.equal(await page.getByLabel('Password',{exact:true}).inputValue(), '');
+  await page.getByRole('tab',{name:'Register',exact:true}).click();
+  assert.equal(await page.getByLabel('Email',{exact:true}).inputValue(), 'controlled-browser@example.com');
   await page.getByRole('button',{name:'Register',exact:true}).click();await page.getByLabel('Verification code',{exact:true}).waitFor();
+  const verificationEmail = page.getByLabel('Verification email', {exact:true});
+  await verificationEmail.fill('');
+  assert.ok(await verificationEmail.isVisible());
+  await verificationEmail.fill('controlled-browser@example.com');
   const message=await mail.next(0),code=/verification code is (\d{6})/.exec(message)?.[1];assert.ok(code);
   await page.getByLabel('Verification code',{exact:true}).fill(code==='000000'?'111111':'000000');await page.getByRole('button',{name:'Verify email',exact:true}).click();await page.getByRole('alert').filter({hasText:'Invalid or expired'}).waitFor();
   await page.getByLabel('Verification code',{exact:true}).fill(code!);
@@ -33,7 +42,7 @@ async function main(){
   await page.getByRole('button',{name:'Verify email',exact:true}).click();const verified=await(await result).json();assert.equal(verified.user.userType,'registered');
   await page.waitForFunction(()=>!document.querySelector('input[aria-label="Verification code"]'));
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({status:'PASS',checks:['mobile registration UX','strong password and adult declaration','verification required before login','actual TLS SMTP fixture','wrong code error','correct code and authenticated UI'],externalInbox:'NOT TESTED'}));
+  console.log(JSON.stringify({status:'PASS',checks:['mobile registration UX','registration and login field isolation','strong password and adult declaration','verification required before login','actual TLS SMTP fixture','wrong code error','correct code and authenticated UI'],externalInbox:'NOT TESTED'}));
  }finally{
   await browser?.close();for(const child of [frontend,backend])if(child&&child.exitCode===null){child.kill('SIGTERM');await once(child,'exit');}
   await mail.close();fs.rmSync(root,{recursive:true,force:true});

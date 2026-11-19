@@ -353,7 +353,7 @@ export function ChatWindow({
 
   return (
     <section
-      className={`rd-chat-window ${allowAttachments?"":"is-text-only"}`}
+      className={`rd-chat-window ${boardMode ? "is-board" : "is-direct-chat"} ${allowAttachments ? "" : "is-text-only"}`}
       aria-label="Chat"
       style={{
         background: isEdgeToEdge ? "transparent" : "#000000",
@@ -457,6 +457,7 @@ export function ChatWindow({
         ) : (
           sorted.map((m) => {
             const mine = m.fromKey === currentUserKey;
+            const location = parseLocationPayload(m.text ?? "");
             const bubbleBg = boardMode ? "rgba(22,22,28,0.96)" : mine ? "#C00000" : "#444444";
             const rowAlign: React.CSSProperties = boardMode ? { alignItems: "stretch" } : mine ? { alignItems: "flex-end" } : { alignItems: "flex-start" };
             const author = isAnonymousIdentity(m.fromKey) ? "Anon" : authorLabelForKey ? authorLabelForKey(m.fromKey) : fallbackAuthorLabel(m.fromKey);
@@ -468,40 +469,20 @@ export function ChatWindow({
                     <span>{new Date(m.createdAtMs).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
                   </div>
                 ) : null}
-                {(() => {
-                  const location = parseLocationPayload(m.text ?? "");
-                  if (!location) return null;
-                  return (
-                    <a
-                      href={location.link}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{
-                        display: "grid",
-                        gap: 6,
-                        textDecoration: "none",
-                        color: "#fff",
-                        background: bubbleBg,
-                        borderRadius: boardMode ? 12 : 14,
-                        border: boardMode ? "1px solid rgba(255,255,255,0.08)" : "none",
-                        padding: 8,
-                        width: "auto",
-                        maxWidth: boardMode ? "100%" : "80%"
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: "#ffd5dc" }}>Shared location</div>
-                      <iframe
-                        title="Google Maps location preview"
-                        src={`https://www.google.com/maps?q=${location.lat},${location.lng}&z=14&output=embed`}
-                        style={{ width: "100%", height: 140, border: "1px solid rgba(255,255,255,0.18)", borderRadius: 10 }}
-                        loading="lazy"
-                        referrerPolicy="no-referrer-when-downgrade"
-                      />
-                      <div style={{ fontSize: 12, color: "#ff8e99" }}>Open in Google Maps</div>
-                    </a>
-                  );
-                })()}
-                <div
+                {location ? (
+                  <div className="rd-chat-location" style={{ background: bubbleBg }}>
+                    <span>Shared location</span>
+                    <iframe
+                      title="Google Maps location preview"
+                      src={`https://www.google.com/maps?q=${location.lat},${location.lng}&z=14&output=embed`}
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                    />
+                    <a href={location.link} target="_blank" rel="noreferrer">Open in Google Maps</a>
+                  </div>
+                ) : null}
+                {!location || m.media ? <div
+                  className="rd-chat-bubble"
                   style={{
                     background: bubbleBg,
                     color: "#FFFFFF",
@@ -517,7 +498,7 @@ export function ChatWindow({
                     wordBreak: "break-word"
                   }}
                 >
-                  {m.text && !parseLocationPayload(m.text) ? <div style={{ marginBottom: m.media ? 8 : 0 }}>{displayMessageText(m.text)}</div> : null}
+                  {m.text && !location ? <div style={{ marginBottom: m.media ? 8 : 0 }}>{displayMessageText(m.text)}</div> : null}
                   {m.media ? (
                     <div>
                       {m.media.kind === "image" ? (
@@ -540,9 +521,9 @@ export function ChatWindow({
                       ) : null}
                     </div>
                   ) : null}
-                </div>
-                {!boardMode ? <div style={{ fontSize: 10, color: "#AAAAAA" }}>{formatTime(m.createdAtMs)}</div> : null}
-                {!boardMode ? <button type="button" className="rd-message-reply" aria-label="Reply to message" onClick={()=>setReplyQuote(m.media ? `${m.media.kind === "image" ? "Photo" : m.media.kind === "video" ? "Video" : "Voice message"}${m.text ? `: ${m.text.slice(0,120)}` : ""}` : m.text.slice(0,180))}>Reply</button> : null}
+                </div> : null}
+                {!boardMode ? <time className="rd-chat-time" dateTime={new Date(m.createdAtMs).toISOString()}>{formatTime(m.createdAtMs)}</time> : null}
+                {!boardMode ? <button type="button" className="rd-message-reply" aria-label="Reply to message" onClick={()=>setReplyQuote(m.media ? `${m.media.kind === "image" ? "Photo" : m.media.kind === "video" ? "Video" : "Voice message"}${m.text ? `: ${m.text.slice(0,120)}` : ""}` : location ? "Shared location" : displayMessageText(m.text).slice(0,180))}>Reply</button> : null}
                 {mine && !boardMode ? (
                   <div style={{ fontSize: 10, color: "#ff99a3" }}>
                     {readReceipts && typeof m.readAtMs === "number" ? "Read" : typeof m.deliveredAtMs === "number" ? "Delivered" : ""}

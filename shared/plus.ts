@@ -4,7 +4,8 @@ export const PLUS_CURRENCY = "cad";
 export const LAUNCH_CODE = "THEREDDOORLAUNCH";
 export const PROVIDER_LAUNCH_CODE = "REDDOORLAUNCH";
 export const MEMBER_LAUNCH_CODE = "REDDOORUNLOCKED";
-export const PROMO_CODES = [LAUNCH_CODE, PROVIDER_LAUNCH_CODE, MEMBER_LAUNCH_CODE] as const;
+export const BADEHAUS_FLYER_CODE = "BADEHAUSXONLINE";
+export const PROMO_CODES = [LAUNCH_CODE, PROVIDER_LAUNCH_CODE, MEMBER_LAUNCH_CODE, BADEHAUS_FLYER_CODE] as const;
 export function promoCode(value:unknown):string { if(typeof value!=="string" || !(PROMO_CODES as readonly string[]).includes(value.trim().toUpperCase()))throw new Error("Invalid promotion code.");return value.trim().toUpperCase(); }
 // Midnight January 1, 2027 in America/Vancouver. End is exclusive.
 export const LAUNCH_END_MS = Date.parse("2027-01-01T00:00:00-07:00");

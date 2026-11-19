@@ -1021,7 +1021,7 @@ function CruiseSurface({
     const normalizedTarget = normalizePeerKey(targetKey);
     if (!normalizedTarget || normalizedTarget === meKey) return;
     try {
-      await api.sendChat(session.sessionToken, "cruise", normalizedTarget, FIRE_SIGNAL_TEXT);
+      await api.sendChat(session.sessionToken, session.mode === "date" ? "date" : "cruise", normalizedTarget, FIRE_SIGNAL_TEXT);
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -1204,8 +1204,14 @@ function CruiseSurface({
     />
   );
 
+  const [discoveryChoice,setDiscoveryChoice]=useState<DiscoveryChoice>({intent:"",interest:"",verifiedOnly:false});
+
+  const [unreadByProfileKey, setUnreadByProfileKey] = useState<Record<string, number>>({});
   const chatPanel = (
     <CruiseChat
+      discoveryChoice={discoveryChoice}
+      onDiscoveryChoiceChange={setDiscoveryChoice}
+      onProfileUnreadChange={setUnreadByProfileKey}
       api={api}
       session={session}
       busy={busy}
@@ -1230,203 +1236,107 @@ function CruiseSurface({
 
   return (
     <div className={`rd-explore-surface ${mobileTab === "map" ? "is-map" : "is-people"}`}>
-      <IntentControl api={api} session={session} />
       <div className="rd-explore-toolbar"><div><span className="rd-eyebrow">EXPLORE</span><strong>{travelCenter ? "Your travel location" : selfCoords ? "People nearby" : "Discover people"}</strong></div><div className="rd-view-switch" aria-label="Explore view"><button aria-pressed={mobileTab === "map"} onClick={() => onDiscoverScreenChange("map")}>Map</button><button aria-pressed={mobileTab === "chat"} onClick={() => onDiscoverScreenChange("chat")}>People</button></div><button className="rd-btn" onClick={() => window.dispatchEvent(new CustomEvent("rd:discover-control", {detail:{action:"open_filters"}}))}>Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button></div>
-      <div className="rd-explore-layout"><div className="rd-map-pane">{mobileTab === "map" ? mapPanel : null}</div><div className="rd-people-pane">{chatPanel}</div></div>
+      <div className="rd-explore-layout">
+        <aside className="rd-explore-sidebar" aria-label="Status and discovery preferences">
+          <IntentControl api={api} session={session} />
+          <DiscoveryChoices api={api} session={session} value={discoveryChoice} onChange={setDiscoveryChoice} />
+        </aside>
+        <div className="rd-map-pane">{mobileTab === "map" ? mapPanel : null}</div>
+        <div className="rd-people-pane">{chatPanel}</div>
+      </div>
 
-      {selectedProfileKey ? (
-        <Sheet title="User profile" eyebrow="MAKE A CONNECTION" onClose={() => setSelectedProfileKey(null)}>
-            <div style={{ display: "grid", gap: 14 }}>
-              <div className="rd-profile-intro" style={{ display: "grid", gridTemplateColumns: "88px minmax(0,1fr)", gap: 14, alignItems: "center" }}>
-                <div style={{ position: "relative", width: 88, height: 88 }}>
-                  <img
-                    src={
-                      selectedPublicProfile?.mainPhotoMediaId && mediaUrlById[selectedPublicProfile.mainPhotoMediaId]
-                        ? mediaUrlById[selectedPublicProfile.mainPhotoMediaId]
-                        : avatarForKey(selectedProfileKey)
-                    }
-                    onError={() => {
-                      if (selectedPublicProfile?.mainPhotoMediaId) invalidateMediaUrl(selectedPublicProfile.mainPhotoMediaId);
-                    }}
-                    alt="Profile avatar"
-                    style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover", border: "2px solid #ff3047" }}
-                  />
-                  <span style={{ position: "absolute", right: 4, bottom: 4, width: 14, height: 14, borderRadius: "50%", background: "#ff7a88", border: "2px solid #000" }} />
+      {selectedProfileKey ? (() => {
+        const profile = selectedPublicProfile;
+        const stats = profile?.stats;
+        const isSelf = selectedProfileKey === meKey;
+        const unreadCount = unreadByProfileKey[selectedProfileKey] ?? 0;
+        const isOnline = isSelf || onlinePeers.some(peer => peer.key === selectedProfileKey);
+        const displayName = displayNameForIdentity(selectedProfileKey, profile?.displayName ?? peerProfileByKey[selectedProfileKey]?.displayName);
+        const mediaIds = Array.from(new Set([
+          profile?.mainPhotoMediaId, ...(profile?.galleryMediaIds ?? []), profile?.videoMediaId
+        ].filter((id): id is string => Boolean(id))));
+        const activeIndex = Math.min(selectedMediaIndex, Math.max(0, mediaIds.length - 1));
+        const activeId = mediaIds[activeIndex];
+        const activeUrl = mediaUrlById[activeId];
+        const preview = avatarForKey(selectedProfileKey);
+        const close = () => setSelectedProfileKey(null);
+        const message = () => {
+          onOpenThreadRequested(selectedProfileKey);
+          close();
+        };
+        const reply = (excerpt: string) => {
+          queueReply(selectedProfileKey, excerpt);
+          message();
+        };
+        const basicStats = [
+          profile?.age && `${profile.age} years old`,
+          stats?.heightInches && `${Math.floor(stats.heightInches / 12)}′ ${stats.heightInches % 12}″`,
+          stats?.weightLbs && `${stats.weightLbs} lbs`
+        ].filter(Boolean);
+        const otherStats = [stats?.cockSizeInches && `${stats.cockSizeInches}″`, stats?.cutStatus, stats?.position, stats?.race].filter(Boolean);
+
+        return (
+          <Sheet title={displayName} onClose={close} className="rd-member-profile">
+            <div className="rd-member-profile-status">
+              <span className={isOnline ? "is-online" : ""}>{isOnline ? "Online now" : "Offline"}</span>
+              {selectedProfileDistanceLabel ? <span>{selectedProfileDistanceLabel}</span> : null}
+            </div>
+            <div className="rd-member-profile-layout">
+              <div className="rd-member-gallery">
+                <div className="rd-member-hero">
+                  {activeId && activeId === profile?.videoMediaId && activeUrl ? (
+                    <video controls playsInline src={activeUrl} onError={() => invalidateMediaUrl(activeId)} />
+                  ) : (
+                    <img src={activeUrl ?? preview} alt={`${displayName}’s profile`}
+                      onError={activeId && activeUrl ? () => invalidateMediaUrl(activeId) : undefined} />
+                  )}
                 </div>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontSize: 22, fontWeight: 700 }}>{displayNameForIdentity(selectedProfileKey, selectedPublicProfile?.displayName)}</div>
-                  <div style={{ color: "#ff7a88", fontSize: 14 }}>Open to a conversation</div>
-                </div>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {selectedPublicProfile && selectedPublicProfile.userId !== (session.userId ?? "") ? (
-                    <button
-                      type="button"
-                      style={{
-                        ...buttonSecondary(false),
-                        color: "#ff7a88",
-                        borderColor: "rgba(255,122,136,0.62)",
-                        minWidth: 126
-                      }}
-                      onClick={() => void toggleFavoriteFromProfile(selectedPublicProfile.userId)}
-                    >
-                      {favorites.has(selectedPublicProfile.userId) ? "★ STARRED" : "☆ STAR"}
-                    </button>
-                  ) : null}
-                  {selectedPublicProfile && selectedPublicProfile.userId !== (session.userId ?? "") ? (
-                    <button
-                      type="button"
-                      style={{
-                        ...buttonSecondary(false),
-                        color: "#ffb347",
-                        borderColor: "rgba(255,179,71,0.65)",
-                        minWidth: 126
-                      }}
-                      onClick={() => void sendFireFromProfile(chatKeyFromProfileUserId(selectedPublicProfile.userId))}
-                    >
-                      🔥 FIRE
-                    </button>
-                  ) : null}
-                  {selectedProfileKey !== meKey ? (
-                    <button
-                      type="button"
-                      style={{
-                        ...buttonSecondary(false),
-                        color: blockedKeys.has(selectedProfileKey) ? "#ff9aa3" : "#ffd4d8",
-                        borderColor: "rgba(255,120,130,0.62)",
-                        minWidth: 126
-                      }}
-                      onClick={() => void toggleBlockFromProfile(selectedProfileKey)}
-                    >
-                      {blockedKeys.has(selectedProfileKey) ? "UNBLOCK" : "BLOCK"}
-                    </button>
-                  ) : null}
-                  <button type="button" style={buttonSecondary(false)} onClick={() => setSelectedProfileKey(null)}>CLOSE</button>
-                </div>
+                {mediaIds.length > 1 ? <div className="rd-member-thumbnails" aria-label="Profile gallery">
+                  {mediaIds.map((mediaId, index) => {
+                    const isVideo = mediaId === profile?.videoMediaId;
+                    return (
+                      <button key={mediaId} type="button" aria-pressed={index === activeIndex}
+                        aria-label={isVideo ? "Show video" : `Show photo ${index + 1}`}
+                        onClick={() => setSelectedMediaIndex(index)}>
+                        {isVideo ? "Video" : <img src={mediaUrlById[mediaId] ?? preview} alt=""
+                          onError={() => { if (mediaUrlById[mediaId]) invalidateMediaUrl(mediaId); }} />}
+                      </button>
+                    );
+                  })}
+                </div> : null}
               </div>
-              <ReportMemberButton api={api} session={session} peerKey={selectedProfileKey}/><ProfileConversation member={selectedPublicProfile?.member} onReply={excerpt => {queueReply(selectedProfileKey,excerpt);onOpenThreadRequested(selectedProfileKey);setSelectedProfileKey(null);}} />
-              {selectedPublicProfile?.mainPhotoMediaId ? <button className="rd-btn" onClick={()=>{queueReply(selectedProfileKey,"Your profile photo");onOpenThreadRequested(selectedProfileKey);setSelectedProfileKey(null);}}>Reply to profile photo</button> : null}
-              <div style={{ color: "#ced3dc", fontSize: 14, lineHeight: 1.5 }}>
-                <div>Age: {selectedPublicProfile?.age ?? "-"}</div>
-                <div>Distance: {selectedProfileDistanceLabel ?? "-"}</div>
-                <div>Race: {selectedPublicProfile?.stats?.race ?? "-"}</div>
-                <div>Height: {selectedPublicProfile?.stats?.heightInches ?? "-"}</div>
-                <div>Weight: {selectedPublicProfile?.stats?.weightLbs ?? "-"}</div>
-                <div>Cock Size: {selectedPublicProfile?.stats?.cockSizeInches ?? "-"}</div>
-                <div>Cut / Uncut: {selectedPublicProfile?.stats?.cutStatus ?? "-"}</div>
-                <div>Position: {selectedPublicProfile?.stats?.position ?? "-"}</div>
-                <ProfileDetailsView stats={selectedPublicProfile?.stats} />
-                <div style={{ marginTop: 8 }}>Bio: {selectedPublicProfile?.bio ?? "-"}</div>
-              </div>
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>MEDIA</div>
-                {selectedPublicProfile ? (
-                  <>
-                    {(() => {
-                      const mediaIds = [
-                        selectedPublicProfile.mainPhotoMediaId,
-                        ...(selectedPublicProfile.galleryMediaIds ?? []),
-                        selectedPublicProfile.videoMediaId
-                      ].filter((id): id is string => typeof id === "string" && id.length > 0);
-                      if (mediaIds.length === 0) {
-                        return <div style={{ color: "#b9bec9", fontSize: 13 }}>No uploaded media.</div>;
-                      }
-                      const boundedIndex = Math.max(0, Math.min(selectedMediaIndex, mediaIds.length - 1));
-                      const activeId = mediaIds[boundedIndex];
-                      const activeUrl = mediaUrlById[activeId];
-                      const isVideo = activeId === selectedPublicProfile.videoMediaId;
-                      return (
-                        <div style={{ display: "grid", gap: 8 }}>
-                          <div style={{ background: "rgba(0,0,0,0.5)", border: "1px solid rgba(255,58,77,0.4)", borderRadius: 12, padding: 8 }}>
-                            {isVideo ? (
-                              <video
-                                controls
-                                playsInline
-                                src={activeUrl}
-                                onError={() => invalidateMediaUrl(activeId)}
-                                style={{ width: "100%", maxHeight: 260, borderRadius: 10, background: "#000" }}
-                              />
-                            ) : (
-                              <img
-                                src={activeUrl ?? avatarForKey(selectedProfileKey ?? selectedPublicProfile.userId)}
-                                onError={() => invalidateMediaUrl(activeId)}
-                                alt="Profile media"
-                                style={{ width: "100%", maxHeight: 260, objectFit: "cover", borderRadius: 10 }}
-                              />
-                            )}
-                          </div>
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            {mediaIds.map((mediaId, idx) => {
-                              const thumb = mediaUrlById[mediaId];
-                              const thumbIsVideo = mediaId === selectedPublicProfile.videoMediaId;
-                              return (
-                                <button
-                                  key={mediaId}
-                                  type="button"
-                                  onClick={() => setSelectedMediaIndex(idx)}
-                                  style={{
-                                    width: 64,
-                                    height: 64,
-                                    padding: 0,
-                                    borderRadius: 8,
-                                    overflow: "hidden",
-                                    border: idx === boundedIndex ? "2px solid #ff7a88" : "1px solid rgba(255,58,77,0.4)",
-                                    background: "#000",
-                                    cursor: "pointer",
-                                    color: "#fff",
-                                    fontSize: 10
-                                  }}
-                                  aria-label={thumbIsVideo ? "Open video" : "Open photo"}
-                                >
-                                  {thumbIsVideo ? (
-                                    <div style={{ display: "grid", placeItems: "center", width: "100%", height: "100%" }}>
-                                      {thumb ? (
-                                        <video
-                                          src={thumb}
-                                          muted
-                                          playsInline
-                                          onError={() => invalidateMediaUrl(mediaId)}
-                                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                                        />
-                                      ) : (
-                                        "VIDEO"
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <img
-                                      src={thumb ?? avatarForKey(selectedProfileKey ?? selectedPublicProfile.userId)}
-                                      onError={() => invalidateMediaUrl(mediaId)}
-                                      alt="Media thumbnail"
-                                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                                    />
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </>
-                ) : null}
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  style={buttonPrimary(false)}
-                  onClick={() => {
-                    if (selectedProfileKey) {
-                      onOpenThreadRequested(selectedProfileKey);
-                    }
-                    setSelectedProfileKey(null);
-                    setSelectedMediaIndex(0);
-                  }}
-                >
-                  CHAT
+              {!isSelf ? <div className="rd-member-profile-actions">
+                {profile ? <>
+                  <button className="rd-btn" type="button" aria-label="Favorite" aria-pressed={favorites.has(profile.userId)}
+                    onClick={() => void toggleFavoriteFromProfile(profile.userId)}>{favorites.has(profile.userId) ? "★" : "☆"}</button>
+                  <button className="rd-btn" type="button" aria-label="Send fire"
+                    onClick={() => void sendFireFromProfile(chatKeyFromProfileUserId(profile.userId))}>🔥</button>
+                </> : null}
+                <button className="rd-btn" type="button" aria-label={blockedKeys.has(selectedProfileKey) ? "Unblock" : "Block"}
+                  onClick={() => void toggleBlockFromProfile(selectedProfileKey)}>⊘</button>
+                <button className="rd-btn primary rd-member-message" type="button" onClick={message}>
+                  Message{unreadCount > 0 ? <span className="rd-member-unread" aria-label={`${unreadCount} unread`}>{unreadCount}</span> : null}
                 </button>
+              </div> : null}
+              <div className="rd-member-profile-details">
+                {[basicStats, otherStats].map((row, index) => row.length ? (
+                  <ul className="rd-member-stats" key={index}>
+                    {row.map((value, valueIndex) => <li key={valueIndex}>{value}</li>)}
+                  </ul>
+                ) : null)}
+                <ProfileConversation member={profile?.member} onReply={reply} />
+                <ProfileDetailsView stats={stats} />
+                {profile?.bio ? <div className="rd-member-bio"><h3>Bio</h3><p>{profile.bio}</p></div> : null}
+                {!isSelf ? <div className="rd-member-profile-secondary">
+                  {profile?.mainPhotoMediaId ? <button className="rd-btn" type="button" onClick={() => reply("Your profile photo")}>Reply to profile photo</button> : null}
+                  <ReportMemberButton api={api} session={session} peerKey={selectedProfileKey} />
+                </div> : null}
               </div>
             </div>
-        </Sheet>
-      ) : null}
+          </Sheet>
+        );
+      })() : null}
       {selectedSpotId ? (
         <CruisingSpotModal
           api={api}
@@ -1546,8 +1456,14 @@ function CruiseChat({
   favorites,
   mediaUrlById,
   onAvatarLoadError,
-  onUnreadCountChange
+  onUnreadCountChange,
+  discoveryChoice,
+  onDiscoveryChoiceChange,
+  onProfileUnreadChange
 }: Readonly<{
+  discoveryChoice: DiscoveryChoice;
+  onProfileUnreadChange(counts: Record<string, number>): void;
+  onDiscoveryChoiceChange(value: DiscoveryChoice): void;
   loading?: boolean;
   api: Api;
   session: Session;
@@ -1588,7 +1504,7 @@ function CruiseChat({
 }>): React.ReactElement {
   const [messagesByPeerKey, setMessagesByPeerKey] = useState<Record<string, ReadonlyArray<ChatMessage>>>({});
   const [conversationMetaByPeerKey, setConversationMetaByPeerKey] = useState<Record<string, { lastAt: number; lastText: string }>>({});
-  const [channel, setChannel] = useState<MessageChannel>("instant");
+  const channel: MessageChannel = session.mode === "date" ? "direct" : "instant";
   const [view, setView] = useState<"grid" | "thread">("grid");
   const [threadPeerKey, setThreadPeerKey] = useState<string | null>(null);
   const [thirdCandidateKey, setThirdCandidateKey] = useState<string>("");
@@ -1599,6 +1515,7 @@ function CruiseChat({
   const [pendingSentInvites, setPendingSentInvites] = useState<Record<string, { candidateKey: string; primaryPeerKey: string }>>({});
   const [groupStatus, setGroupStatus] = useState<string | null>(null);
   const [unreadByPeerKey, setUnreadByPeerKey] = useState<Record<string, number>>({});
+  useEffect(() => onProfileUnreadChange(unreadByPeerKey), [onProfileUnreadChange, unreadByPeerKey]);
   const [lastSeenByPeerKey, setLastSeenByPeerKey] = useState<Record<string, number>>({});
   const [videoCallOpen, setVideoCallOpen] = useState<boolean>(false);
   const [videoCallPeerLabel, setVideoCallPeerLabel] = useState<string>("");
@@ -1618,7 +1535,6 @@ function CruiseChat({
   const activeCallPeerRef = useRef<string | null>(null);
   const [remoteVideoStream, setRemoteVideoStream] = useState<MediaStream | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState<boolean>(discoverFilter === "favorites");
-  const [discoveryChoice,setDiscoveryChoice]=useState<DiscoveryChoice>({intent:"",interest:"",verifiedOnly:false});
   const [discoveryNow,setDiscoveryNow]=useState(Date.now());
   useEffect(()=>{const id=window.setInterval(()=>setDiscoveryNow(Date.now()),30000);return()=>clearInterval(id);},[]);
   const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
@@ -2478,7 +2394,7 @@ function CruiseChat({
   }
 
   function clearGridFilters(): void {
-    setDiscoveryChoice({intent:"",interest:"",verifiedOnly:false});
+    onDiscoveryChoiceChange({intent:"",interest:"",verifiedOnly:false});
     setFavoritesOnly(false);
     setOnlineStatusFilter("all");
     setHasChatHistoryOnly(false);
@@ -2635,8 +2551,6 @@ function CruiseChat({
     );
   }
 
-  const chatGridColumns = isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(auto-fill, minmax(155px, 1fr))";
-
   return (
     <div style={{ display: "grid", gap: 0, marginInline: 0 }}>
       {pendingInviteNotifs.length > 0 ? (
@@ -2738,32 +2652,19 @@ function CruiseChat({
       </div></Sheet> : null}
       <div className="rd-discover-grid">
           <FirstConnections api={api} session={session} />
-          <DiscoveryChoices api={api} session={session} value={discoveryChoice} onChange={setDiscoveryChoice} />
-          <div className="rd-section-heading"><div><div className="rd-eyebrow">MAKE A CONNECTION</div><h1>Find your people</h1><p>{gridCards.length} {gridCards.length === 1 ? "person" : "people"} to discover</p></div></div>
-          <div style={{ display: "grid", gap: 10, gridTemplateColumns: chatGridColumns, justifyContent: isMobile ? "stretch" : "space-between" }}>
+          <div className="rd-people-grid" aria-label="People to discover">
             {loading ? Array.from({length:6}, (_,i) => <div key={i} className="rd-profile-skeleton" aria-label="Loading profile" />) : gridCards.length === 0 ? (
               <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name="user" /></span><h2>A little quiet here.</h2><p>No one matches your filters right now.<br />Try opening things up to find more connections.</p><div className="rd-row"><button type="button" className="rd-btn" onClick={clearGridFilters}>Clear filters</button><a className="rd-btn" href="#/groups">Find a local plan</a></div></div>
             ) : (
               gridCards.map((p) => (
                 <button
                   key={p.key}
-                  className="rd-person-card"
+                  className={`rd-person-card ${(unreadByPeerKey[p.key] ?? 0) > 0 ? "has-unread" : ""}`}
                   aria-label={`View ${displayNameForIdentity(p.key, p.displayName)}’s profile`}
                   type="button"
                   onClick={() => onOpenProfile(p.key)}
-                  style={{
-                    background: "rgba(0,0,0,0.5)",
-                    border: (unreadByPeerKey[p.key] ?? 0) > 0 ? "2px solid rgba(255,48,71,0.98)" : "1px solid rgba(255,58,77,0.1)",
-                    borderRadius: 14,
-                    overflow: "hidden",
-                    padding: 0,
-                    display: "grid",
-                    gap: 0,
-                    color: "#fff",
-                    cursor: "pointer"
-                  }}
                 >
-                  <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+                  <div className="rd-person-photo">
                     <img
                       src={p.avatarUrl ?? avatarForKey(p.key)}
                       onError={() => {
@@ -2771,24 +2672,9 @@ function CruiseChat({
                           onAvatarLoadError(p.mainPhotoMediaId);
                         }
                       }}
-                      alt="User avatar"
-                      style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "none" }}
+                      alt=""
                     />
-                    {p.isOnline ? (
-                      <span
-                        style={{
-                          position: "absolute",
-                          left: 6,
-                          bottom: 6,
-                          width: 12,
-                          height: 12,
-                          borderRadius: "50%",
-                          background: "#ff213a",
-                          border: "2px solid #120307",
-                          boxShadow: "0 0 10px rgba(255,33,58,0.8)"
-                        }}
-                      />
-                    ) : null}
+                    {p.isOnline ? <span className="rd-person-online-dot" aria-hidden="true" /> : null}
                   </div>
                   <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong><IntentBadge member={p.member}/><VerifiedBadge verified={p.member?.photoVerified}/><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
                 </button>
@@ -3153,6 +3039,7 @@ function DateChat({
 
 function ThreadsPanel({
   initialPeerKey,
+  onCloseOverlay,
   onActiveThreadChange,
   api,
   session,
@@ -3165,6 +3052,7 @@ function ThreadsPanel({
   compact = false
 }: Readonly<{
   initialPeerKey?: string | null;
+  onCloseOverlay?(): void;
   onActiveThreadChange?(key: string | null): void;
   api: Api;
   session: Session;
@@ -3217,7 +3105,10 @@ function ThreadsPanel({
     [visibleRows, selectedPeerKey]
   );
   const activeRow = useMemo(() => rows.find((row) => row.key === selectedPeerKey) ?? null, [rows, selectedPeerKey]);
-  const selectedChatKind: "cruise" | "date" = selectedPeerKey ? threadKindByPeerKey[selectedPeerKey] ?? "cruise" : "cruise";
+  const defaultChatKind = session.mode === "date" ? "date" : "cruise";
+  const selectedChatKind = session.mode === "hybrid" && selectedPeerKey
+    ? threadKindByPeerKey[selectedPeerKey] ?? defaultChatKind
+    : defaultChatKind;
 
   useEffect(() => {
     const parseSet = (raw: string | null): ReadonlySet<string> => {
@@ -3258,6 +3149,7 @@ function ThreadsPanel({
     let cancelled = false;
     let inFlight = false;
     async function safeListThreads(chatKind: "cruise" | "date"): Promise<ReadonlyArray<Readonly<{ otherKey: string; lastMessage: ChatMessage }>>> {
+      if (session.mode !== "hybrid" && session.mode !== chatKind) return [];
       try {
         const result = await api.listChatThreads(session.sessionToken, chatKind);
         return Array.isArray(result.threads) ? result.threads : [];
@@ -3449,7 +3341,7 @@ function ThreadsPanel({
       window.removeEventListener("rd:inbox-update",live);
       window.clearInterval(id);
     };
-  }, [api, meKey, onUnreadCountChange, session.sessionToken, session.userId, setLastError]);
+  }, [api, meKey, onUnreadCountChange, session.mode, session.sessionToken, session.userId, setLastError]);
 
   useEffect(() => {
     if (!openThreadRequest?.key) return;
@@ -3461,10 +3353,14 @@ function ThreadsPanel({
   useEffect(() => {
     if (!selectedPeerKey) return;
     if (deletedKeys.has(selectedPeerKey)) {
+      if (onCloseOverlay) {
+        onCloseOverlay();
+        return;
+      }
       setSelectedPeerKey(null);
       setThreadView("messages");
     }
-  }, [deletedKeys, selectedPeerKey]);
+  }, [deletedKeys, onCloseOverlay, selectedPeerKey]);
 
   useEffect(() => {
     const onTabSelect = (evt: Event): void => {
@@ -3616,7 +3512,7 @@ function ThreadsPanel({
   async function sendFireToSelectedPeer(): Promise<void> {
     if (!selectedPeerKey) return;
     try {
-      await api.sendChat(session.sessionToken, "cruise", selectedPeerKey, FIRE_SIGNAL_TEXT);
+      await api.sendChat(session.sessionToken, selectedChatKind, selectedPeerKey, FIRE_SIGNAL_TEXT);
       setGroupStatus("Fire sent.");
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
@@ -3665,8 +3561,7 @@ function ThreadsPanel({
 
   if (selectedPeerKey) {
     const peerLabel = activeRow?.displayName ?? threadProfile?.displayName ?? (selectedPeerKey ? displayNameForPeerKey(selectedPeerKey) : "Anon");
-    return (
-      <MessageWorkspace rows={visibleRows} current={selectedPeerKey} onSelect={key => { setSelectedPeerKey(key); setThreadView("messages"); }}>
+    const thread = (
       <div className="rd-active-thread"
         style={{
           display: "grid",
@@ -3751,6 +3646,17 @@ function ThreadsPanel({
           </div>
         )}
       </div>
+    );
+    const dialog = (
+      <Sheet title={displayNameForIdentity(selectedPeerKey, peerLabel)} className="rd-thread-sheet"
+        onClose={onCloseOverlay ?? (() => setSelectedPeerKey(null))}>
+        {thread}
+      </Sheet>
+    );
+    if (onCloseOverlay) return dialog;
+    return (
+      <MessageWorkspace rows={visibleRows} current={selectedPeerKey} onSelect={key => { setSelectedPeerKey(key); setThreadView("messages"); }}>
+        {isMobile ? thread : dialog}
       </MessageWorkspace>
     );
   }
@@ -7221,6 +7127,7 @@ export function Router({
   onLogout?(): void;
 }>): React.ReactElement {
   const isMobile = useIsMobile();
+  const [exploreThreadKey, setExploreThreadKey] = useState<string | null>(null);
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
   const [rememberedThread, setRememberedThread] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState("profile");
@@ -7318,12 +7225,23 @@ export function Router({
           discoverScreen={discoverScreen}
           onDiscoverScreenChange={onDiscoverScreenChange}
           onOpenThreadRequested={(key) => {
+            if (!isMobile) {
+              setExploreThreadKey(normalizePeerKey(key));
+              return;
+            }
             setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
             setActiveTab("threads");
           }}
           onUnreadCountChange={onUnreadCountChange}
         />
       </div>
+      {activeTab === "discover" && exploreThreadKey && !isMobile ? (
+        <ThreadsPanel key={exploreThreadKey} initialPeerKey={exploreThreadKey}
+          onCloseOverlay={() => setExploreThreadKey(null)}
+          api={api} session={session} setLastError={setThreadsError} isMobile={false}
+          onUnreadCountChange={onUnreadCountChange}
+        />
+      ) : null}
       {activeTab === "threads" && !isMobile ? (
         <ThreadsPanel initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
           api={api}

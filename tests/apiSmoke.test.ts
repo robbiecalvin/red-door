@@ -9,7 +9,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
-import { LAUNCH_CODE, LAUNCH_END_MS } from "../shared/plus";
+import { BADEHAUS_FLYER_CODE, LAUNCH_END_MS, launchGrant } from "../shared/plus";
 
 jest.setTimeout(30000);
 const WEBHOOK_SECRET = "smoke-only-not-a-real-secret";
@@ -222,15 +222,22 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect((await webhook("customer.subscription.updated", "evt_expired")).status).toBe(200);
     expect((await request("/plus", undefined, bob.token)).active).toBe(false);
   });
-  it("Given a launch-code registration When completed Then grants the fixed promotion without contacting Checkout", async () => {
+  it("Given a Badehaus flyer registration When completed Then grants the fixed promotion without contacting Checkout", async () => {
     const count = providerPosts;
     if (Date.now() >= LAUNCH_END_MS) {
-      await request("/auth/register", { email: "launch@example.com", password: "Smoke-test123!", promoCode: LAUNCH_CODE }, undefined, undefined, 400);
+      await request("/auth/register", { email: "launch@example.com", password: "Smoke-test123!", promoCode: BADEHAUS_FLYER_CODE }, undefined, undefined, 400);
       return;
     }
-    const user = await account("launch", true, LAUNCH_CODE);
+    const user = await account("launch", true, BADEHAUS_FLYER_CODE);
     const plus = await request("/plus", undefined, user.token);
     expect(plus.active).toBe(Date.now() < LAUNCH_END_MS); expect(plus.expiresAtMs).toBe(LAUNCH_END_MS); expect(providerPosts).toBe(count);
+    expect(plus.redeemedPromoCodes).toContain(BADEHAUS_FLYER_CODE);
+    await request("/plus/redeem", { code: BADEHAUS_FLYER_CODE }, user.token, undefined, 409);
+    await request("/plus/redeem", { code: "INVALID" }, user.token, undefined, 400);
+    await request("/plus/redeem", { code: "PRIORITYX90" }, user.token, undefined, 400);
+    expect(launchGrant(BADEHAUS_FLYER_CODE, LAUNCH_END_MS - 1)).toBe(LAUNCH_END_MS);
+    expect(() => launchGrant(BADEHAUS_FLYER_CODE, LAUNCH_END_MS)).toThrow(/expired/);
+    expect(providerPosts).toBe(count);
     const data = await request("/admin/analytics", undefined, admin.token);
     expect(data.cohorts.find((c: any) => c.cohort === "launch").paidConversions).toBe(0);
   });

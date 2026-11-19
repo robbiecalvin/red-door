@@ -20,15 +20,18 @@ export function BillingSettings({api,session}:Props){const [status,setStatus]=us
   </section>;
 }
 export function AccountNotices({api,session,ready,loginSequence}:{api:Props["api"];session:Session|null;ready:boolean;loginSequence:number}){
-  const [status,setStatus]=useState<PlusStatus|null>(null),[dismissed,setDismissed]=useState(false),[error,setError]=useState("");const seen=useRef(0);
+  const [status,setStatus]=useState<PlusStatus|null>(null),[dismissed,setDismissed]=useState(false);const seen=useRef(0);
   useEffect(()=>{let active=true;setStatus(null);if(!session?.userId)return;void api.getPlus(session.sessionToken).then(s=>{if(active)setStatus(s);}).catch(()=>{});const update=()=>void api.getPlus(session.sessionToken).then(s=>{if(active){setStatus(s);setDismissed(false);}}).catch(()=>{});window.addEventListener("rd:plus-changed",update);return()=>{active=false;window.removeEventListener("rd:plus-changed",update);};},[api,session?.sessionToken,loginSequence]);
   useEffect(()=>{if(loginSequence>seen.current)setDismissed(false);},[loginSequence]);
   if(!session?.userId || !ready || !status)return null;
-  const tutorial=false;const promotional=status.active&&status.expiresAtMs===LAUNCH_END_MS;
+  const promotional=status.active&&status.expiresAtMs===LAUNCH_END_MS;
   const expired=!status.active && Boolean(status.redeemedPromoCodes?.length) && Date.now()>=LAUNCH_END_MS;
   const reminder=loginSequence>seen.current && !dismissed && (!status.hasPaymentMethod||expired);
-  if(!tutorial && !reminder)return null;
-  function dismiss(){if(tutorial){void api.memberRequest(session!.sessionToken,"/plus/tutorial/dismiss",{}).then(()=>setStatus(s=>s?{...s,providerTutorialPending:false}:s)).catch(e=>setError(e.message));}else{seen.current=loginSequence;setDismissed(true);}}
+  if(!reminder)return null;
+  function dismiss() {
+    seen.current = loginSequence;
+    setDismissed(true);
+  }
   function account(){dismiss();window.location.hash="#/settings";window.dispatchEvent(new CustomEvent("rd:settings-section",{detail:"account"}));}
-  return <Sheet title={expired?"Your complimentary Plus has ended":promotional?"Keep Plus after the launch":"Plus billing is optional"} eyebrow="BILLING IS YOUR CHOICE" onClose={dismiss}><div className="rd-account-notice"><p>{expired?"Subscribe to reactivate Plus. Your free account and safety controls remain available.":promotional?"Enroll only if you want CAD $7.99 monthly from January 1, 2027, Pacific time, until canceled. No charge today.":"Plus costs CAD $7.99 monthly from checkout until canceled. Billing is optional."}</p><p>You can close this reminder and continue using your free account.</p><button className="rd-btn primary" onClick={account}>Open billing settings</button><button className="rd-btn" onClick={dismiss}>Not now</button>{error?<p role="alert">{error}</p>:null}</div></Sheet>;
+  return <Sheet title={expired?"Your complimentary Plus has ended":promotional?"Keep Plus after the launch":"Plus billing is optional"} eyebrow="BILLING IS YOUR CHOICE" onClose={dismiss}><div className="rd-account-notice"><p>{expired?"Subscribe to reactivate Plus. Your free account and safety controls remain available.":promotional?"Enroll only if you want CAD $7.99 monthly from January 1, 2027, Pacific time, until canceled. No charge today.":"Plus costs CAD $7.99 monthly from checkout until canceled. Billing is optional."}</p><p>You can close this reminder and continue using your free account.</p><button className="rd-btn primary" onClick={account}>Open billing settings</button><button className="rd-btn" onClick={dismiss}>Remind me later</button></div></Sheet>;
 }

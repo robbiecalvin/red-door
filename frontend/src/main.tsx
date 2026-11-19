@@ -8,6 +8,7 @@ import "./app/refresh.css";
 import "./app/polish.css";
 import "./app/plus-experience.css";
 import "./app/community.css";
+import "./app/discovery-ui.css";
 import "./features/map/map.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 
