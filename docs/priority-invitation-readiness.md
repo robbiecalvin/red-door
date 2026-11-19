@@ -17,7 +17,7 @@
 
 You’re invited to Priority on Badehaus X, the new gay cruising app. 🔥
 
-Get free Badehaus X Plus and a boost near the top of the grid for people within 100 km when you’re online or recently active. Earn CAD $5 every time someone uses your personal code and pays for Plus. They get 3 months for CAD $14.99, then CAD $9.99/month.
+Get free Badehaus X Plus and a boost near the top of the grid for people within 100 km when you’re online or recently active. Earn CAD $5 per qualifying paid referral. Friends using your personal code get 3 months of Plus for CAD $14.99, then CAD $9.99/month.
 
 Join at https://badehausx.com/ with invite code PRIORITYX 90. Your personal referral code appears in Settings → Membership after activation. See you inside. 😉
 
