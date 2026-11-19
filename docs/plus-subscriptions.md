@@ -1,4 +1,4 @@
-# Red Door Plus
+# Badehaus X Plus
 
 Plus costs **CAD $7.99 per month**, using Stripe-hosted Checkout and the customer billing portal. The frontend never receives Stripe secret keys. A browser return from Checkout does not grant privileges: a signed Stripe webhook retrieves canonical subscription state and validates the configured CAD 799-cent monthly price before updating the account.
 
@@ -21,7 +21,7 @@ Plus costs **CAD $7.99 per month**, using Stripe-hosted Checkout and the custome
 
 The existing group-chat flow adds a third previously messaged contact after an invitation is accepted. It is not an arbitrary-size group-room system. Both starting and accepting group invitations require Plus. Normal direct messages remain free. Cruise message expiry, age gates, blocking and consent continue to apply. There is no paid message-retention extension. The public Ads board contains member posts and is not an advertising placement; it remains available. No advertising network is currently installed.
 
-Plus is available from the badge next to the Red Door brand. The panel contains subscription status, checkout, billing management, private photo uploads, sharing/revocation and an album viewer. Advanced discovery filters include save/apply/delete controls. Existing favorites, pin controls and media uploads enforce the new limits.
+Plus is available from the badge next to the Badehaus X brand. The panel contains subscription status, checkout, billing management, private photo uploads, sharing/revocation and an album viewer. Advanced discovery filters include save/apply/delete controls. Existing favorites, pin controls and media uploads enforce the new limits.
 
 ## Launch offer
 

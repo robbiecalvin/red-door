@@ -2106,7 +2106,7 @@ function actorKey(session: SessionLike): string {
 
 function requireAge(session: SessionLike): Result<void> {
   if (session.ageVerified !== true) {
-    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
   }
   return ok(undefined);
 }

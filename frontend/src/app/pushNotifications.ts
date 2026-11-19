@@ -1,7 +1,7 @@
 import { registerAppWorker } from "./pwaRuntime";
 import type { apiClient, Session } from "./api";
 type Api=ReturnType<typeof apiClient>;
-export async function pushRegistration() { if(!("serviceWorker" in navigator) || !("PushManager" in window))throw new Error("This browser does not support push. On iPhone or iPad, add Red Door to your Home Screen first.");return registerAppWorker(); }
+export async function pushRegistration() { if(!("serviceWorker" in navigator) || !("PushManager" in window))throw new Error("This browser does not support push. On iPhone or iPad, add Badehaus X to your Home Screen first.");return registerAppWorker(); }
 export async function enablePush(api:Api,session:Session) {
   if(!session.userId)throw new Error("Create an account to enable closed-app notifications.");
   const config=await api.memberRequest<{publicKey:string;configured:boolean}>(session.sessionToken,"/notifications/push");if(!config.configured)throw new Error("Closed-app notifications are not available until the app’s public URL is configured.");

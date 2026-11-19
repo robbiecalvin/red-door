@@ -1,4 +1,4 @@
-# Red Door execution roadmap
+# Badehaus X execution roadmap
 
 Updated November 14, 2026. This tracks the six-phase product plan agreed in chat. Work uses the existing checkout; no PLANS.md workflow was invoked.
 

@@ -135,7 +135,7 @@ function requirePostingIdentity(session: SessionLike): Result<{ userId: string }
     return err("ANONYMOUS_FORBIDDEN", "Anonymous users cannot create public postings.");
   }
   if (session.ageVerified !== true) {
-    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
   }
   if (typeof session.userId !== "string" || session.userId.trim() === "") {
     return err("INVALID_INPUT", "Invalid user identity.");

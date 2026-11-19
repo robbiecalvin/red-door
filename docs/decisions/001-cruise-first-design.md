@@ -2,7 +2,7 @@
 
 ## Decision
 
-Red Door prioritizes Cruise Mode as the primary interaction model.
+Badehaus X prioritizes Cruise Mode as the primary interaction model.
 
 ## Reasoning
 

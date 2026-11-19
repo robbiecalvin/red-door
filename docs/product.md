@@ -1,8 +1,8 @@
-Red Door Product Specification
+Badehaus X Product Specification
 
 Status: Binding / Authoritative
 
-This document defines Red Door in binding terms.
+This document defines Badehaus X in binding terms.
 
 If any code behavior, test behavior, or implementation decision contradicts this document, the code is incorrect, regardless of test results, performance, or perceived usefulness.
 
@@ -10,7 +10,7 @@ This document is a source of truth.
 
 1. Product Definition
 
-Red Door is a cruise-first social platform.
+Badehaus X is a cruise-first social platform.
 
 Current active product scope:
 - map-first real-time discovery

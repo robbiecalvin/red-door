@@ -93,7 +93,7 @@ function err(code: ErrorCode, message: string, context?: Record<string, unknown>
 
 function requireProfileOwner(session: SessionLike): Result<{ userId: string }> {
   if (session.ageVerified !== true) {
-    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
   }
   if (session.userType === "guest") {
     if (typeof session.sessionToken !== "string" || session.sessionToken.trim() === "") {
@@ -282,7 +282,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
       const discreetMode = update.discreetMode === undefined ? existing?.discreetMode === true : update.discreetMode === true;
       let travelMode = existing?.travelMode;
       if (update.travelMode !== undefined) {
-        if ((update.travelMode as any)?.enabled === true && !hasPlus(session)) return err("INVALID_INPUT", "Travel mode requires Red Door Plus.");
+        if ((update.travelMode as any)?.enabled === true && !hasPlus(session)) return err("INVALID_INPUT", "Travel mode requires Badehaus X Plus.");
         if (!isObject(update.travelMode)) return err("INVALID_INPUT", "travelMode must be an object.");
         const enabled = (update.travelMode as Record<string, unknown>).enabled === true;
         const latRaw = (update.travelMode as Record<string, unknown>).lat;

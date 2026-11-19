@@ -1,19 +1,19 @@
-# Red Door (Web + Optional Backend)
+# Badehaus X (Web + Optional Backend)
 
 Last updated: 2026-11-16
 
 ## What this project is
 
-Red Door is a cruise-first social platform with:
+Badehaus X is a cruise-first social platform with:
 - A static web frontend (GitHub Pages-compatible)
 - An optional Express + WebSocket backend for multi-user/networked behavior
 - Optional PostgreSQL persistence and optional S3-compatible object storage
 
 The active frontend product emphasis is Cruise mode. Date and Hybrid logic exists server-side and in services/tests, with frontend behavior still cruise-first.
 
-## Install Red Door on your phone
+## Install Badehaus X on your phone
 
-Red Door can be installed from the website as a PWA. Choose **Install Red Door** on the entrance screen or in settings. On iPhone/iPad, open Safari and choose **Share → Add to Home Screen**. On Android, use Chrome's **Install app** option when offered.
+Badehaus X can be installed from the website as a PWA. Choose **Install Badehaus X** on the entrance screen or in settings. On iPhone/iPad, open Safari and choose **Share → Add to Home Screen**. On Android, use Chrome's **Install app** option when offered.
 
 Installation adds a home-screen icon and an app window where supported. Messages, people, photos and payments still need a connection. The offline page helps you reconnect; private conversations and photos are excluded from the PWA cache. Updates wait for you to choose Reload.
 
@@ -28,7 +28,7 @@ See [installation, privacy and testing details](docs/pwa.md). Actual iPhone/Andr
 - Guest screen names always show **Anon**, including legacy guest profiles. Guest sessions still keep separate identities and conversations.
 - Message sending status, retry on rejection, and a composer that fits the available mobile viewport.
 
-## Red Door Plus
+## Badehaus X Plus
 
 Plus now includes interactive benefit previews, a Free/Plus comparison, clear CAD $7.99 monthly pricing, and contextual upgrade entry points for filters, Travel mode, chat limits, and profile video. Active members get shortcuts into their benefits. Guest members can start registration directly from the Plus screen.
 
@@ -144,7 +144,7 @@ The following frontend/backend behavior changes are now implemented and live in 
   - Inbox overlay with tabs for Chat Grid, Threads, Pinned, Cruising Spots, Groups
   - Public Ads board as a dedicated right-side bottom bar action
 - Top bar redesigned with:
-  - RED DOOR logo on left
+  - Badehaus X logo on left
   - Profile preview action in center
   - Filter and account-function overlays from top
 - Travel mode improvements:
@@ -390,6 +390,8 @@ Based on `git log -n 30 --oneline`:
   - Builds site from source (`npm run build`)
   - Publishes `dist/` via official Pages actions (`configure-pages`, `upload-pages-artifact`, `deploy-pages`)
 
+See [production domain setup](docs/badehaus-x-domain.md) for GitHub Pages, Cloudflare DNS and TLS, and Render settings.
+
 ### Local deployment commands
 
 - Production build:
@@ -435,7 +437,7 @@ Based on `git log -n 30 --oneline`:
 - `npm run build` currently warns about large chunks (MapLibre bundle) but build succeeds.
 - Security advisories are currently transitive dependency issues and may require dependency-major decisions to fully remediate.
 
-## Red Door Plus
+## Badehaus X Plus
 
 Plus adds travel mode, advanced filters, saved searches, expanded favorites/pins and media limits, private albums, read receipts, and the existing three-person group chat flow for **CAD $7.99/month**. New registrations can use `THEREDDOORLAUNCH` for complimentary access through December 31, 2026 (Pacific time), without a card or automatic renewal. Redemption expires January 1, 2027.
 
@@ -451,4 +453,4 @@ See [Plus subscription setup and behavior](docs/plus-subscriptions.md) for limit
 
 ## Shared-link previews
 
-Text-message and social previews use the static Open Graph/Twitter metadata in `frontend/index.html` and `frontend/public/social/red-door-share-v1.png`. The image is copied into `dist/social/` during the production build. Keep the absolute preview/canonical URLs aligned with the public site domain if it changes. Messaging services can cache older previews after deployment.
+Text-message and social previews use the static Open Graph/Twitter metadata in `frontend/index.html` and `frontend/public/social/badehaus-x-share-v1.png`. The image is copied into `dist/social/` during the production build. Keep the absolute preview/canonical URLs aligned with the public site domain if it changes. Messaging services can cache older previews after deployment.

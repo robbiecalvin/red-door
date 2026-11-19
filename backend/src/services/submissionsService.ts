@@ -52,7 +52,7 @@ function asText(value: unknown): string | null {
 
 function requireRegistered(session: SessionLike): Result<{ userId: string }> {
   if (session.userType === "guest") return err("ANONYMOUS_FORBIDDEN", "Anonymous users cannot create submissions.");
-  if (session.ageVerified !== true) return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+  if (session.ageVerified !== true) return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
   if (typeof session.userId !== "string" || session.userId.trim() === "") return err("INVALID_INPUT", "Invalid user identity.");
   return ok({ userId: session.userId });
 }

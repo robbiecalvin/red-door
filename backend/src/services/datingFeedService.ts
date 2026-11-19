@@ -83,7 +83,7 @@ function validateSession(session: Session): Result<void> {
     return err("INVALID_SESSION", "Invalid session.");
   }
   if (session.ageVerified !== true) {
-    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
   }
   if (session.userType === "guest") {
     return err("ANONYMOUS_FORBIDDEN", "Anonymous users cannot access Date discovery.");

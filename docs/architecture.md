@@ -1,8 +1,8 @@
-# Red Door Architecture
+# Badehaus X Architecture
 
 ## Overview
 
-Red Door uses a split architecture separating a static frontend application from a dynamic backend API.
+Badehaus X uses a split architecture separating a static frontend application from a dynamic backend API.
 
 Frontend: static React application  
 Backend: Node.js service with REST API and WebSocket gateway

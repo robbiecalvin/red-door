@@ -395,12 +395,12 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
 
   return {
     sendMessage(session: Session, input: SendMessageInput): Result<ChatMessage> {
-      if (typeof input?.text === "string" && /^GROUP_INVITE_(REQUEST|ACCEPT)\|/.test(input.text) && !hasPlus(session, nowMs())) return err("UNAUTHORIZED_ACTION", "Group chats require Red Door Plus.");
+      if (typeof input?.text === "string" && /^GROUP_INVITE_(REQUEST|ACCEPT)\|/.test(input.text) && !hasPlus(session, nowMs())) return err("UNAUTHORIZED_ACTION", "Group chats require Badehaus X Plus.");
       const sessionValid = validateSession(session);
       if (!sessionValid.ok) return sessionValid;
 
       if (session.ageVerified !== true) {
-        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
       }
 
       if (typeof input !== "object" || input === null || !isChatKind(input.chatKind)) {
@@ -495,7 +495,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       if (!sessionValid.ok) return sessionValid;
 
       if (session.ageVerified !== true) {
-        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
       }
 
       if (!isChatKind(chatKind)) {
@@ -547,7 +547,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       const sessionValid = validateSession(session);
       if (!sessionValid.ok) return sessionValid;
       if (session.ageVerified !== true) {
-        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
       }
       if (!isChatKind(chatKind)) {
         return err("UNAUTHORIZED_ACTION", "Invalid chat kind.");
@@ -609,7 +609,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       const sessionValid = validateSession(session);
       if (!sessionValid.ok) return sessionValid;
       if (session.ageVerified !== true) {
-        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
       }
       if (!isChatKind(chatKind)) {
         return err("UNAUTHORIZED_ACTION", "Invalid chat kind.");

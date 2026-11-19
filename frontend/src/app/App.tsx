@@ -941,7 +941,7 @@ export function App(): React.ReactElement {
     if (previous === null || unreadChatCount <= previous || !document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
     try { if (localStorage.getItem(NOTIFICATION_ENABLED) !== "true") return;
       const discreet = localStorage.getItem(NOTIFICATION_DISCREET) !== "false";
-      const notification = new Notification("Red Door", {body: discreet ? "You have a new message." : `${unreadChatCount} unread messages.`, tag:"reddoor-messages"});
+      const notification = new Notification("Badehaus X", {body: discreet ? "You have a new message." : `${unreadChatCount} unread messages.`, tag:"reddoor-messages"});
       notification.onclick = () => { window.focus(); setTabAndRoute("threads"); notification.close(); };
     } catch { /* Browser notifications are optional. */ }
   }, [unreadChatCount, setTabAndRoute]);
@@ -1008,8 +1008,8 @@ export function App(): React.ReactElement {
           <div className="rd-topbar-inner">
             {session.ageVerified === true ? (
               <div className="rd-topbar-session">
-                <div className="rd-brand" aria-label="Red Door">
-                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><button type="button" className="rd-plus-badge" onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Red Door Plus">{session && hasPlus(session) ? "PLUS ✓" : "PLUS +"}</button>
+                <div className="rd-brand" aria-label="Badehaus X">
+                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><button type="button" className="rd-plus-badge" onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Badehaus X Plus">{session && hasPlus(session) ? "PLUS ✓" : "PLUS +"}</button>
                 </div>
                 <button
                   type="button"
@@ -1061,11 +1061,11 @@ export function App(): React.ReactElement {
         <div className="rd-grid">
           {!session ? (
             <>
-              <section className="rd-card rd-home-hero" aria-label="Welcome to Red Door">
+              <section className="rd-card rd-home-hero" aria-label="Welcome to Badehaus X">
                 <div className="rd-card-body">
-                  <div className="rd-welcome-brand"><span className="rd-door-mark" aria-hidden="true" />RED DOOR<span className="rd-adult-badge">18+</span></div>
+                  <div className="rd-welcome-brand"><span className="rd-door-mark" aria-hidden="true" />Badehaus X<span className="rd-adult-badge">18+</span></div>
                   <img className="rd-afterdark-art" src={afterDark} alt="" aria-hidden="true" />
-                  <div className="rd-eyebrow">SEE WHOSE INSIDE.</div>
+                  <div className="rd-eyebrow">SEE WHO’S INSIDE.</div>
                   <h1 className="rd-home-title">Badehaus<br /><span>X</span></h1>
                   <p className="rd-home-copy">A space for gay men to explore, chat, and connect. Livestreaming. Group Chats & more.</p>
                   <div className="rd-welcome-features"><span><Icon name="map" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
@@ -1211,7 +1211,7 @@ export function App(): React.ReactElement {
                       {authView === "register" ? (
                         <label className="rd-field"><span className="rd-label">Promo code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" />{Date.now() < LAUNCH_END_MS ? <span className="rd-launch-offer">Have a launch or gift code? Enter it here for complimentary Plus through December 31, 2026. No card required. Paid renewal is a separate choice.</span> : null}</label>
                       ) : null}
-                      {authView === "register" ? <label className="rd-field" style={{ fontSize: 12, color: "var(--muted)" }}><span><input type="checkbox" checked={analyticsConsent} onChange={e => setAnalyticsConsent(e.target.checked)} /> Help improve Red Door (optional)</span><span>Share activity counts using a protected account identifier. Daily activity is kept for 35 days; inactive measurement records are deleted after 35 days. No message content, photos, or location. Change this in settings anytime.</span></label> : null}
+                      {authView === "register" ? <label className="rd-field" style={{ fontSize: 12, color: "var(--muted)" }}><span><input type="checkbox" checked={analyticsConsent} onChange={e => setAnalyticsConsent(e.target.checked)} /> Help improve Badehaus X (optional)</span><span>Share activity counts using a protected account identifier. Daily activity is kept for 35 days; inactive measurement records are deleted after 35 days. No message content, photos, or location. Change this in settings anytime.</span></label> : null}
                       {authView === "register" ? (
                         <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
                           Use at least 10 characters with uppercase, lowercase, a number and a symbol.
@@ -1277,7 +1277,7 @@ export function App(): React.ReactElement {
                 <div className="rd-card-sub">18+ required</div>
               </div>
               <div className="rd-card-body">
-                <div style={{ color: "var(--muted)", marginBottom: 12 }}>Red Door is for adults 18 and over. Confirm your age to continue.</div>
+                <div style={{ color: "var(--muted)", marginBottom: 12 }}>Badehaus X is for adults 18 and over. Confirm your age to continue.</div>
                 {lastError ? (
                   <div className="rd-error" role="alert" aria-live="polite" style={{ marginBottom: 12, marginTop: 0 }}>
                     {lastError}

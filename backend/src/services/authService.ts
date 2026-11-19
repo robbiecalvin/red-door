@@ -221,7 +221,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     deps.onVerificationCodeIssued ??
     ((destination: string, code: string, channel: "sms" | "email") => {
       // Dev fallback when no SMTP provider is configured.
-      console.warn("[RedDoor] Verification delivery is not configured.");
+      console.warn("[Badehaus X] Verification delivery is not configured.");
     });
   const onStateChanged = deps.onStateChanged;
   const adminEmails = new Set((deps.adminEmails ?? []).map((value) => normalizeEmail(value)).filter((value) => value.length > 0));
@@ -795,7 +795,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return err("UNAUTHORIZED_ACTION", "Invalid age.");
       }
       if (ageYears < 18) {
-        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
       }
 
       const existing = sessionResult.value;
@@ -823,7 +823,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return err("ANONYMOUS_FORBIDDEN", "Anonymous users cannot enable Hybrid Mode.");
       }
       if (existing.ageVerified !== true) {
-        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+        return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
       }
 
       const updated: Session = { ...existing, hybridOptIn: optIn === true };

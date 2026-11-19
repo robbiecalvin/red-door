@@ -26,8 +26,8 @@ The restart drill exposed favorites being held only in memory. Favorites now use
 
 Read-only connection attempts to the current API, frontend, Stripe and the supplied MD website were rejected by this task's enforced network proxy (CONNECT 403). No production Stripe, SMTP, database, MD shared-secret or administrator-session bindings are available in this environment. This is **not** evidence that Render, Stripe or Netlify is misconfigured.
 
-- Red Door frontend: `https://robbiecalvin.github.io/red-door/`
-- Red Door API: `https://red-door-api.onrender.com`
+- Badehaus X frontend: `https://robbiecalvin.github.io/red-door/`
+- Badehaus X API: `https://red-door-api.onrender.com`
 - MD website supplied by the owner: `https://jade-chebakia-c21282.netlify.app/`
 - MD deployed **API base URL and implementation status remain unverified**. Do not assume the website root is its API base.
 
@@ -68,9 +68,9 @@ Current authentication deliberately marks ordinary registrations verified automa
 
 ## MD rehearsal before the new domains
 
-Give the MD environment the [integration contract](md-integration-contract.md). Obtain its deployed API base URL, confirm its canonical paid-code redemption endpoint is implemented, and configure the same high-entropy service secret privately in both backends. For the current site, configure `MD_SITE_URL=https://jade-chebakia-c21282.netlify.app` on Red Door and set `MD_API_BASE_URL` to the **confirmed backend API base**. Set approved photo hostnames explicitly. Keep `PUBLIC_APP_URL` on the current Red Door frontend URL.
+Give the MD environment the [integration contract](md-integration-contract.md). Obtain its deployed API base URL, confirm its canonical paid-code redemption endpoint is implemented, and configure the same high-entropy service secret privately in both backends. For the current site, configure `MD_SITE_URL=https://jade-chebakia-c21282.netlify.app` on Badehaus X and set `MD_API_BASE_URL` to the **confirmed backend API base**. Set approved photo hostnames explicitly. Keep `PUBLIC_APP_URL` on the current Badehaus X frontend URL.
 
-With controlled staging accounts, verify key generation/linking, wrong key/rotation, provider live/offline timeout, 50-km discovery, Red Door return routing, MD signup/follow/provider subscription, account-bound paid-code redemption, replies from each app, blocks, expired memberships and refund revocation. Red Door already tests its side with a local signed MD fixture, but MD's production implementation has not been inspected or claimed complete.
+With controlled staging accounts, verify key generation/linking, wrong key/rotation, provider live/offline timeout, 50-km discovery, Badehaus X return routing, MD signup/follow/provider subscription, account-bound paid-code redemption, replies from each app, blocks, expired memberships and refund revocation. Badehaus X already tests its side with a local signed MD fixture, but MD's production implementation has not been inspected or claimed complete.
 
 When the domains are purchased, update the actual hosting/DNS/HTTPS configuration and those public site variables, then rerun. Do not point API calls at a static frontend unless its routing explicitly supports them.
 

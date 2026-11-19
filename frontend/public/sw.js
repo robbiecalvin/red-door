@@ -29,7 +29,7 @@ self.addEventListener('fetch', event => {
     const relative=url.pathname.slice(scope.pathname.length);
     if (relative !== '' && !/^(index|discover|threads|public|profile|settings|submissions|promoted)\.html$/.test(relative)) return;
     const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),8000);
-    event.respondWith(fetch(request,{signal:controller.signal}).catch(async () => (await caches.open(CACHE_NAME)).match(OFFLINE_URL).then(response => response ?? new Response('Reconnect to use Red Door.', {status:503,headers:{'content-type':'text/plain'}}))).finally(()=>clearTimeout(timer)));
+    event.respondWith(fetch(request,{signal:controller.signal}).catch(async () => (await caches.open(CACHE_NAME)).match(OFFLINE_URL).then(response => response ?? new Response('Reconnect to use Badehaus X.', {status:503,headers:{'content-type':'text/plain'}}))).finally(()=>clearTimeout(timer)));
     return;
   }
   const hashedAsset = /^assets\/[A-Za-z0-9_./-]+-[A-Za-z0-9_-]{8,}\.(js|css|woff2?|png|svg|webp|jpg)$/.test(url.pathname.slice(scope.pathname.length));
@@ -49,7 +49,7 @@ self.addEventListener('push', event => {
   let data={};try{data=event.data.json();}catch{}
   let url=self.registration.scope;
   try{const target=new URL(data.url);if(target.origin===self.location.origin && target.pathname.startsWith(new URL(self.registration.scope).pathname) && !target.search)url=target.href;}catch{}
-  event.waitUntil(self.registration.showNotification('Red Door',{body:'You have a new message.',tag:'reddoor-messages',icon:new URL('icons/icon-192.png',self.registration.scope).href,badge:new URL('icons/icon-192.png',self.registration.scope).href,data:{url}}));
+  event.waitUntil(self.registration.showNotification('Badehaus X',{body:'You have a new message.',tag:'reddoor-messages',icon:new URL('icons/icon-192.png',self.registration.scope).href,badge:new URL('icons/icon-192.png',self.registration.scope).href,data:{url}}));
 });
 self.addEventListener('notificationclick',event=>{
   event.notification.close();event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(async windows=>{let target=self.registration.scope;try{const url=new URL(event.notification.data?.url);if(url.origin===self.location.origin && url.pathname.startsWith(new URL(self.registration.scope).pathname) && !url.search)target=url.href;}catch{}for(const window of windows){if(window.url.startsWith(self.registration.scope)){await window.focus();await window.navigate(target);return;}}return clients.openWindow(target);}));

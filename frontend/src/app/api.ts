@@ -2707,7 +2707,7 @@ function createLocalApiClient(): Readonly<{
   const feeCents = 499;
 
   return {
-    async memberRequest<T>() { throw {code:"BACKEND_REQUIRED",message:"This community feature needs a connected Red Door backend."}; return {} as T; },
+    async memberRequest<T>() { throw {code:"BACKEND_REQUIRED",message:"This community feature needs a connected Badehaus X backend."}; return {} as T; },
     async memberPhoto() { throw new Error("Photo verification needs a connected backend."); return new Blob(); },
     async requestPasswordReset() { throw { message: "Account recovery requires the live backend and email delivery." }; },
     async confirmPasswordReset() { throw { message: "Password reset links must be used with the live backend." }; },
@@ -2722,7 +2722,7 @@ function createLocalApiClient(): Readonly<{
     },
     async savePlusPreferences(token, data) {
       const state = readState(), session = requireUserSession(state, token), user = state.usersById[session.userId!];
-      if (data.savedSearches && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Saved searches require Red Door Plus." };
+      if (data.savedSearches && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Saved searches require Badehaus X Plus." };
       if ((data.pinnedKeys?.length ?? 0) > limits(session).pins || (data.privateMediaIds?.length ?? 0) > limits(session).privateAlbum) throw { code: "PLUS_REQUIRED", message: "Your plan limit has been reached." };
       for (const id of data.privateMediaIds ?? []) { const m = state.mediaById[id]; if (!m || m.ownerUserId !== user.id || m.kind !== "photo_private") throw { message: "Invalid private media." }; }
       const allowed = { savedSearches: data.savedSearches ?? user.plusData?.savedSearches, pinnedKeys: data.pinnedKeys ?? user.plusData?.pinnedKeys, privateMediaIds: data.privateMediaIds ?? user.plusData?.privateMediaIds, albumSharedWith: data.albumSharedWith ?? user.plusData?.albumSharedWith };
@@ -3033,7 +3033,7 @@ function createLocalApiClient(): Readonly<{
       const state = readState();
       const session = requireSession(state, sessionToken);
       const fromKey = actorKeyForSession(session);
-      if (/^GROUP_INVITE_(REQUEST|ACCEPT)\|/.test(text) && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Group chats require Red Door Plus." };
+      if (/^GROUP_INVITE_(REQUEST|ACCEPT)\|/.test(text) && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Group chats require Badehaus X Plus." };
       const normalizedToKey = normalizeChatPeerKey(toKey);
       if (containsDisallowedKidVariation(text)) {
         throw { code: "UNAUTHORIZED_ACTION", message: "Message rejected." } as ServiceError;
@@ -3244,7 +3244,7 @@ function createLocalApiClient(): Readonly<{
     async upsertMyProfile(sessionToken: string, payload: ProfileUpdatePayload): Promise<{ profile: UserProfile }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
-      if (payload.travelMode?.enabled && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Travel mode requires Red Door Plus." };
+      if (payload.travelMode?.enabled && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Travel mode requires Badehaus X Plus." };
       const userId = session.userId as string;
       const previous = state.profilesByUserId[userId];
       const next = createProfileFromInput(userId, payload, previous);
@@ -3291,7 +3291,7 @@ function createLocalApiClient(): Readonly<{
       const state = readState();
       const session = requireUserSession(state, sessionToken);
       const userId = session.userId as string;
-      if (payload.kind === "video" && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Profile videos require Red Door Plus." };
+      if (payload.kind === "video" && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Profile videos require Badehaus X Plus." };
       const mediaId = randomId("media");
       const objectKey = `profile/${userId}/${mediaId}`;
       const rec: LocalMediaRecord = {
@@ -3346,7 +3346,7 @@ function createLocalApiClient(): Readonly<{
           updatedAtMs: nowMs()
         };
       } else if (media.kind === "video") {
-        if (!hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Profile videos require Red Door Plus." };
+        if (!hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Profile videos require Badehaus X Plus." };
         nextProfile = {
           ...existingProfile,
           videoMediaId: mediaId,
@@ -3458,7 +3458,7 @@ function createLocalApiClient(): Readonly<{
         throw { code: "ANONYMOUS_FORBIDDEN", message: "Anonymous users cannot create public postings." } as ServiceError;
       }
       if (session.ageVerified !== true) {
-        throw { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Red Door.", context: { minimumAge: 18 } } as ServiceError;
+        throw { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Badehaus X.", context: { minimumAge: 18 } } as ServiceError;
       }
       if (payload.type === "ad" && !hasPlus(session, nowMs())) {
         throw { code: "PLUS_REQUIRED", message: "Publishing postings requires Plus." } as ServiceError;

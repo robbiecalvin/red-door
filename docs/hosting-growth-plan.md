@@ -14,7 +14,7 @@ resized or migrated. Account plans, business eligibility and live costs are unkn
 | Email | Authenticated TLS SMTP; STARTTLS required when SMTP_SECURE=false | Local TLS fixture passes; external delivery blocked by missing configuration |
 | Maps | OpenFreeMap dark, replaceable public HTTPS style URL | Official GitHub READMEs checked; tile host blocked here |
 | Backups | scripts/backup.mjs, offline snapshot + hashes, private file modes | Local restart/isolated restore exercised; remote retention not configured |
-| Domains | Existing Pages/Render URLs; PUBLIC_APP_URL and frontend build variables | thereddoor.app ownership/DNS/HTTPS not verified |
+| Domains | Existing Pages/Render URLs; PUBLIC_APP_URL and frontend build variables | badehausx.com DNS and HTTPS require production verification |
 
 ## Stage A: one always-on backend
 

@@ -71,7 +71,7 @@ function requirePoster(session: SessionLike): Result<{ userId: string }> {
     return err("ANONYMOUS_FORBIDDEN", "Anonymous users cannot create promoted profiles.");
   }
   if (session.ageVerified !== true) {
-    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+    return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
   }
   const userId = asText(session.userId);
   if (!userId) return err("INVALID_SESSION", "Invalid session.");

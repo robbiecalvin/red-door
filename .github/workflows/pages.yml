@@ -32,7 +32,7 @@ jobs:
 
       - name: Build web site from source
         env:
-          DUALMODE_PUBLIC_APP_URL: ${{ vars.RED_DOOR_PUBLIC_APP_URL || 'https://robbiecalvin.github.io/red-door/' }}
+          DUALMODE_PUBLIC_APP_URL: https://badehausx.com/
         run: npm run build
 
       - name: Prepare Pages artifact
@@ -45,7 +45,7 @@ jobs:
         with:
           enablement: true
 
-      - name: Force Pages publish mode to workflow (best effort)
+      - name: Apply the Badehaus X custom domain (best effort)
         continue-on-error: true
         uses: actions/github-script@v7
         with:
@@ -54,10 +54,12 @@ jobs:
               await github.request("PUT /repos/{owner}/{repo}/pages", {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                build_type: "workflow"
+                build_type: "workflow",
+                cname: "badehausx.com"
               });
+              core.notice("GitHub Pages accepted badehausx.com as the custom domain.");
             } catch (error) {
-              core.warning(`Could not force Pages build_type to workflow from Actions token: ${error.message}`);
+              core.warning(`GitHub Pages did not accept the domain update from the Actions token: ${error.message}`);
             }
 
       - name: Upload Pages artifact

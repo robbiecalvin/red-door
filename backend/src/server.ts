@@ -239,7 +239,7 @@ function safeBroadcast(
     broadcastFn(type, payload);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
-    console.error(`[RedDoor] Realtime broadcast failed for "${type}": ${message}`);
+    console.error(`[Badehaus X] Realtime broadcast failed for "${type}": ${message}`);
   }
 }
 
@@ -254,7 +254,7 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
     const res = await fetch(url.toString(), {
       method: "GET",
       headers: {
-        "user-agent": "RedDoor/1.0 (local-dev)"
+        "user-agent": "BadehausX/1.0 (local-dev)"
       }
     });
     if (!res.ok) return null;
@@ -331,7 +331,7 @@ async function main(): Promise<void> {
       const body = new URLSearchParams({
         To: destination,
         From: twilioFromNumber.trim(),
-        Body: `Your Red Door verification code is ${code}. It expires in 15 minutes.`
+        Body: `Your Badehaus X verification code is ${code}. It expires in 15 minutes.`
       });
       const auth = Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString("base64");
       void fetch(url, {
@@ -347,21 +347,21 @@ async function main(): Promise<void> {
             const text = await res.text();
             throw new Error(`Twilio ${res.status}: ${text}`);
           }
-          console.log(`[RedDoor] Verification SMS sent to ${destination}`);
+          console.log(`[Badehaus X] Verification SMS sent to ${destination}`);
         })
         .catch((e: unknown) => {
           const message = e instanceof Error ? e.message : String(e);
-          console.error(`[RedDoor] Failed to send verification SMS to ${destination}: ${message}`);
+          console.error(`[Badehaus X] Failed to send verification SMS to ${destination}: ${message}`);
         });
       return;
     }
     if (channel === "sms" && !smsConfigured) {
-      console.warn("[RedDoor] SMS not configured. Falling back to email/console.");
+      console.warn("[Badehaus X] SMS not configured. Falling back to email/console.");
     }
     if (emailSender && user.email.trim() !== "") {
-      const subject = "Red Door verification code";
-      const text = `Your Red Door verification code is ${code}. It expires in 15 minutes.`;
-      const html = `<p>Your <strong>Red Door</strong> verification code is:</p><p style=\"font-size:24px;font-weight:700;letter-spacing:2px;\">${code}</p><p>This code expires in 15 minutes.</p>`;
+      const subject = "Badehaus X verification code";
+      const text = `Your Badehaus X verification code is ${code}. It expires in 15 minutes.`;
+      const html = `<p>Your <strong>Badehaus X</strong> verification code is:</p><p style=\"font-size:24px;font-weight:700;letter-spacing:2px;\">${code}</p><p>This code expires in 15 minutes.</p>`;
       void emailSender
         .sendMail({
           from: smtpFrom.trim(),
@@ -371,14 +371,14 @@ async function main(): Promise<void> {
           html
         })
         .then(() => {
-          console.log("[RedDoor] Verification email accepted by SMTP.");
+          console.log("[Badehaus X] Verification email accepted by SMTP.");
         })
         .catch((e: unknown) => {
-          console.error("[RedDoor] Verification delivery failed. Inspect SMTP configuration securely.");
+          console.error("[Badehaus X] Verification delivery failed. Inspect SMTP configuration securely.");
         });
       return;
     }
-    console.warn("[RedDoor] Verification delivery is not configured; no code was sent.");
+    console.warn("[Badehaus X] Verification delivery is not configured; no code was sent.");
   };
 
   const submissionsService = createSubmissionsService();
@@ -408,7 +408,7 @@ async function main(): Promise<void> {
       .then(async () => { await authStateRepo.saveState(state); authPersistenceError = null; })
       .catch((e: unknown) => {
         authPersistenceError = e;
-        console.error("[RedDoor] Failed to persist auth state.");
+        console.error("[Badehaus X] Failed to persist auth state.");
       });
   };
   const queueChatStateSave = (state: ChatPersistenceState): void => {
@@ -417,16 +417,16 @@ async function main(): Promise<void> {
       .then(async () => { await chatStateRepo.saveState(state); chatPersistenceError = null; })
       .catch((e: unknown) => {
         chatPersistenceError = e;
-        console.error("[RedDoor] Failed to persist chat state.");
+        console.error("[Badehaus X] Failed to persist chat state.");
       });
   };
   if (postgresPool) {
     await ensurePostgresSchema(postgresPool);
     initialAuthState = authStateRepo ? await authStateRepo.loadState() : undefined;
     initialChatState = chatStateRepo ? await chatStateRepo.loadState() : undefined;
-    console.log(`[RedDoor] Persistence mode: PostgreSQL (${postgresSettings?.sourceEnvKey})`);
+    console.log(`[Badehaus X] Persistence mode: PostgreSQL (${postgresSettings?.sourceEnvKey})`);
   } else {
-    console.log("[RedDoor] Persistence mode: local file storage");
+    console.log("[Badehaus X] Persistence mode: local file storage");
   }
 
   const rawAuthService = createAuthService({
@@ -538,16 +538,16 @@ async function main(): Promise<void> {
   let metricsQueue: Promise<void> = Promise.resolve();
   let metricsWriteError: unknown = null;
   let metrics: ReturnType<typeof createAnalyticsService>;
-  try { metrics = createAnalyticsService({ secret: jwtSecret, enabled: process.env.ANALYTICS_ENABLED !== "false", initialState: metricsRepo ? await metricsRepo.load() : undefined, filePath: metricsRepo ? undefined : path.resolve(process.cwd(), "backend/.data/analytics.json"), onChange: metricsRepo ? state => { metricsQueue = metricsQueue.then(async () => { await metricsRepo.save(state); metricsWriteError = null; }).catch((error: unknown) => { metricsWriteError = error; console.error("[RedDoor] Analytics persistence failed."); }); } : undefined }); }
-  catch { console.error("[RedDoor] Analytics initialization failed; collection is disabled."); metrics = createAnalyticsService({ secret: jwtSecret, enabled: false }); }
-  const recordMetric = (action: () => void) => { try { action(); metricsWriteError = null; } catch (error) { metricsWriteError = error; console.error("[RedDoor] Analytics unavailable; application request continues."); } };
+  try { metrics = createAnalyticsService({ secret: jwtSecret, enabled: process.env.ANALYTICS_ENABLED !== "false", initialState: metricsRepo ? await metricsRepo.load() : undefined, filePath: metricsRepo ? undefined : path.resolve(process.cwd(), "backend/.data/analytics.json"), onChange: metricsRepo ? state => { metricsQueue = metricsQueue.then(async () => { await metricsRepo.save(state); metricsWriteError = null; }).catch((error: unknown) => { metricsWriteError = error; console.error("[Badehaus X] Analytics persistence failed."); }); } : undefined }); }
+  catch { console.error("[Badehaus X] Analytics initialization failed; collection is disabled."); metrics = createAnalyticsService({ secret: jwtSecret, enabled: false }); }
+  const recordMetric = (action: () => void) => { try { action(); metricsWriteError = null; } catch (error) { metricsWriteError = error; console.error("[Badehaus X] Analytics unavailable; application request continues."); } };
   const publicPostingsService = createPublicPostingsService({
     persistenceFilePath: path.resolve(process.cwd(), "backend/.data/public-postings.json"),
     blocked: (hostId, viewerId) => blockService.isBlocked(`user:${hostId}`, `user:${viewerId}`),
     hasDirectHistory: (hostId, viewerId) => chatService.hasDirectHistory(`user:${hostId}`, `user:${viewerId}`)
   });
   chatService.purgeExpired();
-  const chatCleanupTimer = setInterval(() => { try { chatService.purgeExpired(); } catch { console.error("[RedDoor] Chat retention cleanup failed."); } }, 3600000);
+  const chatCleanupTimer = setInterval(() => { try { chatService.purgeExpired(); } catch { console.error("[Badehaus X] Chat retention cleanup failed."); } }, 3600000);
   chatCleanupTimer.unref();
   const metricsCleanupTimer = setInterval(() => recordMetric(() => metrics.cleanup()), 86400000);
   metricsCleanupTimer.unref();
@@ -558,7 +558,7 @@ async function main(): Promise<void> {
   }
   const app = express();
   let publicAppOrigin="";try{const configured=new URL(process.env.PUBLIC_APP_URL ?? "");if(configured.protocol==="https:")publicAppOrigin=configured.origin;}catch{}
-  const allowedOrigins=parseAllowedOrigins([process.env.CORS_ALLOWED_ORIGINS ?? "capacitor://localhost,http://localhost,http://127.0.0.1,ionic://localhost",publicAppOrigin].filter(Boolean).join(","));
+  const allowedOrigins=parseAllowedOrigins([process.env.CORS_ALLOWED_ORIGINS ?? "capacitor://localhost,http://localhost,http://127.0.0.1,ionic://localhost",publicAppOrigin,"https://badehausx.com"].filter(Boolean).join(","));
 
   app.disable("x-powered-by");
   app.use((req, res, next) => {
@@ -810,7 +810,7 @@ async function main(): Promise<void> {
     const user = authService.getUser(session.value.userId);
     return user ? { user, session: session.value } : null;
   }
-  const premiumError = (res: express.Response) => res.status(402).json({ code: "PLUS_REQUIRED", message: "This feature is included with Red Door Plus (CAD $7.99/month)." });
+  const premiumError = (res: express.Response) => res.status(402).json({ code: "PLUS_REQUIRED", message: "This feature is included with Badehaus X Plus (CAD $7.99/month)." });
 
   app.get("/admin/billing/health", async (req, res) => {
     if (!requireAdminSession(req, res)) return;
@@ -940,7 +940,7 @@ async function main(): Promise<void> {
       if(deferred){
         let customer=actor.user.plusData?.stripeCustomerId;
         if(!customer){const created=await stripeRequest("customers",new URLSearchParams({email:actor.user.email,"metadata[userId]":actor.user.id}),`reddoor-customer:${actor.user.id}`);customer=created.id;authService.updatePlus(actor.user.id,{plusData:{...authService.getUser(actor.user.id)!.plusData,stripeCustomerId:customer}});await authPersistQueue;if(authPersistenceError)throw new Error("Unable to save customer.");}
-        const setupParams=new URLSearchParams({mode:"setup",customer:customer!,currency:"cad",client_reference_id:actor.user.id,"metadata[userId]":actor.user.id,"metadata[flow]":"launch-renewal","setup_intent_data[metadata][userId]":actor.user.id,success_url:appUrl+"?billing=success",cancel_url:appUrl+"?billing=cancelled","custom_text[submit][message]":"Save your payment method and enroll in Red Door Plus: CAD $7.99 monthly starting January 1, 2027 (Pacific time), until you cancel. No charge today."});
+        const setupParams=new URLSearchParams({mode:"setup",customer:customer!,currency:"cad",client_reference_id:actor.user.id,"metadata[userId]":actor.user.id,"metadata[flow]":"launch-renewal","setup_intent_data[metadata][userId]":actor.user.id,success_url:appUrl+"?billing=success",cancel_url:appUrl+"?billing=cancelled","custom_text[submit][message]":"Save your payment method and enroll in Badehaus X Plus: CAD $7.99 monthly starting January 1, 2027 (Pacific time), until you cancel. No charge today."});
         const checkout=await stripeRequest("checkout/sessions",setupParams,`reddoor-enroll:${actor.user.id}:${priorCheckoutId ?? "initial"}`);
         authService.updatePlus(actor.user.id,{plusData:{...authService.getUser(actor.user.id)!.plusData,stripeCheckoutSessionId:checkout.id}});await authPersistQueue;if(authPersistenceError)throw new Error("Unable to save checkout.");return res.json({url:checkout.url});
       }
@@ -1030,8 +1030,8 @@ async function main(): Promise<void> {
       resetBase.hash = `reset=${reset.token}`;
       void authPersistQueue.then(() => {
         if (authPersistenceError) throw new Error("Persistence unavailable");
-        return emailSender.sendMail({ from: smtpFrom, to: reset.email, subject: "Reset your Red Door password", text: `Reset your password using this link: ${resetBase.toString()}\n\nIt expires in 15 minutes and can be used once. If you did not request this, ignore this email.` });
-      }).catch(() => console.error("[RedDoor] Password recovery delivery failed."));
+        return emailSender.sendMail({ from: smtpFrom, to: reset.email, subject: "Reset your Badehaus X password", text: `Reset your password using this link: ${resetBase.toString()}\n\nIt expires in 15 minutes and can be used once. If you did not request this, ignore this email.` });
+      }).catch(() => console.error("[Badehaus X] Password recovery delivery failed."));
     }
     return res.json({ message: "If an eligible account exists, a reset link will be sent. Check your email." });
   });
@@ -1066,7 +1066,7 @@ async function main(): Promise<void> {
         await earlyAccessWebhook.notifySignup(result.value);
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
-        console.error(`[RedDoor] Failed to sync early access signup to Google Sheets: ${message}`);
+        console.error(`[Badehaus X] Failed to sync early access signup to Google Sheets: ${message}`);
       }
     }
     return res.status(200).json({ signup: result.value });
@@ -1865,7 +1865,7 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     if (sessionResult.value.ageVerified !== true) {
-      return sendError(res, { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Red Door.", context: { minimumAge: 18 } });
+      return sendError(res, { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Badehaus X.", context: { minimumAge: 18 } });
     }
 
     const mimeType = typeof (req.body as any)?.mimeType === "string" ? String((req.body as any).mimeType).trim() : "";
@@ -1928,7 +1928,7 @@ async function main(): Promise<void> {
   app.get("/chat/media/url", async (req, res) => {
     const session = authService.getSession(getSessionToken(req) ?? "");
     if (!session.ok) return sendError(res, session.error);
-    if (session.value.ageVerified !== true) return sendError(res, { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Red Door." });
+    if (session.value.ageVerified !== true) return sendError(res, { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Badehaus X." });
     const key = typeof req.query.objectKey === "string" ? req.query.objectKey : "";
     if (!mayReadChatMedia(session.value, key)) return sendError(res, { code: "UNAUTHORIZED_ACTION", message: "Chat media is not available in your active conversations." });
     for (const [id, ticket] of chatDownloadTickets) if (ticket.expires <= Date.now()) chatDownloadTickets.delete(id);
@@ -1953,7 +1953,7 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     if (sessionResult.value.ageVerified !== true) {
-      return sendError(res, { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Red Door.", context: { minimumAge: 18 } });
+      return sendError(res, { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Badehaus X.", context: { minimumAge: 18 } });
     }
 
     const toKey = typeof (req.body as any)?.toKey === "string" ? String((req.body as any).toKey).trim() : "";
@@ -2060,7 +2060,7 @@ async function main(): Promise<void> {
   });
 
   server.listen(port, () => {
-    console.log(`Red Door backend listening on http://localhost:${port}`);
+    console.log(`Badehaus X backend listening on http://localhost:${port}`);
   });
 
   const shutdown = async (): Promise<void> => {

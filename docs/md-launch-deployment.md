@@ -1,24 +1,24 @@
 # MD bridge and launch billing deployment
 
-Red Door's code is ready for staging. Actual MD interoperability and live renewal charges require the configuration below; local fixtures do not prove production account/payment connectivity.
+Badehaus X's code is ready for staging. Actual MD interoperability and live renewal charges require the configuration below; local fixtures do not prove production account/payment connectivity.
 
 ## Keep current URLs until the domains are ready
 
-After purchasing `thereddoor.app`, point its DNS at the existing frontend host, configure that host's custom domain and HTTPS, and verify ownership. For GitHub Pages, set the repository Actions variable `RED_DOOR_PUBLIC_APP_URL` to `https://thereddoor.app/`; the build updates canonical/social URLs and creates `dist/CNAME`. Update the backend `PUBLIC_APP_URL` to the same URL and keep any old frontend origin in `CORS_ALLOWED_ORIGINS` during migration. Existing API/WebSocket host variables stay pointed at the backend, not the static website. Existing browser sessions are origin-specific, so members will sign in again on the new domain.
+The production frontend URL is `https://badehausx.com/`. The Pages workflow builds that origin into canonical and social URLs and writes `dist/CNAME`. See [custom domain setup](badehaus-x-domain.md) for the GitHub Pages and Cloudflare configuration. Update the backend `PUBLIC_APP_URL` to the same URL and keep any old frontend origin in `CORS_ALLOWED_ORIGINS` during the migration. The API and WebSocket endpoints continue to use the backend host. Members sign in again when switching browser origins.
 
 Keep the defaults on the current URL until DNS and HTTPS are ready. Configure MD's website as `https://meetdiscreet.ca`; its API can have a separate hostname/base.
 
 ## Connect both backends
 
-Follow [the versioned integration contract](md-integration-contract.md). Both backend operators must agree on the endpoint/schema/signature contract and configure the same high-entropy `MD_SHARED_SECRET` privately. Set Red Door's `MD_API_BASE_URL`, `MD_SITE_URL`, and any additional photo hostnames in `MD_MEDIA_ALLOWED_HOSTS`. Never publish the shared service secret or copy it into frontend variables. Red Door account linking keys can be generated before configuring the bridge; they are stored only as keyed hashes using Red Door's JWT secret. Rotating that JWT secret also invalidates those linking keys.
+Follow [the versioned integration contract](md-integration-contract.md). Both backend operators must agree on the endpoint/schema/signature contract and configure the same high-entropy `MD_SHARED_SECRET` privately. Set Badehaus X's `MD_API_BASE_URL`, `MD_SITE_URL`, and any additional photo hostnames in `MD_MEDIA_ALLOWED_HOSTS`. Never publish the shared service secret or copy it into frontend variables. Badehaus X account linking keys can be generated before configuring the bridge; they are stored only as keyed hashes using Badehaus X's JWT secret. Rotating that JWT secret also invalidates those linking keys.
 
-The MD environment owns its checkbox, green live control, provider ownership/adult/payment checks, $11.99 provider subscriptions, account/follow requirements, friendly-code generation, canonical code redemption endpoint, and revocation delivery. Red Door supplies the directory, handoff, code verification client, and message storage/relay. Until MD implements its side, Red Door shows an unavailable/empty state and grants no fabricated providers or paid access.
+The MD environment owns its checkbox, green live control, provider ownership/adult/payment checks, $11.99 provider subscriptions, account/follow requirements, friendly-code generation, canonical code redemption endpoint, and revocation delivery. Badehaus X supplies the directory, handoff, code verification client, and message storage/relay. Until MD implements its side, Badehaus X shows an unavailable/empty state and grants no fabricated providers or paid access.
 
 Use PostgreSQL for durable hosted storage (`DATABASE_URL`, optionally `REQUIRE_DATABASE=true`); local-file fallback requires a persistent disk. Account keys/promo ledgers/billing references live with auth users. MD links, receipts, messages, nonce replay protection, and handoff tickets live in the existing community repository. Run a single backend instance with the current JSON aggregate repository; horizontally scaling requires transactional concurrency changes. Protect storage backups. MD message retention is 72 hours and cleanup runs when bridge state changes.
 
 ## Stripe setup
 
-Configure backend-only `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PLUS_PRICE_ID`, and `PUBLIC_APP_URL`. The price must be active, recurring monthly, **CAD 799 cents**. Use Stripe test keys/prices first. Enable the Customer Portal's payment-method and subscription cancellation controls. Stripe holds payment details; Red Door stores only Stripe identifiers and status flags.
+Configure backend-only `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PLUS_PRICE_ID`, and `PUBLIC_APP_URL`. The price must be active, recurring monthly, **CAD 799 cents**. Use Stripe test keys/prices first. Enable the Customer Portal's payment-method and subscription cancellation controls. Stripe holds payment details; Badehaus X stores only Stripe identifiers and status flags.
 
 Point the Stripe webhook at the backend's `/billing/webhook`, with these events:
 

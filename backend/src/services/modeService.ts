@@ -81,7 +81,7 @@ export function setMode(session: Session, requestedMode: string): SetModeResult 
   }
 
   if (session.ageVerified !== true) {
-    return reject("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+    return reject("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
   }
 
   if (session.userType === "guest" && requestedMode !== "cruise") {

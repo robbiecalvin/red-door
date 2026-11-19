@@ -19,7 +19,7 @@ describe("Discreet browser push",()=>{
     expect(restored.publicKey).toBe(service.publicKey);
     const send=jest.spyOn(webpush,"sendNotification").mockResolvedValue({statusCode:201,headers:{},body:""});
     await service.notify(created.value.id);expect(send).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(send.mock.calls[0][1] as string)).toEqual({title:"Red Door",body:"You have a new message.",url:"https://example.com/red-door/#/threads"});
+    expect(JSON.parse(send.mock.calls[0][1] as string)).toEqual({title:"Badehaus X",body:"You have a new message.",url:"https://example.com/red-door/#/threads"});
     send.mockRejectedValueOnce({statusCode:410});await service.notify(created.value.id);
     expect(auth.getUser(created.value.id)?.plusData?.pushSubscriptions).toHaveLength(0);send.mockRestore();
   });

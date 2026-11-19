@@ -1,8 +1,8 @@
-# Red Door — Project Context
+# Badehaus X — Project Context
 
 ## Purpose
 
-Red Door is a location-based social platform centered around real-time discovery and communication between nearby users.
+Badehaus X is a location-based social platform centered around real-time discovery and communication between nearby users.
 
 The platform emphasizes **Cruise Mode**, allowing users to discover nearby people, cruising spots, and events using a live map interface.
 

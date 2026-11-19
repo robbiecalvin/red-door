@@ -4,7 +4,7 @@ import fs from "node:fs";
 const args = process.argv.slice(2);
 const option = name => { const i = args.indexOf(name); return i < 0 ? undefined : args[i + 1]; };
 const api = (option("--api-url") || process.env.REDDOOR_API_URL || "https://red-door-api.onrender.com").replace(/\/$/, "");
-const site = option("--site-url") || process.env.PUBLIC_APP_URL || "https://robbiecalvin.github.io/red-door/";
+const site = option("--site-url") || process.env.PUBLIC_APP_URL || "https://badehausx.com/";
 const report = { checkedAt: new Date().toISOString(), checks: {}, manualVerificationRequired: true };
 function allowedUrl(value) {
   const url = new URL(value);
@@ -27,7 +27,7 @@ function record(name, response, valid) {
 try {
   let response = get(api + "/health"); record("apiHealth", response, json(response)?.ok === true);
   response = get(api + "/config"); record("publicConfig", response, typeof json(response)?.emailDeliveryConfigured === "boolean");
-  response = get(site); record("frontend", response, response.text.includes('property="og:image"') && response.text.includes("Red Door"));
+  response = get(site); record("frontend", response, response.text.includes('property="og:image"') && response.text.includes("Badehaus X"));
   if (option("--md-site-url")) throw new Error("MD checks are disabled in the standalone release.");
   const token = process.env.REDDOOR_ADMIN_SESSION_TOKEN;
   if (token) {

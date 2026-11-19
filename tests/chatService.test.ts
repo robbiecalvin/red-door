@@ -549,7 +549,7 @@ describe("chatService", () => {
     if (res.ok) throw new Error("unreachable");
     expect(res.error).toEqual({
       code: "AGE_GATE_REQUIRED",
-      message: "You must be 18 or older to use Red Door.",
+      message: "You must be 18 or older to use Badehaus X.",
       context: { minimumAge: 18 }
     });
   });

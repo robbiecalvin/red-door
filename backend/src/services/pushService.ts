@@ -14,7 +14,7 @@ export async function createPushService(repo:CommunityRepository,auth:AuthServic
   return {publicKey:keys.publicKey,configured,async notify(userId:string,route:"threads"|"md"="threads") {
     const user=auth.getUser(userId);if(!configured || !user || user.bannedAtMs)return;
     for(const subscription of user.plusData?.pushSubscriptions ?? []) {
-      try {await webpush.sendNotification(subscription,JSON.stringify({title:"Red Door",body:"You have a new message.",url:new URL(`#/${route}`,appUrl).href}),{vapidDetails:{subject:contact,publicKey:keys.publicKey,privateKey:keys.privateKey},TTL:300,timeout:5000});}
+      try {await webpush.sendNotification(subscription,JSON.stringify({title:"Badehaus X",body:"You have a new message.",url:new URL(`#/${route}`,appUrl).href}),{vapidDetails:{subject:contact,publicKey:keys.publicKey,privateKey:keys.privateKey},TTL:300,timeout:5000});}
       catch(e){if([404,410].includes((e as {statusCode:number}).statusCode)){const current=auth.getUser(userId);if(current)auth.updatePlus(userId,{plusData:{...current.plusData,pushSubscriptions:current.plusData?.pushSubscriptions?.filter(s=>s.endpoint!==subscription.endpoint)}});}}
     }
   }};

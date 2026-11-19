@@ -13,7 +13,7 @@ This style guide replaces the prior Montserrat/flat-black spec by request.
 
 - Dark, neon, high-contrast.
 - Background may use layered gradients and subtle patterning.
-- “Red Door” motif: red-forward accents, glossy dark surfaces, blurred glass cards.
+- “Badehaus X” motif: red-forward accents, glossy dark surfaces, blurred glass cards.
 
 ---
 

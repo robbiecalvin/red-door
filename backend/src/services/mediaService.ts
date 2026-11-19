@@ -83,7 +83,7 @@ function err(code: ErrorCode, message: string, context?: Record<string, unknown>
 
 function requireRegistered(session: SessionLike): Result<{ userId: string }> {
   if (session.userType === "guest") return err("ANONYMOUS_FORBIDDEN", "Anonymous users cannot upload media.");
-  if (session.ageVerified !== true) return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Red Door.", { minimumAge: 18 });
+  if (session.ageVerified !== true) return err("AGE_GATE_REQUIRED", "You must be 18 or older to use Badehaus X.", { minimumAge: 18 });
   if (typeof session.userId !== "string" || session.userId.trim() === "") return err("INVALID_INPUT", "Invalid user identity.");
   return ok({ userId: session.userId });
 }
@@ -165,7 +165,7 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
       const kindRes = validateKind(req.kind);
       if (!kindRes.ok) return kindRes;
       const kind = kindRes.value;
-      if (kind === "video" && !hasPlus(session)) return err("UNAUTHORIZED_ACTION", "Profile videos require Red Door Plus.");
+      if (kind === "video" && !hasPlus(session)) return err("UNAUTHORIZED_ACTION", "Profile videos require Badehaus X Plus.");
 
       const mimeRes = validateMimeType(kind, req.mimeType);
       if (!mimeRes.ok) return mimeRes;
@@ -231,7 +231,7 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
         return err("MEDIA_TOO_LARGE", "Media is too large.", { maxSizeBytes: max });
       }
 
-      if (media.kind === "video" && !hasPlus(session)) return err("UNAUTHORIZED_ACTION", "Profile videos require Red Door Plus.");
+      if (media.kind === "video" && !hasPlus(session)) return err("UNAUTHORIZED_ACTION", "Profile videos require Badehaus X Plus.");
       if (media.kind === "photo_gallery" && !profile.galleryMediaIds.includes(id) && profile.galleryMediaIds.length >= limits(session).gallery) return err("UNAUTHORIZED_ACTION", `Your plan allows ${limits(session).gallery} gallery photos.`);
       const sha256 = createHash("sha256").update(media.objectKey).digest("hex");
       const uploadedAtMs = nowMs();

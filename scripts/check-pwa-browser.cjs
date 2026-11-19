@@ -23,7 +23,7 @@ const server=http.createServer((req,res)=>{
   // No external services are contacted by this test.
   await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
   await page.goto(base);await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
-  assert.equal(await page.getByText('A Red Door update is ready.',{exact:false}).count(),0,'first installation must not offer a false update');
+  assert.equal(await page.getByText('A Badehaus X update is ready.',{exact:false}).count(),0,'first installation must not offer a false update');
   const installability=await(await context.newCDPSession(page)).send('Page.getInstallabilityErrors');assert.deepEqual(installability.installabilityErrors,[]);
   const manifest=await page.evaluate(async()=>{const result=await fetch('./manifest.webmanifest');return result.json();});
   assert.equal(manifest.display,'standalone');assert.equal(manifest.start_url,'./');assert.equal(manifest.scope,'./');assert.ok(manifest.icons.some(i=>i.purpose==='maskable'));
@@ -32,9 +32,9 @@ const server=http.createServer((req,res)=>{
   assert.equal(privateHits,3);
   let keys=await page.evaluate(async()=>{const names=await caches.keys();return (await Promise.all(names.map(async name=>(await(await caches.open(name)).keys()).map(r=>r.url)))).flat();});
   assert.ok(keys.length>5);assert.ok(!keys.some(key=>/api\/|media\/|st=|index\.html/.test(key)));
-  await page.getByRole('button',{name:'Install Red Door',exact:true}).click();await page.getByRole('dialog',{name:'Install Red Door'}).waitFor();await page.getByRole('button',{name:'Close Install Red Door'}).click();
+  await page.getByRole('button',{name:'Install Badehaus X',exact:true}).click();await page.getByRole('dialog',{name:'Install Badehaus X'}).waitFor();await page.getByRole('button',{name:'Close Install Badehaus X'}).click();
   await page.evaluate(()=>{const event=new Event('beforeinstallprompt');event.prompt=async()=>{window.fixturePromptCalled=true;};event.userChoice=Promise.resolve({outcome:'dismissed'});window.dispatchEvent(event);});
-  await page.getByRole('button',{name:'Install Red Door',exact:true}).click();await page.getByRole('button',{name:'Install app',exact:true}).click();assert.equal(await page.evaluate(()=>window.fixturePromptCalled),true);await page.getByRole('button',{name:'Close Install Red Door'}).click();
+  await page.getByRole('button',{name:'Install Badehaus X',exact:true}).click();await page.getByRole('button',{name:'Install app',exact:true}).click();assert.equal(await page.evaluate(()=>window.fixturePromptCalled),true);await page.getByRole('button',{name:'Close Install Badehaus X'}).click();
   await context.setOffline(true);await page.getByText('You’re offline.',{exact:false}).waitFor();
   assert.equal(await page.evaluate(async()=>{try{await fetch('./api/private');return false;}catch{return true;}}),true,'private API cannot be served from cache offline');
   await page.goto(base);await page.getByRole('heading',{name:'Let’s reconnect.'}).waitFor();assert.equal(await page.getByRole('button',{name:'Try again'}).count(),1);
@@ -47,10 +47,10 @@ const server=http.createServer((req,res)=>{
   await page.waitForFunction(async()=>{const reg=await navigator.serviceWorker.getRegistration();return !reg.waiting;});
   keys=await page.evaluate(()=>caches.keys());assert.ok(keys.some(k=>k.includes('browser-update-b-')));
   assert.ok(keys.length<=2,'keep at most current and previous public builds for this scope');
-  await page.evaluate(()=>window.dispatchEvent(new Event('appinstalled')));assert.equal(await page.getByRole('button',{name:'Install Red Door',exact:true}).count(),0);
+  await page.evaluate(()=>window.dispatchEvent(new Event('appinstalled')));assert.equal(await page.getByRole('button',{name:'Install Badehaus X',exact:true}).count(),0);
   // iPhone install guidance is tested in Chromium with a simulated user agent, not an actual phone.
   const apple=await browser.newContext({userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',viewport:{width:390,height:844},isMobile:true,hasTouch:true});
-  await apple.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());const iphone=await apple.newPage();await iphone.goto(base);await iphone.getByRole('button',{name:'Install Red Door',exact:true}).click();await iphone.getByText('Add to Home Screen',{exact:true}).waitFor();await apple.close();
+  await apple.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());const iphone=await apple.newPage();await iphone.goto(base);await iphone.getByRole('button',{name:'Install Badehaus X',exact:true}).click();await iphone.getByText('Add to Home Screen',{exact:true}).waitFor();await apple.close();
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({status:'PASS',checks:['Chromium installability','subpath manifest and icons','first install without false update','install prompt/dismissal','private request/cache isolation','offline launch and reconnect','waiting update preserves form','explicit update activation','installed UI','simulated iPhone instructions'],physicalPhones:'NOT TESTED'}));
  }finally{await context.close();fs.rmSync(profile,{recursive:true,force:true});await new Promise(r=>server.close(r));}

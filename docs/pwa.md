@@ -1,6 +1,6 @@
-# Install Red Door from the website
+# Install Badehaus X from the website
 
-Red Door is now prepared as a Progressive Web App (PWA). It uses the same website
+Badehaus X is now prepared as a Progressive Web App (PWA). It uses the same website
 and hosted backend, with a home-screen icon and standalone window where supported.
 No Apple or Google developer enrollment, APK download, or native wrapper is required
 for this distribution path. Native store packaging remains a separate project.
@@ -8,7 +8,7 @@ for this distribution path. Native store packaging remains a separate project.
 ## Installation
 
 Use a normal browser session over HTTPS, not a private/incognito window. Open the
-Red Door website, then select **Install Red Door** on the entrance screen or in
+Badehaus X website, then select **Install Badehaus X** on the entrance screen or in
 settings/the account menu. Installed standalone windows hide this control.
 
 - **iPhone/iPad:** open the site in Safari, tap Share, select **Add to Home Screen**,
