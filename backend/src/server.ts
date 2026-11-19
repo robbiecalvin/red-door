@@ -1,4 +1,4 @@
-import { createResendEmail } from "./services/resendEmail";
+import { createResendEmail, ResendDeliveryError } from "./services/resendEmail";
 import { registrationPolicy } from "./services/registrationPolicy";
 import { installGrowthRoutes } from "./routes/growthRoutes";
 import { createReferralLedger } from "./services/referralLedger";
@@ -382,11 +382,16 @@ async function main(): Promise<void> {
           text,
           html
         })
-        .then(() => {
-          console.log("[Badehaus X] Verification email accepted by SMTP.");
+        .then(result => {
+          if (!result.accepted.length) throw new Error("Email was not accepted.");
+          console.log(apiSender
+            ? `[Badehaus X] Verification email accepted by Resend. Message ID: ${result.messageId}`
+            : "[Badehaus X] Verification email accepted by SMTP.");
         })
-        .catch((e: unknown) => {
-          console.error("[Badehaus X] Verification delivery failed. Inspect SMTP configuration securely.");
+        .catch((error: unknown) => {
+          const provider = apiSender ? "Resend" : "SMTP";
+          const status = error instanceof ResendDeliveryError ? ` (HTTP ${error.status})` : "";
+          console.error(`[Badehaus X] Verification delivery failed via ${provider}${status}.`);
         });
       return;
     }

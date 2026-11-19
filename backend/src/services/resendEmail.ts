@@ -1,3 +1,9 @@
+export class ResendDeliveryError extends Error {
+  constructor(readonly status: number) {
+    super(`Resend rejected email (HTTP ${status}).`);
+  }
+}
+
 type Message = { from?: string; to: string; subject: string; text: string; headers?: Record<string, string> };
 
 export function createResendEmail(apiKey: string, sender: string, request = fetch) {
@@ -11,10 +17,10 @@ export function createResendEmail(apiKey: string, sender: string, request = fetc
         body: JSON.stringify({ ...content, from: from?.trim() || sender, to: [to] }),
         signal: AbortSignal.timeout(15_000)
       });
-      if (!response.ok) throw new Error(`Resend rejected email (HTTP ${response.status}).`);
+      if (!response.ok) throw new ResendDeliveryError(response.status);
       const result = await response.json() as { id?: string };
-      if (!result.id) throw new Error("Resend did not return a delivery identifier.");
-      return { accepted: [to] };
+      if (typeof result.id !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(result.id)) throw new Error("Resend did not return a delivery identifier.");
+      return { accepted: [to], messageId: result.id };
     }
   };
 }
