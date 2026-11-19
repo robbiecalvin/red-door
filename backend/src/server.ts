@@ -558,15 +558,15 @@ async function main(): Promise<void> {
   }
   const app = express();
   let publicAppOrigin="";try{const configured=new URL(process.env.PUBLIC_APP_URL ?? "");if(configured.protocol==="https:")publicAppOrigin=configured.origin;}catch{}
-  const allowedOrigins=parseAllowedOrigins([process.env.CORS_ALLOWED_ORIGINS ?? "capacitor://localhost,http://localhost,http://127.0.0.1,ionic://localhost",publicAppOrigin,"https://badehausx.com"].filter(Boolean).join(","));
+  const allowedOrigins=parseAllowedOrigins([process.env.CORS_ALLOWED_ORIGINS ?? "capacitor://localhost,http://localhost,http://127.0.0.1,ionic://localhost",publicAppOrigin,"https://badehausx.com","https://www.badehausx.com"].filter(Boolean).join(","));
 
   app.disable("x-powered-by");
   app.use((req, res, next) => {
     const originHeader = req.headers.origin;
     const origin = typeof originHeader === "string" ? originHeader.trim() : "";
+    res.vary("Origin");
     if (origin !== "" && isOriginAllowed(origin, allowedOrigins)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Session-Token");
     }

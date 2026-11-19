@@ -105,6 +105,18 @@ afterAll(async () => {
 
 // Real HTTP contracts against an isolated backend and a local Stripe fixture; never live charges.
 describe("Core API and payment lifecycle smoke checks", () => {
+  it("allows registration preflight from both Badehaus X domains", async () => {
+    for (const origin of ["https://badehausx.com", "https://www.badehausx.com", "https://unrelated.example"]) {
+      const response = await fetch(base + "/auth/register", {
+        method: "OPTIONS",
+        headers: { Origin: origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type" }
+      });
+      expect(response.status).toBe(204);
+      expect(response.headers.get("vary")).toMatch(/origin/i);
+      expect(response.headers.get("access-control-allow-origin")).toBe(origin === "https://unrelated.example" ? null : origin);
+    }
+  });
+
   it("Given deployed routes When unauthenticated or a normal user requests admin data Then denies access", async () => {
     await request("/admin/analytics", undefined, undefined, undefined, 401);
     await request("/admin/analytics", undefined, alice.token, undefined, 403);
