@@ -156,6 +156,7 @@ export function MapView({
           style: mapStyleUrl(typeof __DUALMODE_MAP_STYLE_URL__ === "string" ? __DUALMODE_MAP_STYLE_URL__ : undefined),
           center: [initialCenter.lng, initialCenter.lat],
           zoom: initialView.zoom,
+          attributionControl: { compact: false },
           interactive: isInteractive
         });
 
