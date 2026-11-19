@@ -8,7 +8,7 @@ Each filled segment is one locally verified milestone from the five listed for t
 
 | Phase | Progress | Verified milestones | Remaining milestones |
 | --- | --- | --- | --- |
-| 1. Foundation | ■■■■□ 4/5 | Local signup and recovery, profiles and link privacy, Explore and core chat, versioned policy acceptance | Hosted signup with approved policies and a controlled external inbox |
+| 1. Foundation | ■■■■■ 5/5 | Local signup and recovery, profiles and link privacy, Explore and core chat, versioned policy acceptance, hosted signup and email delivery | Approve and activate policy documents |
 | 2. Core features | ■■■■■ 5/5 | Right Now, Postings, Private Groups, three-member text DMs, Live broadcasting beta | Hosted Live rollout |
 | 3. Membership | ■■■■■ 5/5 | Standard Plus, public flyer promotion, Founding Members, Priority Members and placement, Priority referral pricing | Hosted Stripe test-mode checkout and renewal |
 | 4. Growth | ■■■■■ 5/5 | Baseline analytics, marketing consent and unsubscribe, referrals, commission ledger, owner reporting | Hosted email and Stripe verification, payout policy |

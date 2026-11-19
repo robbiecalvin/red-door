@@ -61,6 +61,16 @@ async function main(){
   const result=page.waitForResponse(r=>r.url().endsWith('/api/auth/verify-email')&&r.status()===200);
   await page.getByRole('button',{name:'Verify email',exact:true}).click();const verified=await(await result).json();assert.equal(verified.user.userType,'registered');
   await page.waitForFunction(()=>!document.querySelector('input[aria-label="Verification code"]'));
+  await page.getByLabel("Profile race", { exact: true }).selectOption("Mixed / Multiracial");
+  await page.getByLabel("Height in feet").selectOption("5");
+  await page.getByLabel("Additional inches").selectOption("11");
+  const saved = page.waitForResponse(response => response.url().endsWith("/api/profile/me") &&
+    response.request().method() === "PUT" && response.ok());
+  await page.getByRole("button", { name: "Save profile and continue" }).click();
+  const profile = (await (await saved).json()).profile;
+  assert.equal(profile.stats.race, "Mixed / Multiracial");
+  assert.equal(profile.stats.heightInches, 71);
+
   const store = JSON.parse(fs.readFileSync(path.join(root, "backend/.data/auth-users.json"), "utf8"));
   const recorded = store.users.find((row: { email: string }) => row.email === "controlled-browser@example.com").plusData.registrationPolicy;
   assert.equal(recorded.termsVersion, "fixture-v2");
@@ -69,7 +79,7 @@ async function main(){
   assert.equal(recorded.accepted, true);
   assert.ok(Number.isSafeInteger(recorded.acceptedAtMs));
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({status:'PASS',checks:['mobile registration UX','missing or stale policy acceptance rejected','versioned acceptance persisted','registration and login field isolation','strong password and adult declaration','verification required before login','actual TLS SMTP fixture','wrong code error','correct code and authenticated UI'],externalInbox:'NOT TESTED'}));
+  console.log(JSON.stringify({status:'PASS',checks:['mobile registration UX','optional race and feet/inches profile entry','missing or stale policy acceptance rejected','versioned acceptance persisted','registration and login field isolation','strong password and adult declaration','verification required before login','actual TLS SMTP fixture','wrong code error','correct code and authenticated UI'],externalInbox:'NOT TESTED'}));
  }finally{
   await browser?.close();for(const child of [frontend,backend])if(child&&child.exitCode===null){child.kill('SIGTERM');await once(child,'exit');}
   await mail.close();fs.rmSync(root,{recursive:true,force:true});

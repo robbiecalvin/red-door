@@ -23,7 +23,7 @@ The check uses disposable rooms and prints only its result. Both a previously us
 1. Run LiveKit on a dedicated VM with a public IP. Use [the beta configuration](../deploy/livekit.beta.yaml) and supply the credentials through LiveKit’s `LIVEKIT_KEYS` secret. Keep automatic room creation disabled so expired or ended rooms cannot be reopened with previously issued credentials.
 2. Terminate HTTPS and WSS on the streaming hostname and forward to LiveKit port 7880. Expose UDP 7882 and TCP 7881 on the media host. Keep the media hostname DNS-only in Cloudflare for this setup. Configure TURN/TLS and test it from restrictive mobile and Wi-Fi networks before inviting members.
 3. On the app backend, set `LIVEKIT_URL` to the secure WebSocket URL and configure `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` using the same credentials. Run one app backend instance per dedicated LiveKit instance for this beta. A backend restart closes leftover Badehaus X rooms.
-4. Set `LIVE_BETA_ENABLED=true` in the target environment. The flag defaults to off. The UI shows Live after the backend confirms that the provider is configured and reachable.
+4. Set `LIVE_BETA_ENABLED=true` in the target environment. The flag defaults to off. Signed-in members can open Live. Broadcasting controls appear after the backend confirms that the provider is configured and reachable.
 
 ## Local verification
 

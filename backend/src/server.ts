@@ -2,7 +2,7 @@ import { createResendEmail, ResendDeliveryError } from "./services/resendEmail";
 import { registrationPolicy } from "./services/registrationPolicy";
 import { installGrowthRoutes } from "./routes/growthRoutes";
 import { createReferralLedger } from "./services/referralLedger";
-import { DEFAULT_PRIORITY_RADIUS_KM, FOUNDER_PRICE_CENTS, PRIORITY_ACTIVITY_MS, PRIORITY_INVITATION_CODE, REFERRAL_INTRO_CENTS, REFERRAL_RENEWAL_CENTS, threeMonthsAfter, withinPriorityRadius } from "../../shared/membership";
+import { DEFAULT_PRIORITY_RADIUS_KM, FOUNDER_PRICE_CENTS, PRIORITY_ACTIVITY_MS, isPriorityInvitation, REFERRAL_INTRO_CENTS, REFERRAL_RENEWAL_CENTS, threeMonthsAfter, withinPriorityRadius } from "../../shared/membership";
 import { installLiveRoutes } from "./routes/liveRoutes";
 import { installGroupDmRoutes } from "./routes/groupDmRoutes";
 import { installLaunchReadiness } from "./services/launchReadiness";
@@ -973,7 +973,7 @@ async function main(): Promise<void> {
   const priorityCleanup = setInterval(() => void purgeExpiredPriorityData().catch(() => {}), 60 * 60 * 1000).unref();
   app.post("/membership/priority/apply", async (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
-    if (String(req.body?.code).trim().toUpperCase() !== PRIORITY_INVITATION_CODE) return res.status(400).json({ message: "Invalid invitation code." });
+    if (!isPriorityInvitation(req.body?.code)) return res.status(400).json({ message: "Invalid invitation code." });
     try {
       const profile = await profileRepo.getByUserId(actor.user.id);
       if (!profile?.displayName || !profile.age) return res.status(400).json({ message: "Complete your profile before applying." });

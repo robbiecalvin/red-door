@@ -139,7 +139,7 @@ export function LivePanel({ api, session }: { api: Api; session: Session }) {
             .then(() => setNotice("Broadcast ended.")).catch(cause => setError(cause.message || "Couldn’t end the broadcast."));
         }}>End as admin</button> : null}
       </li>)}</ul> : <p>No broadcasts right now.</p>}
-    </> : <p>Live is currently unavailable.</p>}
+    </> : <p>Live broadcasting is currently unavailable on this server.</p>}
     {notice ? <p role="status">{notice}</p> : null}
     {error ? <p role="alert" className="rd-error">{error}</p> : null}
   </section>;

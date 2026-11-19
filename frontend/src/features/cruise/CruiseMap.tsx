@@ -32,12 +32,14 @@ function avatarForKey(key: string): string {
 function toMarkers(
   presence: ReadonlyArray<CruisePresenceUpdate>,
   avatarByKey?: Readonly<Record<string, string>>,
-  onMarkerSelect?: (key: string) => void
+  onMarkerSelect?: (key: string) => void,
+  rightNowExpiryByKey?: Readonly<Record<string, number | undefined>>
 ): ReadonlyArray<MapMarker> {
   return presence.map((p) => ({
     id: p.key,
     position: { lat: p.lat, lng: p.lng },
     color: "#C00000",
+    rightNowExpiresAtMs: rightNowExpiryByKey?.[p.key],
     label: p.userType === "guest" ? "Anon" : p.status ? `Member: ${p.status}` : "Member",
     imageUrl: avatarByKey?.[p.key] ?? avatarForKey(p.key),
     onClick: onMarkerSelect ? () => onMarkerSelect(p.key) : undefined
@@ -54,6 +56,7 @@ export function CruiseMap({
   realtimeErrorMessage,
   onMarkerSelect,
   avatarByKey,
+  rightNowExpiryByKey,
   additionalMarkers,
   height,
   visible,
@@ -72,6 +75,7 @@ export function CruiseMap({
   realtimeErrorMessage?: string | null;
   onMarkerSelect?: (key: string) => void;
   avatarByKey?: Readonly<Record<string, string>>;
+  rightNowExpiryByKey?: Readonly<Record<string, number | undefined>>;
   additionalMarkers?: ReadonlyArray<MapMarker>;
   height?: number | string;
   visible?: boolean;
@@ -115,8 +119,8 @@ export function CruiseMap({
 
   const presenceArray = useMemo(() => Array.from(state.byKey.values()), [state.byKey]);
   const markers = useMemo(
-    () => [...toMarkers(presenceArray, avatarByKey, onMarkerSelect), ...(additionalMarkers ?? [])],
-    [additionalMarkers, avatarByKey, onMarkerSelect, presenceArray]
+    () => [...toMarkers(presenceArray, avatarByKey, onMarkerSelect, rightNowExpiryByKey), ...(additionalMarkers ?? [])],
+    [additionalMarkers, avatarByKey, onMarkerSelect, presenceArray, rightNowExpiryByKey]
   );
 
   const view: MapViewOptions = useMemo(() => {

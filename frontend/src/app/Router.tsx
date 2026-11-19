@@ -1185,6 +1185,9 @@ function CruiseSurface({
       realtimeErrorMessage={realtimeError}
       onMarkerSelect={(key) => void openProfileByKey(key)}
       avatarByKey={avatarUrlByKey}
+      rightNowExpiryByKey={Object.fromEntries(visiblePublicProfiles.map(profile => [
+        chatKeyFromProfileUserId(profile.userId), profile.member?.rightNowExpiresAtMs
+      ]))}
       additionalMarkers={mapOverlayMarkers}
       defaultCenter={travelCenter ?? { lat: settings.defaultCenterLat, lng: settings.defaultCenterLng }}
       height="100%"
@@ -5664,7 +5667,6 @@ function StyledFilePicker({
 }
 
 function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; session: Session; setLastError(value: string | null): void }>): React.ReactElement {
-  const profileIsMobile = useIsMobile();
   const [draft, setDraft] = useState<ProfileDraft>(emptyProfileDraft());
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -5888,8 +5890,8 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         : undefined;
 
   return (
-    <div style={{ display: "grid", gap: 12, gridTemplateColumns: profileIsMobile ? "1fr" : "1fr 1fr", alignItems: "start" }}>
-      <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
+    <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr", alignItems: "start" }}>
+      <div style={cardStyle()}>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>Your profile</div>
 
@@ -5918,84 +5920,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         </div>
       </div>
 
-      <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
-        <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>About you</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Display Name</span>
-              <input value={session.userType === "guest" ? "Anon" : draft.displayName} readOnly={session.userType === "guest"} onChange={(e) => setDraft((d) => ({ ...d, displayName: e.target.value }))} style={fieldStyle()} />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Age</span>
-              <input value={draft.age} onChange={(e) => setDraft((d) => ({ ...d, age: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
-            </label>
-          </div>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span className="rd-label">Bio</span>
-            <textarea value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} style={{ ...fieldStyle(), minHeight: 88, resize: "vertical" }} />
-          </label>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span className="rd-label">Looking For More (Optional)</span>
-            <textarea
-              value={draft.lookingForMore}
-              onChange={(e) => setDraft((d) => ({ ...d, lookingForMore: e.target.value }))}
-              style={{ ...fieldStyle(), minHeight: 72, resize: "vertical" }}
-            />
-          </label>
-        </div>
-      </div>
-
-      <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "1" }}>
-        <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>Profile details</div>
-          <ProfileDetailsEditor value={draft.details} onChange={details => setDraft(d => ({ ...d, details }))} />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Height (in)</span>
-              <input value={draft.heightInches} onChange={(e) => setDraft((d) => ({ ...d, heightInches: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Weight (lbs)</span>
-              <input value={draft.weightLbs} onChange={(e) => setDraft((d) => ({ ...d, weightLbs: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Race</span>
-              <input value={draft.race} onChange={(e) => setDraft((d) => ({ ...d, race: e.target.value }))} style={fieldStyle()} />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Cock Size (in)</span>
-              <input value={draft.cockSizeInches} onChange={(e) => setDraft((d) => ({ ...d, cockSizeInches: e.target.value }))} style={fieldStyle()} inputMode="decimal" />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Cut / Uncut</span>
-              <select value={draft.cutStatus} onChange={(e) => setDraft((d) => ({ ...d, cutStatus: e.target.value as "" | ProfileCutStatus }))} style={fieldStyle()}>
-                <option value="">Select</option>
-                <option value="cut">Cut</option>
-                <option value="uncut">Uncut</option>
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span className="rd-label">Position</span>
-              <select value={draft.position} onChange={(e) => setDraft((d) => ({ ...d, position: e.target.value as "" | ProfilePosition }))} style={fieldStyle()}>
-                <option value="">Select</option>
-                <option value="top">Top</option>
-                <option value="bottom">Bottom</option>
-                <option value="side">Side</option>
-              </select>
-            </label>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input type="checkbox" checked={draft.discreetMode} onChange={(e) => setDraft((d) => ({ ...d, discreetMode: e.target.checked }))} />
-              <span className="rd-label" style={{ margin: 0 }}>Discreet Mode</span>
-            </label>
-          </div>
-          <div style={{ color: "#b9bec9", fontSize: 13 }}>Travel mode is controlled from the Discover map via the ✈ picker.</div>
-        </div>
-      </div>
-
-      <div style={profileIsMobile ? cardStyle() : { ...cardStyle(), gridColumn: "2", gridRow: "1 / span 3" }}>
+      <div style={cardStyle()}>
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 18, fontWeight: 700 }}>MEDIA</div>
           <div style={{ color: "#b9bec9", fontSize: 14 }}>Upload and manage your photos and video.</div>
@@ -6089,6 +6014,83 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      <div style={cardStyle()}>
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>About you</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Display Name</span>
+              <input value={session.userType === "guest" ? "Anon" : draft.displayName} readOnly={session.userType === "guest"} onChange={(e) => setDraft((d) => ({ ...d, displayName: e.target.value }))} style={fieldStyle()} />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Age</span>
+              <input value={draft.age} onChange={(e) => setDraft((d) => ({ ...d, age: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
+            </label>
+          </div>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span className="rd-label">Bio</span>
+            <textarea value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} style={{ ...fieldStyle(), minHeight: 88, resize: "vertical" }} />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span className="rd-label">Looking For More (Optional)</span>
+            <textarea
+              value={draft.lookingForMore}
+              onChange={(e) => setDraft((d) => ({ ...d, lookingForMore: e.target.value }))}
+              style={{ ...fieldStyle(), minHeight: 72, resize: "vertical" }}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div style={cardStyle()}>
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>Profile details</div>
+          <ProfileDetailsEditor value={draft.details} onChange={details => setDraft(d => ({ ...d, details }))} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Height (in)</span>
+              <input value={draft.heightInches} onChange={(e) => setDraft((d) => ({ ...d, heightInches: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Weight (lbs)</span>
+              <input value={draft.weightLbs} onChange={(e) => setDraft((d) => ({ ...d, weightLbs: e.target.value }))} style={fieldStyle()} inputMode="numeric" />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Race</span>
+              <input value={draft.race} onChange={(e) => setDraft((d) => ({ ...d, race: e.target.value }))} style={fieldStyle()} />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Cock Size (in)</span>
+              <input value={draft.cockSizeInches} onChange={(e) => setDraft((d) => ({ ...d, cockSizeInches: e.target.value }))} style={fieldStyle()} inputMode="decimal" />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Cut / Uncut</span>
+              <select value={draft.cutStatus} onChange={(e) => setDraft((d) => ({ ...d, cutStatus: e.target.value as "" | ProfileCutStatus }))} style={fieldStyle()}>
+                <option value="">Select</option>
+                <option value="cut">Cut</option>
+                <option value="uncut">Uncut</option>
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="rd-label">Position</span>
+              <select value={draft.position} onChange={(e) => setDraft((d) => ({ ...d, position: e.target.value as "" | ProfilePosition }))} style={fieldStyle()}>
+                <option value="">Select</option>
+                <option value="top">Top</option>
+                <option value="bottom">Bottom</option>
+                <option value="side">Side</option>
+              </select>
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="checkbox" checked={draft.discreetMode} onChange={(e) => setDraft((d) => ({ ...d, discreetMode: e.target.checked }))} />
+              <span className="rd-label" style={{ margin: 0 }}>Discreet Mode</span>
+            </label>
+          </div>
+          <div style={{ color: "#b9bec9", fontSize: 13 }}>Travel mode is controlled from the Discover map via the ✈ picker.</div>
         </div>
       </div>
 
@@ -7003,8 +7005,8 @@ export function Router({
       {settingsSection === "profile" ? <div className="rd-profile-settings-stack"><SettingsProfile api={api} session={session} setLastError={setProfileError} /><MemberEditor api={api} session={session}/><MemberProfileLinks api={api} session={session}/><PhotoVerificationPanel api={api} session={session}/></div> : null}
       {settingsSection === "privacy" ? <div className="rd-profile-settings-stack"><MemberPrivacy api={api} session={session}/><PrivacySettings api={api} session={session}/><PrivacyBlockList api={api} session={session}/></div> : null}
       {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings api={api} session={session} /></section> : null}
-      {settingsSection === "membership" ? <div className="rd-profile-settings-stack"><PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /><BillingSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/></div> : null}
-      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><MembershipPrograms api={api} session={session}/><MarketingPreferences api={api} session={session}/><GrowthDashboard api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
+      {settingsSection === "membership" ? <div className="rd-profile-settings-stack"><MembershipPrograms api={api} session={session}/><PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /><BillingSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/></div> : null}
+      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><MarketingPreferences api={api} session={session}/><GrowthDashboard api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
       </div>
     </div>
   );

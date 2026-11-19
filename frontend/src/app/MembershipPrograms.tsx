@@ -72,6 +72,7 @@ export function MembershipPrograms({ api, session }: Props) {
   if (!session.userId) return null;
   return <section className="rd-card rd-settings-body">
     <h2>Membership programs</h2>
+    {status?.priorityInvited && !status.priority && !status.priorityPending ? <p>Priority invitation saved. Submit a private screenshot for review. Approval unlocks complimentary Plus.</p> : null}
     {status?.founderRateEligible ? <p>Founding Member · CAD $4.99/month after your free period.</p> : null}
     {status?.priority ? <>
       <p>Priority Member · Complimentary Plus</p>

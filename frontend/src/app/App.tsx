@@ -33,7 +33,8 @@ type ProfileSetupDraft = Readonly<{
   age: string;
   bio: string;
   race: string;
-  heightInches: string;
+  heightFeet: string;
+  heightRemainder: string;
   weightLbs: string;
   position: ProfilePosition;
 }>;
@@ -317,7 +318,8 @@ function emptyProfileSetupDraft(): ProfileSetupDraft {
     age: "",
     bio: "",
     race: "",
-    heightInches: "",
+    heightFeet: "",
+    heightRemainder: "0",
     weightLbs: "",
     position: ""
   };
@@ -840,7 +842,7 @@ export function App(): React.ReactElement {
         bio: profileSetupDraft.bio.trim(),
         stats: {
           race: profileSetupDraft.race.trim() || undefined,
-          heightInches: parseOptionalInt(profileSetupDraft.heightInches),
+          heightInches: profileSetupDraft.heightFeet ? Number(profileSetupDraft.heightFeet) * 12 + Number(profileSetupDraft.heightRemainder) : undefined,
           weightLbs: parseOptionalInt(profileSetupDraft.weightLbs),
           position: profileSetupDraft.position || undefined
         }
@@ -1082,9 +1084,9 @@ export function App(): React.ReactElement {
       ) : null}
 
       {showBottomNav ? <nav className="rd-desktop-nav" aria-label="Main navigation">{([
-        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Postings"], ["groups", "groups", "Groups"], ["live", "live", "Live"], ["settings", "settings", "Settings"]] as const).filter(([tab]) => tab !== "live" || liveState.enabled).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}{session?.userId ? <button type="button" onClick={() => {
+        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Postings"], ["groups", "groups", "Groups"], ["live", "live", "Live"], ["settings", "settings", "Settings"]] as const).filter(([tab]) => tab !== "live" || Boolean(session?.userId)).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}{session?.userId ? <button type="button" onClick={() => {
         setTabAndRoute("settings");
-        window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "account" }));
+        window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "membership" }));
       }}><span aria-hidden="true" style={{ fontSize: 23 }}>+</span><span>Membership</span></button> : null}</nav> : null}
       <div className="rd-inbox-live-status" role="status" hidden={activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
       <main
@@ -1390,23 +1392,27 @@ export function App(): React.ReactElement {
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
                         <label className="rd-field" style={{ marginBottom: 0 }}>
                           <span className="rd-label">Race (Optional)</span>
-                          <input
-                            className="rd-input"
-                            value={profileSetupDraft.race}
-                            onChange={(e) => setProfileSetupDraft((prev) => ({ ...prev, race: e.target.value }))}
-                            aria-label="Profile race"
-                          />
+                          <select className="rd-input" value={profileSetupDraft.race} aria-label="Profile race"
+                            onChange={e => setProfileSetupDraft(prev => ({ ...prev, race: e.target.value }))}>
+                            <option value="">Select an option</option>
+                            {["Black", "East Asian", "Indigenous", "Latino / Hispanic", "Middle Eastern / North African", "Pacific Islander", "South Asian", "Southeast Asian", "White", "Mixed / Multiracial", "Other", "Prefer not to say"].map(race =>
+                              <option key={race}>{race}</option>)}
+                          </select>
                         </label>
-                        <label className="rd-field" style={{ marginBottom: 0 }}>
-                          <span className="rd-label">Height in Inches (Optional)</span>
-                          <input
-                            className="rd-input"
-                            value={profileSetupDraft.heightInches}
-                            onChange={(e) => setProfileSetupDraft((prev) => ({ ...prev, heightInches: e.target.value }))}
-                            inputMode="numeric"
-                            aria-label="Profile height in inches"
-                          />
-                        </label>
+                        <fieldset className="rd-field" style={{ margin: 0, border: 0, padding: 0, minWidth: 0 }}>
+                          <legend className="rd-label">Height (Optional)</legend>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <select className="rd-input" aria-label="Height in feet" value={profileSetupDraft.heightFeet}
+                              onChange={e => setProfileSetupDraft(prev => ({ ...prev, heightFeet: e.target.value }))}>
+                              <option value="">Feet</option>
+                              {[3, 4, 5, 6, 7].map(feet => <option key={feet} value={feet}>{feet} ft</option>)}
+                            </select>
+                            <select className="rd-input" aria-label="Additional inches" disabled={!profileSetupDraft.heightFeet} value={profileSetupDraft.heightRemainder}
+                              onChange={e => setProfileSetupDraft(prev => ({ ...prev, heightRemainder: e.target.value }))}>
+                              {Array.from({ length: 13 }, (_, inches) => <option key={inches} value={inches}>{inches} in</option>)}
+                            </select>
+                          </div>
+                        </fieldset>
                         <label className="rd-field" style={{ marginBottom: 0 }}>
                           <span className="rd-label">Weight in Lbs (Optional)</span>
                           <input
@@ -1466,7 +1472,7 @@ export function App(): React.ReactElement {
       </main>
 
       {showBottomNav ? (
-        <nav className={`rd-mobile-nav ${liveState.enabled ? "has-live" : ""}`} aria-label="Primary navigation">
+        <nav className={`rd-mobile-nav ${session?.userId ? "has-live" : ""}`} aria-label="Primary navigation">
           <button
             type="button"
             className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`}
@@ -1509,7 +1515,7 @@ export function App(): React.ReactElement {
             <Icon name="board" className="rd-ui-icon rd-mobile-nav-image" /><span>Postings</span>
           </button>
           <button className={`rd-mobile-nav-btn ${activeTab === "groups" ? "is-active" : ""}`} aria-label="Groups" aria-current={activeTab === "groups" ? "page" : undefined} onClick={()=>setTabAndRoute("groups")}><Icon name="groups" className="rd-ui-icon"/><span>Groups</span></button>
-          {liveState.enabled ? <button type="button" className={`rd-mobile-nav-btn ${activeTab === "live" ? "is-active" : ""}`}
+          {session?.userId ? <button type="button" className={`rd-mobile-nav-btn ${activeTab === "live" ? "is-active" : ""}`}
             aria-current={activeTab === "live" ? "page" : undefined} onClick={() => setTabAndRoute("live")}><Icon name="live" className="rd-ui-icon"/><span>Live</span></button> : null}
         </nav>
       ) : null}

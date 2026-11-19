@@ -659,7 +659,8 @@ describe("Core API and payment lifecycle smoke checks", () => {
   });
 
   it("reviews private Priority proof, respects discovery constraints, and gates the referral offer on paid proof", async () => {
-    const priority = await account("priority-owner");
+    const priority = await account("priority-owner", false, "PRIORITY X90");
+    expect(await request("/plus", undefined, priority.token)).toMatchObject({ priorityInvited: true, active: false });
     const viewer = await account("priority-viewer");
     await request("/profile/me", { displayName: "Priority Member Test", age: 25, bio: "Hello" }, priority.token, "PUT");
     const apply = "/membership/priority/apply";
@@ -669,7 +670,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect((await fetch(upload.uploadUrl, { method: "PUT", body: bytes, headers: { "content-type": "image/png" } })).status).toBe(200);
     await request("/profile/media/complete", { mediaId: upload.mediaId }, priority.token);
     await request(apply, { code: "PRIORITYX90", proofMediaId: upload.mediaId }, viewer.token, undefined, 400);
-    await request(apply, { code: "PRIORITYX90", proofMediaId: upload.mediaId }, priority.token);
+    await request(apply, { code: "PRIORITY X90", proofMediaId: upload.mediaId }, priority.token);
     await request(`/media/public/${upload.mediaId}/url`, undefined, undefined, undefined, 400);
     const proofUrl = base + `/admin/membership/priority/${priority.id}/proof`;
     expect((await fetch(proofUrl, { headers: { "x-session-token": viewer.token } })).status).toBe(403);

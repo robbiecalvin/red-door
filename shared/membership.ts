@@ -1,4 +1,7 @@
 export const PRIORITY_INVITATION_CODE = "PRIORITYX90";
+export function isPriorityInvitation(value: unknown): boolean {
+  return typeof value === "string" && value.trim().toUpperCase().replace(/\s+/g, "") === PRIORITY_INVITATION_CODE;
+}
 export const FOUNDER_PRICE_CENTS = 499;
 export const REFERRAL_INTRO_CENTS = 1499;
 export const REFERRAL_RENEWAL_CENTS = 999;

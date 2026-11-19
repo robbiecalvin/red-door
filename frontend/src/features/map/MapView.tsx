@@ -273,6 +273,7 @@ export function MapView({
     for (const marker of markersRef.current) marker.remove();
     markersRef.current = [];
 
+    const badgeTimers: number[] = [];
     for (const m of markers) {
       const popup =
         typeof m.label === "string" && m.label.trim() !== ""
@@ -284,6 +285,25 @@ export function MapView({
           : undefined;
 
       const markerButton = markerEl(m);
+      const remaining = (m.rightNowExpiresAtMs ?? 0) - Date.now();
+      if (remaining > 0) {
+        const badge = document.createElement("span");
+        badge.className = "rd-map-right-now";
+        badge.setAttribute("aria-hidden", "true");
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        const bolt = document.createElementNS(svg.namespaceURI, "path");
+        bolt.setAttribute("d", "m13 2-9 12h7l-1 8 10-12h-7l1-8Z");
+        svg.append(bolt);
+        badge.append(svg);
+        markerButton.append(badge);
+        const label = markerButton.getAttribute("aria-label") ?? "Member";
+        markerButton.setAttribute("aria-label", `${label}, Right Now`);
+        badgeTimers.push(window.setTimeout(() => {
+          badge.remove();
+          markerButton.setAttribute("aria-label", label);
+        }, remaining));
+      }
       if (typeof m.onClick === "function") {
         const trigger = (evt: Event): void => {
           evt.preventDefault();
@@ -311,6 +331,7 @@ export function MapView({
       marker.addTo(map);
       markersRef.current.push(marker);
     }
+    return () => badgeTimers.forEach(timer => window.clearTimeout(timer));
   }, [markers, mapVersion]);
 
   const messages:Record<MapState,string>={loading:"Loading dark map…",ready:"",degraded:"Map coverage is incomplete. People and chat are still available.",offline:"You are offline. Map tiles may be unavailable.",fatal:"Map rendering is unavailable on this device. Use People to continue."};

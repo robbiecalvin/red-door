@@ -1,6 +1,6 @@
 import type { PolicyAcceptance } from "../../../shared/registrationPolicy";
 import { MARKETING_CONSENT_VERSION } from "../../../shared/marketing";
-import { PRIORITY_INVITATION_CODE } from "../../../shared/membership";
+import { isPriorityInvitation } from "../../../shared/membership";
 import { effectivePlusExpiry, hasPlus, launchGrant, promoCode as normalizePromoCode, PROVIDER_LAUNCH_CODE, type PlusData } from "../../../shared/plus";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -585,7 +585,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         ? [...usersById.values()].find(u => u.plusData?.priorityReferralCode === requestedCode &&
           u.plusData.priorityApprovedAtMs !== undefined && !u.bannedAtMs && u.emailVerified)
         : undefined;
-      const priorityInvited = requestedCode === PRIORITY_INVITATION_CODE;
+      const priorityInvited = isPriorityInvitation(requestedCode);
       try { if (!referralOwner && !priorityInvited) plusExpiresAtMs = launchGrant(promoCode, nowMs()); }
       catch (e) { return err("UNAUTHORIZED_ACTION", (e as Error).message); }
       const salt = crypto.randomBytes(PASSWORD_SALT_BYTES);
