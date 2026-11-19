@@ -53,7 +53,7 @@ export function Backroom({ api, session }: Props) {
     }
   }
   return <main className="rd-settings-body" style={{ maxWidth: 760, margin: "auto", padding: "clamp(18px, 5vw, 64px)" }}>
-    <header><a href="../">Badehaus X{session?.userId ? "" : " · Sign in"}</a> · <a href="../legal/">Policies</a><h1>The Backroom</h1></header>
+    <header><a href="../">Badehaus X{session?.userId ? "" : " · Sign in"}</a><h1>The Backroom</h1></header>
     {!article ? <section aria-label="Launch articles">
       {backroomLaunch.map(entry => <article className="rd-card rd-settings-body" key={entry.slug}>
         <a href={`./${entry.slug}/`}>
