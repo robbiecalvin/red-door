@@ -1,3 +1,5 @@
+import type { PolicyAcceptanceRecord } from "./registrationPolicy";
+import type { MarketingConsent } from "./marketing";
 import type { MemberPreferences, PhotoVerification } from "./member";
 export const PLUS_PRICE_CENTS = 799;
 export const PLUS_CURRENCY = "cad";
@@ -9,10 +11,18 @@ export const PROMO_CODES = [LAUNCH_CODE, PROVIDER_LAUNCH_CODE, MEMBER_LAUNCH_COD
 export function promoCode(value:unknown):string { if(typeof value!=="string" || !(PROMO_CODES as readonly string[]).includes(value.trim().toUpperCase()))throw new Error("Invalid promotion code.");return value.trim().toUpperCase(); }
 // Midnight January 1, 2027 in America/Vancouver. End is exclusive.
 export const LAUNCH_END_MS = Date.parse("2027-01-01T00:00:00-07:00");
-export type PlusIdentity = { userType: string; tier?: string; plusExpiresAtMs?: number };
+export type PlusIdentity = { userType: string; tier?: string; plusExpiresAtMs?: number; plusData?: PlusData };
+export function effectivePlusExpiry(identity: PlusIdentity): number | undefined {
+  const data = identity.plusData;
+  if (data?.priorityApprovedAtMs !== undefined) return undefined;
+  if (identity.tier === "premium" && identity.plusExpiresAtMs === undefined) return undefined;
+  return Math.max(identity.plusExpiresAtMs ?? 0, data?.founderTrialEndsAtMs ?? 0) || undefined;
+}
 export function hasPlus(identity: PlusIdentity, now = Date.now()): boolean {
-  return identity.userType !== "guest" && identity.tier === "premium" &&
-    (identity.plusExpiresAtMs === undefined || identity.plusExpiresAtMs > now);
+  if (identity.userType === "guest") return false;
+  if (identity.plusData?.priorityApprovedAtMs !== undefined) return true;
+  if ((identity.plusData?.founderTrialEndsAtMs ?? 0) > now) return true;
+  return identity.tier === "premium" && (identity.plusExpiresAtMs === undefined || identity.plusExpiresAtMs > now);
 }
 export function launchGrant(code: unknown, now = Date.now()): number | undefined {
   if (code === undefined || code === null || code === "") return undefined;
@@ -28,6 +38,19 @@ export function limits(identity: PlusIdentity, now = Date.now()) {
 }
 export type SavedSearch = { name: string; filters: Record<string, string | boolean> };
 export type PlusData = {
+  registrationPolicy?: PolicyAcceptanceRecord;
+  marketing?: MarketingConsent;
+  founderAtMs?: number;
+  founderTrialEndsAtMs?: number;
+  founderRateEligible?: boolean;
+  priorityInvited?: boolean;
+  priorityRequestedAtMs?: number;
+  priorityProofMediaId?: string;
+  priorityApprovedAtMs?: number;
+  priorityReferralCode?: string;
+  priorityReferralOwnerId?: string;
+  referralIntroInvoiceId?: string;
+  membershipAudit?: { action: string; actorId: string; atMs: number }[];
   member?: MemberPreferences;
   photoVerification?: PhotoVerification;
   pushSubscriptions?: { endpoint: string; keys: { p256dh: string; auth: string } }[];

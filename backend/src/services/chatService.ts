@@ -395,7 +395,7 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
 
   return {
     sendMessage(session: Session, input: SendMessageInput): Result<ChatMessage> {
-      if (typeof input?.text === "string" && /^GROUP_INVITE_(REQUEST|ACCEPT)\|/.test(input.text) && !hasPlus(session, nowMs())) return err("UNAUTHORIZED_ACTION", "Group chats require Badehaus X Plus.");
+      if (typeof input?.text === "string" && /^GROUP_INVITE_(REQUEST|ACCEPT|DECLINE|STATUS)\|/.test(input.text)) return err("UNAUTHORIZED_ACTION", "Use Group conversations to send an invitation.");
       const sessionValid = validateSession(session);
       if (!sessionValid.ok) return sessionValid;
 

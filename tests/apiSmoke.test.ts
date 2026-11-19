@@ -1,3 +1,5 @@
+import { createCommunityRepository } from "../backend/src/repositories/communityRepository";
+import { createReferralLedger, creditStatus } from "../backend/src/services/referralLedger";
 import { createTlsMail } from "./fixtures/tlsMail";
 import { WebSocket } from "ws";
 import { createAuthService } from "../backend/src/services/authService";
@@ -14,13 +16,17 @@ import { BADEHAUS_FLYER_CODE, LAUNCH_END_MS, launchGrant } from "../shared/plus"
 jest.setTimeout(30000);
 const WEBHOOK_SECRET = "smoke-only-not-a-real-secret";
 const price = { id: "price_smoke", active: true, currency: "cad", unit_amount: 799, recurring: { interval: "month", interval_count: 1 }, livemode: true };
+const founderPrice = { ...price, id: "price_founder", unit_amount: 499 };
+const referralPrice = { ...price, id: "price_referral_renewal", unit_amount: 999 };
+const introPrice = { id: "price_referral_intro", active: true, type: "one_time", currency: "cad", unit_amount: 1499, livemode: true };
 const periodEnd = Math.floor(Date.now() / 1000) + 30 * 86400;
 let providerState: any = { id: "sub_smoke", object: "subscription", customer: "cus_smoke", metadata: {}, status: "active", latest_invoice: { paid: true, status: "paid" }, current_period_end: periodEnd, items: { data: [{ price }] } };
 let resetToken = "";
+let referralRefundCents = 0;
 const MD_SECRET="smoke-only-shared-md-secret-at-least-32-characters";
 let checkoutParams=new URLSearchParams(),setupCustomer="cus_renewal",setupUserId="",scheduleCreates=0,scheduleState:any={id:"sched_launch",status:"not_started",metadata:{}},setupCheckout:any=null;
 let mail: Awaited<ReturnType<typeof createTlsMail>>;
-async function customWebhook(type:string,object:unknown,id:string){const raw=JSON.stringify({id,type,data:{object}}),timestamp=Math.floor(Date.now()/1000),mac=crypto.createHmac("sha256",WEBHOOK_SECRET).update(`${timestamp}.${raw}`).digest("hex");return fetch(base+"/billing/webhook",{method:"POST",headers:{"content-type":"application/json","stripe-signature":`t=${timestamp},v1=${mac}`},body:raw});}
+async function customWebhook(type:string,object:unknown,id:string,livemode=false){const raw=JSON.stringify({id,type,livemode,data:{object}}),timestamp=Math.floor(Date.now()/1000),mac=crypto.createHmac("sha256",WEBHOOK_SECRET).update(`${timestamp}.${raw}`).digest("hex");return fetch(base+"/billing/webhook",{method:"POST",headers:{"content-type":"application/json","stripe-signature":`t=${timestamp},v1=${mac}`},body:raw});}
 let upstreamRequests=0;
 let providerPosts = 0, backend: ChildProcess, stub: http.Server, base: string, root: string;
 async function freePort() { const server = net.createServer(); server.listen(0, "127.0.0.1"); await once(server, "listening"); const port = (server.address() as net.AddressInfo).port; await new Promise<void>(r => server.close(() => r())); return port; }
@@ -28,11 +34,11 @@ async function request(route: string, data?: unknown, token?: string, method?: s
   const result = await fetch(base + route, { method: method ?? (data === undefined ? "GET" : "POST"), headers: { ...(token ? { "x-session-token": token } : {}), ...(data === undefined ? {} : { "content-type": "application/json" }) }, body: data === undefined ? undefined : JSON.stringify(data) });
   const value = await result.json(); expect({ route, status: result.status, error: result.ok ? undefined : value.message }).toEqual({ route, status: expected, error: result.ok ? undefined : value.message }); return value;
 }
-async function account(name: string, consent = false, promoCode?: string) {
+async function account(name: string, consent = false, promoCode?: string, marketingConsent = false) {
   const email = name === "admin" ? "smoke-admin@example.com" : `${name}@example.com`;
   if (name !== "admin") {
     const before=mail.messages.length;
-    await request("/auth/register", { email, password: "Smoke-test123!", phoneE164: "", age:25, analyticsConsent: consent, promoCode });
+    await request("/auth/register", { email, password: "Smoke-test123!", phoneE164: "", age:25, analyticsConsent: consent, promoCode, marketingConsent });
     await request("/auth/login", {email,password:"Smoke-test123!"},undefined,undefined,403);
     const message=await mail.next(before),code=/verification code is (\d{6})/.exec(message)?.[1];
     expect(code).toMatch(/^\d{6}$/);
@@ -43,8 +49,8 @@ async function account(name: string, consent = false, promoCode?: string) {
   await request("/auth/verify-age", { sessionToken: token, ageYears: 25 });
   return { token, id };
 }
-async function webhook(type: string, id: string, valid = true) {
-  const raw = JSON.stringify({ id, type, data: { object: { object: "subscription", id: "sub_smoke" } } });
+async function webhook(type: string, id: string, valid = true, livemode = false) {
+  const raw = JSON.stringify({ id, type, livemode, data: { object: { object: "subscription", id: "sub_smoke" } } });
   const timestamp = Math.floor(Date.now() / 1000);
   const mac = crypto.createHmac("sha256", WEBHOOK_SECRET).update(`${timestamp}.${raw}`).digest("hex");
   return fetch(base + "/billing/webhook", { method: "POST", headers: { "content-type": "application/json", "stripe-signature": `t=${timestamp},v1=${valid ? mac : "0".repeat(64)}` }, body: raw });
@@ -53,7 +59,7 @@ let admin: { token: string; id: string }, alice: { token: string; id: string }, 
 let backendCwd: string | undefined;
 async function startBackend(){
   backend = spawn(process.execPath, ["--import", require.resolve("tsx"), "--import", path.resolve(__dirname, "fixtures/stripe-fetch.mjs"), path.resolve(__dirname, "../backend/src/server.ts")], {
-    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", NODE_EXTRA_CA_CERTS:mail.ca, SMTP_HOST: "127.0.0.1", SMTP_PORT:String(mail.port), SMTP_SECURE:"true", SMTP_USER:"fixture-user", SMTP_PASS:"fixture-pass", SMTP_FROM:"noreply@example.com", TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
+    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", NODE_EXTRA_CA_CERTS:mail.ca, SMTP_HOST: "127.0.0.1", SMTP_PORT:String(mail.port), SMTP_SECURE:"true", SMTP_USER:"fixture-user", SMTP_PASS:"fixture-pass", SMTP_FROM:"noreply@example.com", MARKETING_SEND_ENABLED:"true", MARKETING_FROM:"news@example.com", MARKETING_CONTACT_ADDRESS:"Badehaus X fixture postal address", MARKETING_PUBLIC_API_URL:"https://example.com", REFERRAL_EMAIL_ENABLED:"false", TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", STRIPE_FOUNDER_PRICE_ID: founderPrice.id, STRIPE_PRIORITY_RENEWAL_PRICE_ID: referralPrice.id, STRIPE_PRIORITY_INTRO_PRICE_ID: introPrice.id, PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
   });
   let startup = ""; backend.stderr?.on("data", chunk => { startup += chunk; });
   let ready = false;
@@ -84,7 +90,13 @@ beforeAll(async () => {
 
     res.setHeader("content-type", "application/json");
     if (req.method === "POST") providerPosts++;
-    if (req.url?.startsWith("/v1/prices/")) return res.end(JSON.stringify(price));
+    if (req.url?.startsWith("/v1/prices/")) {
+      const requested = [price, founderPrice, referralPrice, introPrice].find(item => req.url === `/v1/prices/${item.id}`);
+      if (!requested) res.statusCode = 404;
+      return res.end(JSON.stringify(requested ?? {}));
+    }
+    if (req.url === "/v1/charges/ch_referral") return res.end(JSON.stringify({ invoice: "in_referral", livemode: true, currency: "cad", amount_refunded: referralRefundCents }));
+    if (req.url === "/v1/invoices/in_referral") return res.end(JSON.stringify({ lines: { data: [{ price: introPrice }] } }));
     if (req.url?.startsWith("/v1/subscriptions/")) return res.end(JSON.stringify(providerState));
     if (req.url === "/v1/checkout/sessions") {checkoutParams=params;if(params.get("mode")==="setup"){setupUserId=params.get("metadata[userId]")!;setupCheckout={id:"cs_setup_launch",mode:"setup",status:"complete",customer:params.get("customer"),setup_intent:"seti_launch",metadata:{userId:setupUserId,flow:"launch-renewal"}};return res.end(JSON.stringify({id:setupCheckout.id,url:"https://checkout.stripe.com/setup-fixture"}));}return res.end(JSON.stringify({ id: "cs_smoke", url: "https://checkout.stripe.com/smoke" }));}
     if (req.url?.startsWith("/v1/checkout/sessions/")) return res.end(JSON.stringify(req.url.includes("cs_setup_launch")?setupCheckout:{ id: "cs_smoke", status: "open", url: "https://checkout.stripe.com/smoke" }));
@@ -317,6 +329,15 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(beforeStart).not.toHaveProperty("rightNowExpiresAtMs");
     expect(beforeStart).not.toHaveProperty("rightNowStartsAtMs");
     await request("/members/me", { rightNow: false }, alice.token, "PUT");
+    await request("/members/me", { profileLinks: {
+      instagram: { url: "https://instagram.com/alice", visible: true },
+      onlyfans: { url: "https://onlyfans.com/alice" }
+    } }, alice.token, "PUT");
+    const profileEndpoint = `/profile/public/${alice.id}`;
+    expect((await request(profileEndpoint)).profile.member).not.toHaveProperty("profileLinks");
+    expect((await request(profileEndpoint, undefined, guest.session.sessionToken)).profile.member).not.toHaveProperty("profileLinks");
+    expect((await request(profileEndpoint, undefined, bob.token)).profile.member.profileLinks).toEqual({ instagram: "https://instagram.com/alice" });
+    await request("/members/me", { profileLinks: { instagram: null, onlyfans: null } }, alice.token, "PUT");
     const observer=new WebSocket(base.replace("http:","ws:"));await once(observer,"open");const hello=once(observer,"message");observer.send(JSON.stringify({type:"auth",payload:{sessionToken:alice.token}}));await hello;
     const removed=once(observer,"message");
     await request("/members/me",{hideProfile:true},bob.token,"PUT");
@@ -583,6 +604,184 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(feed.postings).toEqual(expect.arrayContaining([expect.objectContaining({
       postingId: published.posting.postingId, title: draft.title, availability: "hosting"
     })]));
+  });
+
+  it("requires group consent and isolates direct history, unread state and reports", async () => {
+    const first = await account("group-dm-first");
+    const second = await account("group-dm-second");
+    const outsider = await account("group-dm-outsider");
+    const base = "/group-conversations";
+    await request(base, { peerId: first.id, inviteeId: second.id }, outsider.token, undefined, 402);
+    if (Date.now() >= LAUNCH_END_MS) return;
+    const host = await account("group-dm-host", false, BADEHAUS_FLYER_CODE);
+    await request("/chat/send", { chatKind: "cruise", toKey: `user:${first.id}`, text: "Direct history only" }, host.token);
+    const { id } = await request(base, { peerId: first.id, inviteeId: second.id }, host.token, undefined, 201);
+    const group = `${base}/${id}`;
+    await request(`${group}/messages`, undefined, host.token, undefined, 403);
+    await request(`${group}/messages`, undefined, outsider.token, undefined, 404);
+    await request(`${group}/respond`, { accept: true }, first.token);
+    await request(`${group}/messages`, { text: "Too soon" }, first.token, undefined, 403);
+    await request(`${group}/respond`, { accept: true }, second.token);
+    expect((await request(`${group}/messages`, undefined, second.token)).messages).toEqual([]);
+    const { message } = await request(`${group}/messages`, { text: "Group only" }, host.token, undefined, 201);
+    expect((await request(`${group}/messages`, undefined, second.token)).messages).toEqual([message]);
+    const direct = await request(`/chat/messages?chatKind=cruise&otherKey=user:${first.id}`, undefined, host.token);
+    expect(direct.messages.map((item: { text: string }) => item.text)).toEqual(["Direct history only"]);
+    async function unread() {
+      const result = await request(base, undefined, second.token);
+      return result.groups.find((item: { id: string }) => item.id === id)?.unread;
+    }
+    expect(await unread()).toBe(1);
+    await request(`${group}/read`, { through: message.createdAtMs }, second.token);
+    expect(await unread()).toBe(0);
+    const report = `${group}/messages/${message.id}/report`;
+    await request(report, { reason: "Smoke fixture report" }, outsider.token, undefined, 404);
+    expect((await request(report, { reason: "Smoke fixture report" }, second.token, undefined, 201)).reportId).toBeTruthy();
+    await request("/block", { targetKey: `user:${host.id}` }, first.token);
+    await request(`${group}/messages`, undefined, second.token, undefined, 404);
+  });
+
+  it("keeps Founding Membership separate from Priority and authorizes the founder price", async () => {
+    const founder = await account("founding-member");
+    const action = { action: "invite-founder", email: "founding-member@example.com" };
+    await request("/admin/membership", action, founder.token, undefined, 403);
+    await request("/admin/membership", action, admin.token);
+    const plan = await request("/plus", undefined, founder.token);
+    expect(plan).toMatchObject({ active: true, founderRateEligible: true, priority: false });
+    expect(plan.expiresAtMs).toBe(plan.founderTrialEndsAtMs);
+    await request("/admin/membership", action, admin.token);
+    expect((await request("/plus", undefined, founder.token)).expiresAtMs).toBe(plan.expiresAtMs);
+    await request("/billing/checkout", {}, founder.token, undefined, 400);
+    await request("/billing/checkout", { acceptRenewal: true }, founder.token);
+    expect(checkoutParams.get("line_items[0][price]")).toBe(founderPrice.id);
+    expect(checkoutParams.get("subscription_data[trial_end]")).toBe(String(Math.ceil(plan.expiresAtMs / 1000)));
+    expect(checkoutParams.get("subscription_data[metadata][membershipProgram]")).toBe("founder");
+  });
+
+  it("reviews private Priority proof, respects discovery constraints, and gates the referral offer on paid proof", async () => {
+    const priority = await account("priority-owner");
+    const viewer = await account("priority-viewer");
+    await request("/profile/me", { displayName: "Priority Member Test", age: 25, bio: "Hello" }, priority.token, "PUT");
+    const apply = "/membership/priority/apply";
+    await request(apply, { code: "PRIORITYX90" }, priority.token, undefined, 400);
+    const bytes = Buffer.from("private test screenshot");
+    const upload = await request("/profile/media/initiate", { kind: "priority_proof", mimeType: "image/png", sizeBytes: bytes.length }, priority.token);
+    expect((await fetch(upload.uploadUrl, { method: "PUT", body: bytes, headers: { "content-type": "image/png" } })).status).toBe(200);
+    await request("/profile/media/complete", { mediaId: upload.mediaId }, priority.token);
+    await request(apply, { code: "PRIORITYX90", proofMediaId: upload.mediaId }, viewer.token, undefined, 400);
+    await request(apply, { code: "PRIORITYX90", proofMediaId: upload.mediaId }, priority.token);
+    await request(`/media/public/${upload.mediaId}/url`, undefined, undefined, undefined, 400);
+    const proofUrl = base + `/admin/membership/priority/${priority.id}/proof`;
+    expect((await fetch(proofUrl, { headers: { "x-session-token": viewer.token } })).status).toBe(403);
+    expect(Buffer.from(await (await fetch(proofUrl, { headers: { "x-session-token": admin.token } })).arrayBuffer())).toEqual(bytes);
+    expect((await request("/plus", undefined, priority.token)).active).toBe(false);
+    await request("/admin/membership", { action: "approve-priority", email: "priority-owner@example.com" }, admin.token);
+    expect((await fetch(proofUrl, { headers: { "x-session-token": admin.token } })).status).toBe(404);
+    const awarded = await request("/plus", undefined, priority.token);
+    expect(awarded).toMatchObject({ priority: true, active: true });
+    expect(awarded.priorityReferralCode).toMatch(/^BX-[0-9A-F]{32}$/);
+    await request("/presence", { lat: 49.28, lng: -123.12 }, priority.token);
+    await request("/presence", { lat: 49.28, lng: -123.12 }, viewer.token);
+    const rank = async () => (await request("/presence/active", undefined, viewer.token)).priority[`user:${priority.id}`];
+    expect(await rank()).toBe(2);
+    await request("/presence", { lat: 50.5, lng: -123.12 }, viewer.token);
+    expect(await rank()).toBeUndefined();
+    await request("/presence", { lat: 49.4, lng: -123.12 }, viewer.token);
+    await request("/admin/membership/radius", { radiusKm: 5 }, admin.token, "PUT");
+    expect(await rank()).toBeUndefined();
+    await request("/admin/membership/radius", { radiusKm: 100 }, admin.token, "PUT");
+    expect(await rank()).toBe(2);
+    await request("/block", { targetKey: `user:${priority.id}` }, viewer.token);
+    expect(await rank()).toBeUndefined();
+    await request("/unblock", { targetKey: `user:${priority.id}` }, viewer.token);
+    await request("/members/me", { hideLocation: true }, priority.token, "PUT");
+    expect(await rank()).toBeUndefined();
+
+    const referral = await account("priority-referred", false, awarded.priorityReferralCode);
+    expect(await request("/plus", undefined, referral.token)).toMatchObject({ active: false, referralOffer: true });
+    await request("/billing/checkout", { acceptRenewal: true }, referral.token);
+    expect(checkoutParams.get("line_items[0][price]")).toBe(referralPrice.id);
+    expect(checkoutParams.get("line_items[1][price]")).toBe(introPrice.id);
+    const trialEnd = Number(checkoutParams.get("subscription_data[trial_end]"));
+    expect(trialEnd).toBeGreaterThan(Math.floor(Date.now() / 1000) + 80 * 86400);
+    const prior = providerState;
+    try {
+      providerState = { ...prior, id: "sub_referral", status: "trialing", trial_end: trialEnd, metadata: {
+        userId: referral.id, membershipProgram: "priority-referral"
+      }, items: { data: [{ price: referralPrice }] }, latest_invoice: {
+        id: "in_referral", status: "paid", paid: true, currency: "cad", amount_paid: 0, lines: { data: [] }
+      } };
+      expect((await webhook("invoice.paid", "evt_referral_zero")).status).toBe(200);
+      expect((await request("/plus", undefined, referral.token)).active).toBe(false);
+      providerState.latest_invoice.amount_paid = 1499;
+      providerState.latest_invoice.lines.data = [{ price: introPrice, quantity: 1, amount: 1499 }];
+      providerState.latest_invoice.livemode = true;
+      expect((await webhook("invoice.paid", "evt_referral_paid", true, true)).status).toBe(200);
+      expect((await webhook("invoice.paid", "evt_referral_paid", true, true)).status).toBe(200);
+      await request("/admin/growth", undefined, viewer.token, undefined, 403);
+      const report = async () => (await request("/admin/growth", undefined, admin.token)).credits.filter((row: { invoiceId: string }) => row.invoiceId === "in_referral");
+      expect(await report()).toMatchObject([{ ownerId: priority.id, buyerId: referral.id, live: true, status: "pending" }]);
+      await request("/admin/growth/commission", { invoiceId: "in_referral", action: "record-payout", reference: "fixture-transfer" }, admin.token, undefined, 409);
+      await request("/admin/growth/commission", { invoiceId: "in_referral", action: "approve" }, admin.token);
+      await request("/admin/growth/commission", { invoiceId: "in_referral", action: "record-payout", reference: "fixture-transfer" }, admin.token);
+      expect(await report()).toMatchObject([{ status: "paid", payout: { reference: "fixture-transfer" } }]);
+      referralRefundCents = 1499;
+      expect((await customWebhook("charge.refunded", { id: "ch_referral" }, "evt_referral_refund", true)).status).toBe(200);
+      expect((await customWebhook("charge.refunded", { id: "ch_referral" }, "evt_referral_refund", true)).status).toBe(200);
+      expect((await webhook("invoice.paid", "evt_referral_paid", true, true)).status).toBe(200);
+      expect(await report()).toMatchObject([{ status: "reversed", refundedCents: 1499, payout: { reference: "fixture-transfer" } }]);
+      expect(await request("/plus", undefined, referral.token)).toMatchObject({ active: true, expiresAtMs: trialEnd * 1000, referralOffer: false });
+    } finally { providerState = prior; }
+    await request("/admin/membership", { action: "revoke-priority", email: "priority-owner@example.com" }, admin.token);
+    expect(await request("/plus", undefined, priority.token)).toMatchObject({ active: false, priority: false });
+    await request("/auth/register", { email: "revoked-referral@example.com", password: "Smoke-test123!", age: 25, promoCode: awarded.priorityReferralCode }, undefined, undefined, 400);
+  });
+
+  it("sends scheduled marketing only with explicit consent and honors one-click unsubscribe", async () => {
+    const subscriber = await account("growth-opt-in", false, undefined, true);
+    const analyticsOnly = await account("growth-analytics-only", true);
+    const settings = "/account/marketing";
+    expect(await request(settings, undefined, subscriber.token)).toEqual({ enabled: true });
+    expect(await request(settings, undefined, analyticsOnly.token)).toEqual({ enabled: false });
+    await request(settings, { enabled: "true" }, analyticsOnly.token, "PUT", 400);
+
+    const before = mail.messages.length;
+    const draft = { subject: "Fixture newsletter", body: "A scheduled Growth test.", segment: "all", atMs: Date.now() + 500 };
+    await request("/admin/growth/campaign", draft, subscriber.token, undefined, 403);
+    const { id } = await request("/admin/growth/campaign", draft, admin.token, undefined, 201);
+    const newsletter = await mail.next(before);
+    expect(newsletter).toContain("growth-opt-in@example.com");
+    expect(newsletter).not.toContain("growth-analytics-only@example.com");
+    expect(newsletter).toContain("Badehaus X fixture postal address");
+    expect(newsletter).toContain("List-Unsubscribe-Post: List-Unsubscribe=One-Click");
+    const path = newsletter.match(/\/email\/unsubscribe\/[a-f0-9]{64}/)?.[0];
+    expect(path).toBeDefined();
+    expect((await fetch(base + path!)).status).toBe(200);
+    expect(await request(settings, undefined, subscriber.token)).toEqual({ enabled: true });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect((await fetch(base + path!, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "List-Unsubscribe=One-Click" })).status).toBe(200);
+    }
+    expect(await request(settings, undefined, subscriber.token)).toEqual({ enabled: false });
+    const dashboard = await request("/admin/growth", undefined, admin.token);
+    expect(dashboard.marketingSubscribers).toBe(0);
+    expect(dashboard.campaigns.find((row: { id: string }) => row.id === id)).toMatchObject({ accepted: 1, failed: 0, unconfirmed: 0 });
+    await request(settings, { enabled: true }, subscriber.token, "PUT");
+    expect((await fetch(base + path!, { method: "POST" })).status).toBe(200);
+    expect(await request(settings, undefined, subscriber.token)).toEqual({ enabled: true });
+    await request(settings, { enabled: false }, subscriber.token, "PUT");
+  });
+
+  it("keeps out-of-order referral refunds and sandbox credits out of payable earnings", async () => {
+    const ledger = createReferralLedger(await createCommunityRepository(null, path.join(root, "ledger-fixture.json")));
+    const credit = { ownerId: "owner", buyerId: "buyer", invoiceId: "in_replayed", grossCents: 1499, live: true };
+    await ledger.refund(credit.invoiceId, true, 1499);
+    const attempts = await Promise.all([ledger.record(credit), ledger.record(credit)]);
+    expect(attempts.filter(Boolean)).toHaveLength(1);
+    expect(creditStatus((await ledger.list())[0])).toBe("reversed");
+    await expect(ledger.review(credit.invoiceId, "admin", "approve", undefined)).rejects.toMatchObject({ status: 409 });
+    expect(await ledger.record({ ...credit, invoiceId: "in_sandbox", live: false })).toBe(true);
+    await expect(ledger.review("in_sandbox", "admin", "approve", undefined)).rejects.toMatchObject({ status: 404 });
+    expect(await ledger.record({ ...credit, buyerId: credit.ownerId, invoiceId: "in_self" })).toBe(false);
   });
 
 });

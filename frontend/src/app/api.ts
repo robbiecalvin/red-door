@@ -1,3 +1,4 @@
+import type { PolicyAcceptance, RegistrationPolicy } from "../../../shared/registrationPolicy";
 import { isGroupFormat, validGroupSchedule, type GroupFormat, type GroupOccurrence } from "../../../shared/groupSchedule";
 import { isPostingAvailability, type PostingAvailability } from "../../../shared/postingStatus";
 import { hasActiveGroupInvitation, resolveGroupInvitationDeadline } from "../../../shared/groupInvitation";
@@ -53,6 +54,7 @@ export type BillingHealth = {
   stripeConnection: "unconfigured" | "ok" | "error"; priceValid: boolean; mode?: "test" | "live"; issue?: string;
 };
 export type PlusStatus = {
+  priorityInvited?:boolean;referralOffer?:boolean;founderTrialEndsAtMs?:number;founderRateEligible?:boolean;priority?:boolean;priorityPending?:boolean;priorityReferralCode?:string;
   renewalScheduled?:boolean;subscriptionStatus?:string;hasPaymentMethod?:boolean;autoRenew?:boolean;nextBillingAtMs?:number;redeemedPromoCodes?:string[];providerTutorialPending?:boolean;
   active: boolean; expiresAtMs?: number; limits: ReturnType<typeof limits>;
   savedSearches: SavedSearch[]; pinnedKeys: string[]; privateMediaIds: string[];
@@ -113,6 +115,7 @@ export type UserProfile = Readonly<{
 }>;
 
 export type PublicProfile = Readonly<{
+  foundingMember?: boolean;
   member?: PublicMember;
   userId: string;
   displayName: string;
@@ -151,6 +154,8 @@ export type ProfileUpdatePayload = Readonly<{
 
 export type RegistrationProfileInput = Readonly<{
   analyticsConsent?: boolean;
+  marketingConsent?: boolean;
+  policyAcceptance?: PolicyAcceptance;
   promoCode?: string;
   displayName: string;
   age: number;
@@ -166,7 +171,7 @@ export type ProfileUpdate = Readonly<{
   travelMode?: unknown;
 }>;
 
-export type MediaKind = "photo_main" | "photo_gallery" | "photo_private" | "photo_verification" | "video";
+export type MediaKind = "photo_main" | "photo_gallery" | "photo_private" | "photo_verification" | "priority_proof" | "video";
 
 export type InitiateMediaUploadResponse = Readonly<{
   mediaId: string;
@@ -2553,9 +2558,10 @@ function localGroupBlocked(state: LocalState, hostId: string, viewerId: string):
 
 function createLocalApiClient(): Readonly<{
   memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T>;
-  memberPhoto(token: string, userId: string): Promise<Blob>;
+  memberPhoto(token: string, userId: string, purpose?: "priority"): Promise<Blob>;
   requestPasswordReset(email: string): Promise<{ message: string }>;
   confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
+  getRegistrationPolicy(): Promise<RegistrationPolicy>;
   getPrivacy(sessionToken: string): Promise<{ analyticsConsent: boolean }>;
   setPrivacy(sessionToken: string, analyticsConsent: boolean): Promise<{ analyticsConsent: boolean }>;
   getAnalytics(sessionToken: string): Promise<AnalyticsSummary>;
@@ -2581,7 +2587,7 @@ function createLocalApiClient(): Readonly<{
   setHybridOptIn(sessionToken: string, optIn: boolean): Promise<{ session: Session }>;
   setMode(sessionToken: string, mode: Session["mode"]): Promise<{ session: Session }>;
   updatePresence(sessionToken: string, lat: number, lng: number, status?: string): Promise<any>;
-  listActivePresence(sessionToken: string): Promise<{ presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }>;
+  listActivePresence(sessionToken: string): Promise<{ priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }>;
   getDatingFeed(sessionToken: string): Promise<FeedResponse>;
   swipe(sessionToken: string, toUserId: string, direction: "like" | "pass"): Promise<SwipeResponse>;
   sendChat(
@@ -2711,6 +2717,7 @@ function createLocalApiClient(): Readonly<{
     async memberPhoto() { throw new Error("Photo verification needs a connected backend."); return new Blob(); },
     async requestPasswordReset() { throw { message: "Account recovery requires the live backend and email delivery." }; },
     async confirmPasswordReset() { throw { message: "Password reset links must be used with the live backend." }; },
+    async getRegistrationPolicy() { return { status: "disabled" }; },
     async getPrivacy(token) { const state = readState(), session = requireUserSession(state, token); return { analyticsConsent: state.usersById[session.userId!]?.plusData?.analyticsConsent === true }; },
     async setPrivacy(token, analyticsConsent) { const state = readState(), session = requireUserSession(state, token), user = state.usersById[session.userId!]; writeState({ ...state, usersById: { ...state.usersById, [user.id]: { ...user, plusData: { ...user.plusData, analyticsConsent } } } }); return { analyticsConsent }; },
     async getAnalytics() { throw { message: "Activity metrics are available on the backend, not in browser-local demo mode." }; },
@@ -2963,7 +2970,7 @@ function createLocalApiClient(): Readonly<{
       );
       return { ok: true, presence: clone(nextPresence) };
     },
-    async listActivePresence(): Promise<{ presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
+    async listActivePresence(): Promise<{ priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
       const state = readState();
       const bannedUserIds = new Set(
         Object.values(state.usersById)
@@ -3033,7 +3040,7 @@ function createLocalApiClient(): Readonly<{
       const state = readState();
       const session = requireSession(state, sessionToken);
       const fromKey = actorKeyForSession(session);
-      if (/^GROUP_INVITE_(REQUEST|ACCEPT)\|/.test(text) && !hasPlus(session)) throw { code: "PLUS_REQUIRED", message: "Group chats require Badehaus X Plus." };
+      if (/^GROUP_INVITE_(REQUEST|ACCEPT|DECLINE|STATUS)\|/.test(text)) throw { code: "UNAUTHORIZED_ACTION", message: "Use Group conversations to send an invitation." };
       const normalizedToKey = normalizeChatPeerKey(toKey);
       if (containsDisallowedKidVariation(text)) {
         throw { code: "UNAUTHORIZED_ACTION", message: "Message rejected." } as ServiceError;
@@ -4093,9 +4100,10 @@ function createLocalApiClient(): Readonly<{
 
 export function apiClient(basePath = "/api"): Readonly<{
   memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T>;
-  memberPhoto(token: string, userId: string): Promise<Blob>;
+  memberPhoto(token: string, userId: string, purpose?: "priority"): Promise<Blob>;
   requestPasswordReset(email: string): Promise<{ message: string }>;
   confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
+  getRegistrationPolicy(): Promise<RegistrationPolicy>;
   getPrivacy(sessionToken: string): Promise<{ analyticsConsent: boolean }>;
   setPrivacy(sessionToken: string, analyticsConsent: boolean): Promise<{ analyticsConsent: boolean }>;
   getAnalytics(sessionToken: string): Promise<AnalyticsSummary>;
@@ -4121,7 +4129,7 @@ export function apiClient(basePath = "/api"): Readonly<{
   setHybridOptIn(sessionToken: string, optIn: boolean): Promise<{ session: Session }>;
   setMode(sessionToken: string, mode: Session["mode"]): Promise<{ session: Session }>;
   updatePresence(sessionToken: string, lat: number, lng: number, status?: string): Promise<any>;
-  listActivePresence(sessionToken: string): Promise<{ presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }>;
+  listActivePresence(sessionToken: string): Promise<{ priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }>;
   getDatingFeed(sessionToken: string): Promise<FeedResponse>;
   swipe(sessionToken: string, toUserId: string, direction: "like" | "pass"): Promise<SwipeResponse>;
   sendChat(
@@ -4256,9 +4264,14 @@ export function apiClient(basePath = "/api"): Readonly<{
 
   return {
     async memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T> { const response=await fetch(`${basePath}${route}`,{method:method ?? (data===undefined?"GET":"POST"),headers:headers(token),body:data===undefined?undefined:JSON.stringify(data),cache:"no-store"});return await readJsonOrThrow(response) as T; },
-    async memberPhoto(token,userId) {const response=await fetch(`${basePath}/admin/photo-verifications/${encodeURIComponent(userId)}/photo`,{headers:headers(token),cache:"no-store"});if(!response.ok){await readJsonOrThrow(response);throw new Error("Photo unavailable.");}return response.blob();},
+    async memberPhoto(token,userId,purpose) {const route=purpose==="priority"?`/admin/membership/priority/${encodeURIComponent(userId)}/proof`:`/admin/photo-verifications/${encodeURIComponent(userId)}/photo`;const response=await fetch(`${basePath}${route}`,{headers:headers(token),cache:"no-store"});if(!response.ok){await readJsonOrThrow(response);throw new Error("Photo unavailable.");}return response.blob();},
     async requestPasswordReset(email) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/request`, { method: "POST", headers: headers(), body: JSON.stringify({ email }) })) as Promise<{ message: string }>; },
     async confirmPasswordReset(token, password) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/confirm`, { method: "POST", headers: headers(), body: JSON.stringify({ token, password }) })) as Promise<{ ok: true }>; },
+    async getRegistrationPolicy() {
+      const response = await fetch(`${basePath}/auth/registration-policy`, { cache: "no-store" });
+      if (response.status === 404) return { status: "disabled" };
+      return await readJsonOrThrow(response) as RegistrationPolicy;
+    },
     async getPrivacy(token) { return readJsonOrThrow(await fetch(`${basePath}/account/privacy`, { headers: headers(token) })) as Promise<{ analyticsConsent: boolean }>; },
     async setPrivacy(token, analyticsConsent) { return readJsonOrThrow(await fetch(`${basePath}/account/privacy`, { method: "PUT", headers: headers(token), body: JSON.stringify({ analyticsConsent }) })) as Promise<{ analyticsConsent: boolean }>; },
     async getAnalytics(token) { return readJsonOrThrow(await fetch(`${basePath}/admin/analytics`, { headers: headers(token) })) as Promise<AnalyticsSummary>; },
@@ -4292,7 +4305,7 @@ export function apiClient(basePath = "/api"): Readonly<{
       const res = await fetch(`${basePath}/auth/register`, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ email, password, phoneE164, promoCode: profile.promoCode, analyticsConsent: profile.analyticsConsent === true, displayName: profile.displayName, age: profile.age, stats: profile.stats ?? {} })
+        body: JSON.stringify({ email, password, phoneE164, promoCode: profile.promoCode, analyticsConsent: profile.analyticsConsent === true, marketingConsent: profile.marketingConsent === true, policyAcceptance: profile.policyAcceptance, displayName: profile.displayName, age: profile.age, stats: profile.stats ?? {} })
       });
       return (await readJsonOrThrow(res)) as RegisterResponse;
     },
@@ -4362,9 +4375,10 @@ export function apiClient(basePath = "/api"): Readonly<{
     },
     async listActivePresence(
       sessionToken: string
-    ): Promise<{ presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
+    ): Promise<{ priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
       const res = await fetch(`${basePath}/presence/active`, { method: "GET", headers: headers(sessionToken) });
       return (await readJsonOrThrow(res)) as {
+        priority?: Record<string, number>;
         presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }>;
       };
     },

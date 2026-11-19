@@ -48,6 +48,20 @@ describe("Member discovery, privacy, and plans",()=>{
       expect(() => updateMember(undefined, { rightNowStartsAtMs: invalid }, free, now)).toThrow(/future/);
     }
   });
+  it("keeps profile links private by default and handles platforms independently", () => {
+    const saved = updateMember(undefined, { profileLinks: {
+      instagram: { url: "https://www.instagram.com/member/?tracking=removed" },
+      onlyfans: { url: "https://onlyfans.com/member", visible: true }
+    } }, free, now);
+    expect(saved.profileLinks?.instagram).toEqual({ url: "https://instagram.com/member", visible: false });
+    expect(publicMember(saved, undefined, undefined, now)).not.toHaveProperty("profileLinks");
+    expect(publicMember(saved, undefined, undefined, now, true).profileLinks).toEqual({ onlyfans: "https://onlyfans.com/member" });
+    expect(publicMember({ ...saved, hideProfile: true }, undefined, undefined, now, true)).not.toHaveProperty("profileLinks");
+    expect(updateMember(saved, { profileLinks: { onlyfans: null } }, free, now).profileLinks).toEqual({ instagram: saved.profileLinks?.instagram });
+    for (const url of ["http://instagram.com/member", "https://instagram.com.example/member", "https://name@instagram.com/member", "javascript:alert(1)"]) {
+      expect(() => updateMember(saved, { profileLinks: { instagram: { url, visible: true } } }, free, now)).toThrow(/HTTPS Instagram/);
+    }
+  });
   it("clears intent immediately",()=>{const p=updateMember(undefined,{intent:"chatting",intentHours:1},free,now);expect(updateMember(p,{intent:""},free,now).intentExpiresAtMs).toBeUndefined();});
   it("validates interests and prompts and strips client claims of verification",()=>{
     const p=updateMember(undefined,{interests:["Coffee","Coffee"],prompts:[{prompt:PROFILE_PROMPTS[0],answer:"Ask about my dog."}],photoVerified:true},free,now);

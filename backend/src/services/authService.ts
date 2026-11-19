@@ -1,4 +1,7 @@
-import { hasPlus, launchGrant, promoCode as normalizePromoCode, PROVIDER_LAUNCH_CODE, type PlusData } from "../../../shared/plus";
+import type { PolicyAcceptance } from "../../../shared/registrationPolicy";
+import { MARKETING_CONSENT_VERSION } from "../../../shared/marketing";
+import { PRIORITY_INVITATION_CODE } from "../../../shared/membership";
+import { effectivePlusExpiry, hasPlus, launchGrant, promoCode as normalizePromoCode, PROVIDER_LAUNCH_CODE, type PlusData } from "../../../shared/plus";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -94,7 +97,7 @@ export type AuthService = Readonly<{
   requestPasswordReset(email: unknown): { email: string; token: string } | null;
   resetPassword(token: unknown, password: unknown): Result<void>;
   createGuestSession(): Result<GuestSessionResult>;
-  register(email: string, password: string, phoneE164: string, promoCode?: string, analyticsConsent?: boolean): Result<RegisterResult>;
+  register(email: string, password: string, phoneE164: string, promoCode?: string, analyticsConsent?: boolean, marketingConsent?: boolean, acceptedPolicy?: PolicyAcceptance): Result<RegisterResult>;
   verifyEmail(email: string, code: string): Result<VerifyEmailResult>;
   resendVerificationCode(email: string): Result<RegisterResult>;
   login(email: string, password: string): Result<VerifyEmailResult>;
@@ -439,7 +442,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       sessionToken,
       userType: user.userType,
       tier: hasPlus(user, issuedAtMs) ? "premium" : "free",
-      plusExpiresAtMs: user.plusExpiresAtMs,
+      plusExpiresAtMs: effectivePlusExpiry(user),
       role: normalizeRole(user.role),
       mode: "cruise",
       userId: user.id,
@@ -503,8 +506,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return banned as Result<Session>;
       }
       const tier = hasPlus(user, now) ? "premium" : "free";
-      if (existing.tier !== tier || existing.plusExpiresAtMs !== user.plusExpiresAtMs || normalizeRole(existing.role) !== normalizeRole(user.role)) {
-        const refreshed: Session = { ...existing, tier, plusExpiresAtMs: user.plusExpiresAtMs, role: normalizeRole(user.role) };
+      if (existing.tier !== tier || existing.plusExpiresAtMs !== effectivePlusExpiry(user) || normalizeRole(existing.role) !== normalizeRole(user.role)) {
+        const refreshed: Session = { ...existing, tier, plusExpiresAtMs: effectivePlusExpiry(user), role: normalizeRole(user.role) };
         sessionsByToken.set(sessionToken, refreshed);
         return ok(refreshed);
       }
@@ -547,7 +550,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       return ok({ session });
     },
 
-    register(email: string, password: string, phoneE164: string, promoCode?: string, analyticsConsent?: boolean): Result<RegisterResult> {
+    register(email: string, password: string, phoneE164: string, promoCode?: string, analyticsConsent?: boolean, marketingConsent?: boolean, acceptedPolicy?: PolicyAcceptance): Result<RegisterResult> {
       if (typeof email !== "string" || !isLikelyValidEmail(email)) {
         return err("UNAUTHORIZED_ACTION", "Invalid email.");
       }
@@ -576,7 +579,13 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       }
 
       let plusExpiresAtMs: number | undefined;
-      try { plusExpiresAtMs = launchGrant(promoCode, nowMs()); }
+      const requestedCode = typeof promoCode === "string" ? promoCode.trim().toUpperCase() : "";
+      const referralOwner = /^BX-[0-9A-F]{32}$/.test(requestedCode)
+        ? [...usersById.values()].find(u => u.plusData?.priorityReferralCode === requestedCode &&
+          u.plusData.priorityApprovedAtMs !== undefined && !u.bannedAtMs && u.emailVerified)
+        : undefined;
+      const priorityInvited = requestedCode === PRIORITY_INVITATION_CODE;
+      try { if (!referralOwner && !priorityInvited) plusExpiresAtMs = launchGrant(promoCode, nowMs()); }
       catch (e) { return err("UNAUTHORIZED_ACTION", (e as Error).message); }
       const salt = crypto.randomBytes(PASSWORD_SALT_BYTES);
       const hash = hashPassword(password, salt);
@@ -589,7 +598,10 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         userType: "registered",
         tier: plusExpiresAtMs ? "premium" : "free",
         plusExpiresAtMs,
-        plusData: { analyticsConsent: analyticsConsent === true, ...(plusExpiresAtMs ? {redeemedPromoCodes:[normalizePromoCode(promoCode)],providerTutorialPending:!deps.emailOnlyVerification && normalizePromoCode(promoCode)===PROVIDER_LAUNCH_CODE} : {}) },
+        plusData: { analyticsConsent: analyticsConsent === true, ...(acceptedPolicy ? { registrationPolicy: { ...acceptedPolicy, acceptedAtMs: now, source: "registration" as const } } : {}), ...(marketingConsent === true ? {
+          marketing: { enabled: true, token: crypto.randomBytes(32).toString("hex"),
+            history: [{ enabled: true, atMs: now, source: "registration", version: MARKETING_CONSENT_VERSION }] }
+        } : {}), ...(priorityInvited ? { priorityInvited } : {}), ...(referralOwner ? { priorityReferralOwnerId: referralOwner.id } : {}), ...(plusExpiresAtMs ? {redeemedPromoCodes:[normalizePromoCode(promoCode)],providerTutorialPending:!deps.emailOnlyVerification && normalizePromoCode(promoCode)===PROVIDER_LAUNCH_CODE} : {}) },
         role: "user",
         ageVerified: false,
         // The standalone server never enables the legacy verification bypass.

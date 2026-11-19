@@ -1,4 +1,4 @@
-import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, RIGHT_NOW_DURATION_MS, isRightNow, type MemberPreferences, type PublicMember, type PhotoVerification, type CommunityPlan } from "../../../shared/member";
+import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, PROFILE_LINK_LABELS, type ProfileLinkPlatform, RIGHT_NOW_DURATION_MS, isRightNow, type MemberPreferences, type PublicMember, type PhotoVerification, type CommunityPlan } from "../../../shared/member";
 import { hasPlus, type PlusIdentity } from "../../../shared/plus";
 import { containsDisallowedKidVariation } from "./contentPolicy";
 export class MemberError extends Error { constructor(public code: string, message: string, public status = 400) { super(message); } }
@@ -6,6 +6,23 @@ export function text(value: unknown, max: number, label: string): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > max || containsDisallowedKidVariation(value)) throw new MemberError("INVALID_INPUT", `${label} is required (maximum ${max} characters).`);
   return value.trim();
 }
+function normalizeProfileLink(platform: ProfileLinkPlatform, value: unknown): string {
+  const host = platform === "instagram" ? "instagram.com" : "onlyfans.com";
+  const label = PROFILE_LINK_LABELS[platform];
+  if (typeof value === "string" && value.length <= 500) {
+    try {
+      const url = new URL(value.trim());
+      if (url.protocol === "https:" && !url.username && !url.password && !url.port &&
+          [host, `www.${host}`].includes(url.hostname) && /^\/[a-z0-9_.]{1,40}\/?$/i.test(url.pathname)) {
+        return `https://${host}${url.pathname.replace(/\/$/, "")}`;
+      }
+    } catch {
+      // Return the same guidance for malformed URLs and unsupported hosts.
+    }
+  }
+  throw new MemberError("INVALID_INPUT", `Enter a valid HTTPS ${label} profile URL.`);
+}
+
 export function currentMember(preferences: MemberPreferences | undefined, now = Date.now()): MemberPreferences {
   const member = { ...DEFAULT_MEMBER, ...preferences };
   if (!isRightNow(member.rightNowExpiresAtMs, now)) {
@@ -47,6 +64,29 @@ export function updateMember(current: MemberPreferences | undefined, input: unkn
       next.intent = p.intent as MemberPreferences["intent"]; next.intentExpiresAtMs = now + Number(p.intentHours) * 3600000;
     }
   }
+  if (p.profileLinks !== undefined) {
+    if (!p.profileLinks || typeof p.profileLinks !== "object" || Array.isArray(p.profileLinks)) {
+      throw new MemberError("INVALID_INPUT", "Invalid profile links.");
+    }
+    const links = { ...next.profileLinks };
+    for (const [platform, input] of Object.entries(p.profileLinks)) {
+      if (!Object.prototype.hasOwnProperty.call(PROFILE_LINK_LABELS, platform)) {
+        throw new MemberError("INVALID_INPUT", "Unsupported profile link.");
+      }
+      const key = platform as ProfileLinkPlatform;
+      if (input === null) {
+        delete links[key];
+      } else {
+        if (typeof input !== "object" || Array.isArray(input)) throw new MemberError("INVALID_INPUT", "Invalid profile link.");
+        const { url, visible } = input as Record<string, unknown>;
+        if (visible !== undefined && typeof visible !== "boolean") {
+          throw new MemberError("INVALID_INPUT", "Choose who can see the profile link.");
+        }
+        links[key] = { url: normalizeProfileLink(key, url), visible: visible === true };
+      }
+    }
+    next.profileLinks = links;
+  }
   if (p.interests !== undefined) {
     if (!Array.isArray(p.interests) || p.interests.length > 8 || p.interests.some(i => !(INTERESTS as readonly unknown[]).includes(i))) throw new MemberError("INVALID_INPUT", "Choose up to 8 interests.");
     next.interests = [...new Set(p.interests)] as string[];
@@ -71,10 +111,14 @@ export function updateMember(current: MemberPreferences | undefined, input: unkn
   }
   return next;
 }
-export function publicMember(preferences: MemberPreferences | undefined, verification: PhotoVerification | undefined, mainPhotoMediaId?: string, now=Date.now()): PublicMember {
+export function publicMember(preferences: MemberPreferences | undefined, verification: PhotoVerification | undefined, mainPhotoMediaId?: string, now=Date.now(), includeProfileLinks = false): PublicMember {
   const member=currentMember(preferences, now);
+  const profileLinks = includeProfileLinks && !member.hideProfile && !member.incognito
+    ? Object.fromEntries(Object.entries(member.profileLinks ?? {})
+      .filter(([, link]) => link.visible === true).map(([platform, link]) => [platform, link.url]))
+    : {};
   const activeRightNow = (member.rightNowStartsAtMs ?? 0) <= now && member.rightNowExpiresAtMs !== undefined;
-  return {interests:member.interests,prompts:member.prompts,...(activeRightNow ? {rightNowExpiresAtMs:member.rightNowExpiresAtMs} : {}),...(member.intent && (member.intentExpiresAtMs ?? 0)>now ? {intent:member.intent,intentExpiresAtMs:member.intentExpiresAtMs} : {}),photoVerified:Boolean(mainPhotoMediaId && verification?.status === "approved" && verification.mainPhotoMediaId === mainPhotoMediaId)};
+  return {interests:member.interests,prompts:member.prompts,...(Object.keys(profileLinks).length ? {profileLinks} : {}),...(activeRightNow ? {rightNowExpiresAtMs:member.rightNowExpiresAtMs} : {}),...(member.intent && (member.intentExpiresAtMs ?? 0)>now ? {intent:member.intent,intentExpiresAtMs:member.intentExpiresAtMs} : {}),photoVerified:Boolean(mainPhotoMediaId && verification?.status === "approved" && verification.mainPhotoMediaId === mainPhotoMediaId)};
 }
 export function hidesDiscovery(member: MemberPreferences | undefined, identity: PlusIdentity): boolean { return member?.hideProfile === true || member?.incognito === true; }
 export function hidesPresence(member: MemberPreferences | undefined, identity: PlusIdentity): boolean { return member?.hideLocation === true || hidesDiscovery(member,identity); }

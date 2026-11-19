@@ -27,6 +27,8 @@ export type ReportTarget = Readonly<
   | { kind: "user"; targetKey: string }
   | { kind: "message"; messageId: string; targetKey?: string }
   | { kind: "group-message"; messageId: string; targetKey: string; postingId: string; text: string }
+  | { kind: "broadcast"; broadcastId: string; targetKey: string }
+  | { kind: "group-dm-message"; messageId: string; targetKey: string; conversationId: string; text: string }
 >;
 
 export type ReportRecord = Readonly<{
@@ -46,7 +48,8 @@ export type ReportServiceDeps = Readonly<{
 export type ReportService = Readonly<{
   reportUser(session: Session, targetKey: string, reason: string): Result<ReportRecord>;
   reportMessage(session: Session, messageId: string, reason: string, targetKey?: string): Result<ReportRecord>;
-  reportGroupMessage(session: Session, target: Extract<ReportTarget, { kind: "group-message" }>, reason: unknown): Result<ReportRecord>;
+  reportGroupMessage(session: Session, target: Extract<ReportTarget, { kind: "group-message" | "group-dm-message" }>, reason: unknown): Result<ReportRecord>;
+  reportLive(session: Session, broadcastId: string, targetKey: string, reason: string): Result<ReportRecord>;
   listReports(): ReadonlyArray<ReportRecord>;
 }>;
 
@@ -144,6 +147,12 @@ export function createReportService(deps: ReportServiceDeps = {}): ReportService
       if (!valid.ok) return valid;
       if (!isNonEmptyString(reason)) return err("UNAUTHORIZED_ACTION", "Invalid report reason.");
       return record(session, target, reason);
+    },
+
+    reportLive(session, broadcastId, targetKey, reason) {
+      const valid = validateSession(session);
+      if (!valid.ok) return valid;
+      return record(session, { kind: "broadcast", broadcastId, targetKey }, reason);
     },
 
     listReports(): ReadonlyArray<ReportRecord> {

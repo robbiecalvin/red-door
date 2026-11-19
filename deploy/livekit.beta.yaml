@@ -1,0 +1,14 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: true
+room:
+  auto_create: false
+  empty_timeout: 45
+  departure_timeout: 20
+  max_participants: 11
+limit:
+  bytes_per_sec: 5000000
+  subscription_limit_video: 1
+  subscription_limit_audio: 1

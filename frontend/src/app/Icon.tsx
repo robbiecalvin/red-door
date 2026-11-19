@@ -1,7 +1,8 @@
 import React from "react";
 
-export type IconName = "map" | "message" | "board" | "filter" | "settings" | "user" | "book" | "star" | "logout" | "shield" | "grid" | "groups" | "lightning";
+export type IconName = "live" | "map" | "message" | "board" | "filter" | "settings" | "user" | "book" | "star" | "logout" | "shield" | "grid" | "groups" | "lightning";
 const paths: Record<IconName, React.ReactNode> = {
+  live: <><rect x="2.5" y="6" width="13" height="12" rx="3" /><path d="m15.5 10 6-3v10l-6-3" /></>,
   lightning: <path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" fill="currentColor" />,
   grid: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
   groups: <><circle cx="9" cy="8" r="3" /><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 3 5" /></>,

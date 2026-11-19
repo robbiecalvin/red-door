@@ -1,3 +1,8 @@
+import { GrowthDashboard, MarketingPreferences } from "./GrowthPanels";
+import { MembershipPrograms } from "./MembershipPrograms";
+import { LiveContext } from "./liveState";
+import { LivePanel } from "./LivePanel";
+import { GroupConversations } from "./GroupConversations";
 import { GroupDiscussion } from "./GroupDiscussion";
 import { MAX_GROUP_OCCURRENCES, type GroupFormat, type GroupOccurrence } from "../../../shared/groupSchedule";
 import { isPostingAvailability, POSTING_AVAILABILITY, type PostingAvailability } from "../../../shared/postingStatus";
@@ -11,7 +16,7 @@ import { AdminLaunchChecks } from "./AdminLaunchChecks";
 import { BillingSettings, PromoCodeForm } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { CommunityPanel } from "./CommunityPanel";
-import { MemberEditor, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentControl, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, FirstConnections, DiscoveryChoices, type DiscoveryChoice } from "./MemberPanels";
+import { MemberEditor, MemberProfileLinks, ProfileExternalLinks, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentControl, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, FirstConnections, DiscoveryChoices, type DiscoveryChoice } from "./MemberPanels";
 import type { PublicMember } from "../../../shared/member";
 import { queueReply } from "./replyDraft";
 import { PlusMembershipCard } from "./PlusShowcase";
@@ -64,7 +69,7 @@ type Settings = Readonly<{
   defaultCenterLng: number;
 }>;
 
-type TopTab = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
+type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
 type DiscoverFilter = "all" | "online" | "favorites";
 type MobileCruiseTab = "map" | "chat";
 type DiscoverScreen = MobileCruiseTab;
@@ -78,7 +83,7 @@ const GROUP_INVITE_STATUS_PREFIX = "GROUP_INVITE_STATUS|";
 const PROFILE_MEDIA_UPDATED_EVENT = "rd:profile-media-updated";
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
 declare const __DUALMODE_WS_URL__: string | undefined;
-type RouterErrorScope = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
+type RouterErrorScope = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
 
 type ProfileDraft = Readonly<{
   displayName: string;
@@ -255,27 +260,6 @@ function displayMessageText(text: string): string {
   const status = parseGroupInviteStatus(trimmed);
   if (status) return status.outcome === "accepted" ? "Chat Invite Accepted" : "Chat Invite Declined";
   return isFireSignalText(trimmed) ? "🔥 I'm into you" : text;
-}
-
-function parseGroupInviteRequest(text: string): { inviteId: string; inviterKey: string; primaryPeerKey: string } | null {
-  if (!text.startsWith(GROUP_INVITE_REQUEST_PREFIX)) return null;
-  const [, inviteId, inviterKey, primaryPeerKey] = text.split("|");
-  if (!inviteId || !inviterKey || !primaryPeerKey) return null;
-  return { inviteId, inviterKey, primaryPeerKey };
-}
-
-function parseGroupInviteAccept(text: string): { inviteId: string; candidateKey: string; primaryPeerKey: string | null } | null {
-  if (!text.startsWith(GROUP_INVITE_ACCEPT_PREFIX)) return null;
-  const [, inviteId, candidateKey, primaryPeerKey] = text.split("|");
-  if (!inviteId || !candidateKey) return null;
-  return { inviteId, candidateKey, primaryPeerKey: primaryPeerKey && primaryPeerKey.trim().length > 0 ? normalizePeerKey(primaryPeerKey) : null };
-}
-
-function parseGroupInviteDecline(text: string): { inviteId: string; candidateKey: string } | null {
-  if (!text.startsWith(GROUP_INVITE_DECLINE_PREFIX)) return null;
-  const [, inviteId, candidateKey] = text.split("|");
-  if (!inviteId || !candidateKey) return null;
-  return { inviteId, candidateKey };
 }
 
 function parseGroupInviteStatus(text: string): {
@@ -475,6 +459,7 @@ function CruiseSurface({
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
   const [selectedProfileKey, setSelectedProfileKey] = useState<string | null>(null);
   const [selfCoords, setSelfCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [priorityPlacement, setPriorityPlacement] = useState<Record<string, number>>({});
   const [snapshotPresence, setSnapshotPresence] = useState<ReadonlyArray<CruisePresenceUpdate>>([]);
   useEffect(()=>{const remove=(event:Event)=>{const detail=(event as CustomEvent<{key:string;hideProfile?:boolean}>).detail,key=detail?.key;setSnapshotPresence(prev=>prev.filter(p=>p.key!==key));if(detail?.hideProfile)setPublicProfiles(prev=>prev.filter(p=>`user:${p.userId}`!==key));};window.addEventListener("rd:presence-removed",remove);return()=>window.removeEventListener("rd:presence-removed",remove);},[]);
   const [peerProfileByKey, setPeerProfileByKey] = useState<Record<string, { displayName?: string; age?: number }>>({});
@@ -683,8 +668,9 @@ function CruiseSurface({
         if (cancelled) return;
         const rows = Array.isArray(res.presence) ? res.presence : [];
         setSnapshotPresence(rows as ReadonlyArray<CruisePresenceUpdate>);
+        setPriorityPlacement(res.priority ?? {});
       } catch {
-        if (!cancelled) setSnapshotPresence([]);
+        if (!cancelled) { setSnapshotPresence([]); setPriorityPlacement({}); }
       }
     }
     void refreshPresenceSnapshot();
@@ -1214,6 +1200,7 @@ function CruiseSurface({
   const [unreadByProfileKey, setUnreadByProfileKey] = useState<Record<string, number>>({});
   const chatPanel = (
     <CruiseChat
+      priorityPlacement={priorityPlacement}
       discoveryChoice={discoveryChoice}
       onDiscoveryChoiceChange={setDiscoveryChoice}
       onProfileUnreadChange={setUnreadByProfileKey}
@@ -1444,6 +1431,7 @@ function CruisingSpotModal({
 }
 
 function CruiseChat({
+  priorityPlacement,
   loading = false,
   api,
   session,
@@ -1469,6 +1457,7 @@ function CruiseChat({
   onDiscoveryChoiceChange,
   onProfileUnreadChange
 }: Readonly<{
+  priorityPlacement: Record<string, number>;
   discoveryChoice: DiscoveryChoice;
   onProfileUnreadChange(counts: Record<string, number>): void;
   onDiscoveryChoiceChange(value: DiscoveryChoice): void;
@@ -1492,6 +1481,7 @@ function CruiseChat({
     userId: string;
     displayName: string;
     member?: PublicMember;
+    foundingMember?: boolean;
     age: number;
     bio: string;
     stats?: ProfileDetails & {
@@ -1510,18 +1500,13 @@ function CruiseChat({
   onAvatarLoadError?(mediaId: string): void;
   onUnreadCountChange?(count: number): void;
 }>): React.ReactElement {
+  const { broadcasts } = React.useContext(LiveContext);
+  const liveKeys = new Set(broadcasts.filter(item => item.live).map(item => `user:${item.hostId}`));
   const [messagesByPeerKey, setMessagesByPeerKey] = useState<Record<string, ReadonlyArray<ChatMessage>>>({});
   const [conversationMetaByPeerKey, setConversationMetaByPeerKey] = useState<Record<string, { lastAt: number; lastText: string }>>({});
   const channel: MessageChannel = session.mode === "date" ? "direct" : "instant";
   const [view, setView] = useState<"grid" | "thread">("grid");
   const [threadPeerKey, setThreadPeerKey] = useState<string | null>(null);
-  const [thirdCandidateKey, setThirdCandidateKey] = useState<string>("");
-  const [thirdMemberKey, setThirdMemberKey] = useState<string | null>(null);
-  const [pendingInviteNotifs, setPendingInviteNotifs] = useState<
-    Array<{ inviteId: string; inviterKey: string; primaryPeerKey: string; createdAtMs: number }>
-  >([]);
-  const [pendingSentInvites, setPendingSentInvites] = useState<Record<string, { candidateKey: string; primaryPeerKey: string }>>({});
-  const [groupStatus, setGroupStatus] = useState<string | null>(null);
   const [unreadByPeerKey, setUnreadByPeerKey] = useState<Record<string, number>>({});
   useEffect(() => onProfileUnreadChange(unreadByPeerKey), [onProfileUnreadChange, unreadByPeerKey]);
   const [lastSeenByPeerKey, setLastSeenByPeerKey] = useState<Record<string, number>>({});
@@ -1543,6 +1528,7 @@ function CruiseChat({
   const activeCallPeerRef = useRef<string | null>(null);
   const [remoteVideoStream, setRemoteVideoStream] = useState<MediaStream | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState<boolean>(discoverFilter === "favorites");
+  const [distanceLimitKm, setDistanceLimitKm] = useState(0);
   const [rightNowOnly, setRightNowOnly] = useState(false);
   const [discoveryNow,setDiscoveryNow]=useState(Date.now());
   useEffect(() => {
@@ -1611,6 +1597,7 @@ function CruiseChat({
             age: p.age,
             stats: p.stats,
             member: p.member,
+            foundingMember: p.foundingMember,
             meters: online && selfCoords ? Math.round(distanceMeters(selfCoords, { lat: online.lat, lng: online.lng })) : null,
             isOnline: Boolean(online),
             hasPicture: typeof p.mainPhotoMediaId === "string" && p.mainPhotoMediaId.trim().length > 0,
@@ -1632,6 +1619,7 @@ function CruiseChat({
     const maxCock = filterMaxCockSize.trim() ? Number(filterMaxCockSize) : undefined;
 
     const filtered = baseCards.filter((p) => {
+      if (distanceLimitKm && (p.meters === null || p.meters > distanceLimitKm * 1000)) return false;
       if (rightNowOnly && !isRightNow(p.member?.rightNowExpiresAtMs, discoveryNow)) return false;
       if(discoveryChoice.intent && (p.member?.intent!==discoveryChoice.intent || (p.member?.intentExpiresAtMs ?? 0)<=discoveryNow))return false;
       if(discoveryChoice.interest && !p.member?.interests.includes(discoveryChoice.interest))return false;
@@ -1659,6 +1647,8 @@ function CruiseChat({
       return true;
     });
     return [...filtered].sort((a, b) => {
+      const priority = (priorityPlacement[b.key] ?? 0) - (priorityPlacement[a.key] ?? 0);
+      if (priority !== 0) return priority;
       const aMeters = typeof a.meters === "number" && Number.isFinite(a.meters) ? a.meters : Number.POSITIVE_INFINITY;
       const bMeters = typeof b.meters === "number" && Number.isFinite(b.meters) ? b.meters : Number.POSITIVE_INFINITY;
       if (aMeters !== bMeters) return aMeters - bMeters;
@@ -1667,7 +1657,7 @@ function CruiseChat({
       return a.key.localeCompare(b.key);
     });
   }, [
-    discoveryChoice, discoveryNow, rightNowOnly,
+    discoveryChoice, discoveryNow, rightNowOnly, priorityPlacement, distanceLimitKm,
     session.tier, session.plusExpiresAtMs,
     baseCards,
     favorites,
@@ -1708,17 +1698,6 @@ function CruiseChat({
     const gridMatch = gridCards.find((c) => c.key === peerKey);
     return gridMatch?.avatarUrl;
   }, [gridCards, peerKey]);
-  const spokenThirdCandidates = useMemo(
-    () =>
-      conversationKeys
-        .filter((key) => key !== peerKey && key !== me && Boolean(conversationMetaByPeerKey[key]))
-        .map((key) => ({
-          key,
-          label: displayNameByKey[key] ?? peerProfileByKey[key]?.displayName ?? displayNameForPeerKey(key)
-        })),
-    [conversationKeys, conversationMetaByPeerKey, displayNameByKey, me, peerKey, peerProfileByKey]
-  );
-
   useEffect(() => {
     if (typeof onUnreadCountChange === "function") onUnreadCountChange(unreadTotal);
   }, [onUnreadCountChange, unreadTotal]);
@@ -1750,14 +1729,6 @@ function CruiseChat({
   );
 
   useEffect(() => {
-    if (spokenThirdCandidates.length === 0) {
-      setThirdCandidateKey("");
-      return;
-    }
-    setThirdCandidateKey((prev) => (prev && spokenThirdCandidates.some((p) => p.key === prev) ? prev : spokenThirdCandidates[0].key));
-  }, [spokenThirdCandidates]);
-
-  useEffect(() => {
     window.dispatchEvent(
       new CustomEvent("rd:map-layer-filter", {
         detail: { people: mapShowPeople, spots: mapShowSpots, groups: mapShowGroups }
@@ -1771,19 +1742,7 @@ function CruiseChat({
         const normalizedToKey = normalizePeerKey(toKey);
         const res = await api.sendChat(session.sessionToken, chatKind, normalizedToKey, text, media);
         const msg = (res as any)?.message as ChatMessage;
-        const next: ChatMessage[] = [msg];
-        if (chatKind === "cruise" && thirdMemberKey && hasPlus(session)) {
-          try {
-            const copy = await api.sendChat(session.sessionToken, chatKind, normalizePeerKey(thirdMemberKey), text, media);
-            const copyMsg = (copy as any)?.message as ChatMessage;
-            next.push(copyMsg);
-          } catch (e) {
-            setLastError(normalizeErrorMessage(e));
-          }
-        }
-        for (const message of next) {
-          upsertIncomingMessage(message);
-        }
+        upsertIncomingMessage(msg);
         return msg;
       },
       async initiateMediaUpload(mimeType, sizeBytes) {
@@ -1806,7 +1765,7 @@ function CruiseChat({
         return res.downloadUrl;
       }
     }),
-    [api, me, session.sessionToken, setLastError, thirdMemberKey]
+    [api, me, session.sessionToken, setLastError]
   );
 
   function messagePreview(message: ChatMessage): string {
@@ -1845,12 +1804,6 @@ function CruiseChat({
     }
   }
 
-  const pendingSentInvitesRef = useRef<Record<string, { candidateKey: string; primaryPeerKey: string }>>({});
-
-  useEffect(() => {
-    pendingSentInvitesRef.current = pendingSentInvites;
-  }, [pendingSentInvites]);
-
   function upsertIncomingMessage(message: ChatMessage): void {
     if (!markMessageSeen(message.messageId)) return;
     const other = message.fromKey === me ? message.toKey : message.fromKey;
@@ -1878,63 +1831,7 @@ function CruiseChat({
       }
       notifyIncoming(message, other);
     }
-    const request = parseGroupInviteRequest(message.text ?? "");
-    if (request && message.toKey === me) {
-      setPendingInviteNotifs((prev) => (prev.some((n) => n.inviteId === request.inviteId) ? prev : [...prev, { ...request, createdAtMs: message.createdAtMs }]));
-    }
-    const accept = parseGroupInviteAccept(message.text ?? "");
-    if (accept && message.toKey === me) {
-      const pending = pendingSentInvitesRef.current[accept.inviteId];
-      const primaryPeerKey = accept.primaryPeerKey ?? pending?.primaryPeerKey ?? null;
-      if (pending) {
-        setThirdMemberKey(normalizePeerKey(accept.candidateKey));
-        setGroupStatus(`Invite accepted by ${displayNameByKey[accept.candidateKey] ?? displayNameForPeerKey(accept.candidateKey)}.`);
-        setPendingSentInvites((prev) => {
-          const next = { ...prev };
-          delete next[accept.inviteId];
-          return next;
-        });
-      }
-      if (primaryPeerKey) {
-        void api
-          .sendChat(
-            session.sessionToken,
-            "cruise",
-            primaryPeerKey,
-            `${GROUP_INVITE_STATUS_PREFIX}${accept.inviteId}|accepted|${me}|${primaryPeerKey}|${accept.candidateKey}`
-          )
-          .catch(() => {});
-      }
-    }
-    const decline = parseGroupInviteDecline(message.text ?? "");
-    if (decline && message.toKey === me) {
-      const pending = pendingSentInvitesRef.current[decline.inviteId];
-      if (pending) {
-        setGroupStatus(`Invite declined by ${displayNameByKey[decline.candidateKey] ?? displayNameForPeerKey(decline.candidateKey)}.`);
-        setPendingSentInvites((prev) => {
-          const next = { ...prev };
-          delete next[decline.inviteId];
-          return next;
-        });
-        void api
-          .sendChat(
-            session.sessionToken,
-            "cruise",
-            pending.primaryPeerKey,
-            `${GROUP_INVITE_STATUS_PREFIX}${decline.inviteId}|declined|${me}|${pending.primaryPeerKey}|${decline.candidateKey}`
-          )
-          .catch(() => {});
-      }
-    }
-    const status = parseGroupInviteStatus(message.text ?? "");
-    if (status && message.toKey === me) {
-      if (status.outcome === "accepted") {
-        setThirdMemberKey(status.candidateKey);
-        setGroupStatus(`${displayNameByKey[status.candidateKey] ?? displayNameForPeerKey(status.candidateKey)} joined the chat.`);
-      } else {
-        setGroupStatus(`${displayNameByKey[status.candidateKey] ?? displayNameForPeerKey(status.candidateKey)} declined the chat invite.`);
-      }
-    }
+
   }
 
   async function loadThreadMessages(targetPeerKey: string): Promise<void> {
@@ -2352,52 +2249,6 @@ function CruiseChat({
     };
   }, [api, me, session.sessionToken]);
 
-  async function addThirdMember(): Promise<void> {
-    if (!hasPlus(session)) { openPlus("chats"); return; }
-    if (!thirdCandidateKey.trim()) return;
-    if (!peerKey.trim()) {
-      setLastError("Select a user first.");
-      return;
-    }
-    try {
-      const normalizedThird = normalizePeerKey(thirdCandidateKey);
-      if (!normalizedThird) return;
-      if (!spokenThirdCandidates.some((candidate) => candidate.key === normalizedThird)) {
-        setLastError("You can only add a third user you have previously messaged.");
-        return;
-      }
-      const inviteId = crypto.randomUUID();
-      await api.sendChat(session.sessionToken, "cruise", normalizedThird, `${GROUP_INVITE_REQUEST_PREFIX}${inviteId}|${me}|${peerKey.trim()}`);
-      setPendingSentInvites((prev) => ({ ...prev, [inviteId]: { candidateKey: normalizedThird, primaryPeerKey: peerKey.trim() } }));
-      setGroupStatus(`Invite sent to ${displayNameByKey[normalizedThird] ?? displayNameForPeerKey(normalizedThird)}. Waiting for acceptance.`);
-    } catch (e) {
-      setLastError(normalizeErrorMessage(e));
-    }
-  }
-
-  async function acceptInvite(inviteId: string, inviterKey: string, primaryPeerKey: string): Promise<void> {
-    if (!hasPlus(session)) { openPlus(); return; }
-    try {
-      await api.sendChat(session.sessionToken, "cruise", inviterKey, `${GROUP_INVITE_ACCEPT_PREFIX}${inviteId}|${me}|${primaryPeerKey}`);
-      setPendingInviteNotifs((prev) => prev.filter((n) => n.inviteId !== inviteId));
-      setThirdMemberKey(normalizePeerKey(inviterKey));
-      setGroupStatus("Group invite accepted.");
-      openThread(primaryPeerKey);
-    } catch (e) {
-      setLastError(normalizeErrorMessage(e));
-    }
-  }
-
-  async function declineInvite(inviteId: string, inviterKey: string): Promise<void> {
-    try {
-      await api.sendChat(session.sessionToken, "cruise", inviterKey, `${GROUP_INVITE_DECLINE_PREFIX}${inviteId}|${me}`);
-      setPendingInviteNotifs((prev) => prev.filter((n) => n.inviteId !== inviteId));
-      setGroupStatus("Invite declined.");
-    } catch (e) {
-      setLastError(normalizeErrorMessage(e));
-    }
-  }
-
   function openThread(nextPeerKey: string): void {
     const normalizedNextPeerKey = normalizePeerKey(nextPeerKey);
     setSelectedPeerKey(normalizedNextPeerKey);
@@ -2484,7 +2335,7 @@ function CruiseChat({
     return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
   }, []);
 
-  const activeFilterCount = [rightNowOnly, Boolean(discoveryChoice.intent),Boolean(discoveryChoice.interest),discoveryChoice.verifiedOnly,favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
+  const activeFilterCount = [rightNowOnly, Boolean(distanceLimitKm), Boolean(discoveryChoice.intent),Boolean(discoveryChoice.interest),discoveryChoice.verifiedOnly,favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
   useEffect(() => { window.dispatchEvent(new CustomEvent("rd:filter-count", {detail:{count:activeFilterCount}})); }, [activeFilterCount]);
   useEffect(() => { window.dispatchEvent(new CustomEvent("rd:people-filter", {detail:{keys: activeFilterCount ? gridCards.map(card => card.key) : null}})); }, [activeFilterCount, gridCards]);
 
@@ -2492,35 +2343,6 @@ function CruiseChat({
     const peerLabel = displayNameByKey[peerKey] ?? peerProfileByKey[peerKey]?.displayName ?? displayNameForPeerKey(peerKey);
     return (
       <div style={{ display: "grid", gap: 0, marginInline: 0 }}>
-        {pendingInviteNotifs.length > 0 ? (
-          <div style={{ ...cardStyle(), display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>Chat invitations</div>
-            {pendingInviteNotifs.map((invite) => (
-              <div key={invite.inviteId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
-                <div style={{ color: "#ced3dc", fontSize: 13 }}>
-                  You’ve received a Chat Invite from {displayNameByKey[invite.inviterKey] ?? displayNameForPeerKey(invite.inviterKey)}.
-                </div>
-                <button
-                  type="button"
-                  style={{ ...buttonPrimary(false), minWidth: 0, width: 42, height: 42, padding: 0, display: "grid", placeItems: "center" }}
-                  onClick={() => void acceptInvite(invite.inviteId, invite.inviterKey, invite.primaryPeerKey)}
-                  aria-label="Accept chat invite"
-                >
-                  <img src="/assets/accept.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-                </button>
-                <button
-                  type="button"
-                  style={{ ...buttonSecondary(false), minWidth: 0, width: 42, height: 42, padding: 0, display: "grid", placeItems: "center" }}
-                  onClick={() => void declineInvite(invite.inviteId, invite.inviterKey)}
-                  aria-label="Decline chat invite"
-                >
-                  <img src="/assets/decline.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {groupStatus ? <div style={{ color: "#ff7a88", fontSize: 12 }}>{groupStatus}</div> : null}
         <ChatWindow
           readReceipts={hasPlus(session)}
           chatKind={channelToChatKind(channel)}
@@ -2530,13 +2352,6 @@ function CruiseChat({
           client={client}
           title={`INSTANT THREAD: ${peerLabel}`}
           peerSummary={{ displayName: peerLabel, avatarUrl: activePeerAvatarUrl }}
-          thirdParty={{
-            candidates: spokenThirdCandidates,
-            selectedKey: thirdCandidateKey,
-            onSelect: (key) => setThirdCandidateKey(key),
-            onAdd: () => void addThirdMember(),
-            disabled: busy
-          }}
           showHeader={false}
           edgeToEdge={isMobile}
           fillHeight={isMobile}
@@ -2574,36 +2389,13 @@ function CruiseChat({
 
   return (
     <div style={{ display: "grid", gap: 0, marginInline: 0 }}>
-      {pendingInviteNotifs.length > 0 ? (
-        <div style={{ ...cardStyle(), display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>Chat invitations</div>
-          {pendingInviteNotifs.map((invite) => (
-            <div key={invite.inviteId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
-              <div style={{ color: "#ced3dc", fontSize: 13 }}>
-                You’ve received a Chat Invite from {displayNameByKey[invite.inviterKey] ?? displayNameForPeerKey(invite.inviterKey)}.
-              </div>
-              <button
-                type="button"
-                style={{ ...buttonPrimary(false), minWidth: 0, width: 42, height: 42, padding: 0, display: "grid", placeItems: "center" }}
-                onClick={() => void acceptInvite(invite.inviteId, invite.inviterKey, invite.primaryPeerKey)}
-                aria-label="Accept chat invite"
-              >
-                <img src="/assets/accept.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-              </button>
-              <button
-                type="button"
-                style={{ ...buttonSecondary(false), minWidth: 0, width: 42, height: 42, padding: 0, display: "grid", placeItems: "center" }}
-                onClick={() => void declineInvite(invite.inviteId, invite.inviterKey)}
-                aria-label="Decline chat invite"
-              >
-                <img src="/assets/decline.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {groupStatus ? <div style={{ color: "#ff7a88", fontSize: 12 }}>{groupStatus}</div> : null}
       {filtersOpen ? <Sheet title="Find your people" eyebrow="YOUR KIND OF COMPANY" onClose={() => setFiltersOpen(false)}><div className="rd-filter-fields">
+              <label className="rd-field"><span>Distance</span>
+                <select className="rd-input" value={distanceLimitKm} onChange={event => setDistanceLimitKm(Number(event.target.value))}>
+                  <option value={0}>Any distance</option>
+                  {[5, 10, 25, 50, 100].map(km => <option key={km} value={km}>Within {km} km</option>)}
+                </select>
+              </label>
               <label className="rd-right-now-filter">
                 <input type="checkbox" checked={rightNowOnly} onChange={event => setRightNowOnly(event.target.checked)} />
                 <span className="rd-right-now-badge"><Icon name="lightning" />Right Now only</span>
@@ -2701,7 +2493,7 @@ function CruiseChat({
                     />
                     {p.isOnline ? <span className="rd-person-online-dot" aria-hidden="true" /> : null}
                   </div>
-                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong><RightNowBadge expiresAtMs={p.member?.rightNowExpiresAtMs} /><IntentBadge member={p.member}/><VerifiedBadge verified={p.member?.photoVerified}/><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
+                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong>{liveKeys.has(p.key) ? <span className="rd-live-badge">Live now</span> : null}{p.foundingMember ? <span className="rd-live-badge">Founding Member</span> : null}<RightNowBadge expiresAtMs={p.member?.rightNowExpiresAtMs} /><IntentBadge member={p.member}/><VerifiedBadge verified={p.member?.photoVerified}/><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
                 </button>
               ))
             )}
@@ -3095,15 +2887,13 @@ function ThreadsPanel({
   const [unreadOnly, setUnreadOnly] = useState<boolean>(false);
   const [selectMode, setSelectMode] = useState<boolean>(false);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
+  const [groupView, setGroupView] = useState<{ peerId?: string } | null>(null);
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(initialPeerKey ?? null);
   useEffect(() => { onActiveThreadChange?.(selectedPeerKey); }, [selectedPeerKey, onActiveThreadChange]);
   const [messages, setMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [threadView, setThreadView] = useState<"messages" | "profile">("messages");
-  const [threadProfile, setThreadProfile] = useState<UserProfile | null>(null);
+  const [threadProfile, setThreadProfile] = useState<PublicProfile | null>(null);
   const [threadProfileLoading, setThreadProfileLoading] = useState<boolean>(false);
-  const [thirdCandidateKey, setThirdCandidateKey] = useState<string>("");
-  const [thirdMemberKey, setThirdMemberKey] = useState<string | null>(null);
-  const [pendingSentInvites, setPendingSentInvites] = useState<Record<string, { candidateKey: string }>>({});
   const [groupStatus, setGroupStatus] = useState<string | null>(null);
   const [pinnedKeys, setPinnedKeys] = useState<ReadonlySet<string>>(new Set());
   const [deletedKeys, setDeletedKeys] = useState<ReadonlySet<string>>(new Set());
@@ -3124,10 +2914,6 @@ function ThreadsPanel({
   const rowsUnreadTotal = useMemo(
     () => rows.filter((row) => !deletedKeys.has(row.key)).reduce((sum, row) => sum + (Number.isFinite(row.unreadCount) ? row.unreadCount : 0), 0),
     [deletedKeys, rows]
-  );
-  const thirdCandidates = useMemo(
-    () => visibleRows.filter((row) => row.key !== selectedPeerKey && row.chatKind === "cruise").map((row) => ({ key: row.key, label: row.displayName })),
-    [visibleRows, selectedPeerKey]
   );
   const activeRow = useMemo(() => rows.find((row) => row.key === selectedPeerKey) ?? null, [rows, selectedPeerKey]);
   const defaultChatKind = session.mode === "date" ? "date" : "cruise";
@@ -3161,14 +2947,6 @@ function ThreadsPanel({
   useEffect(() => {
     if (typeof onUnreadCountChange === "function") onUnreadCountChange(rowsUnreadTotal);
   }, [onUnreadCountChange, rowsUnreadTotal]);
-
-  useEffect(() => {
-    if (thirdCandidates.length === 0) {
-      setThirdCandidateKey("");
-      return;
-    }
-    setThirdCandidateKey((prev) => (prev && thirdCandidates.some((c) => c.key === prev) ? prev : thirdCandidates[0].key));
-  }, [thirdCandidates]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3280,7 +3058,6 @@ function ThreadsPanel({
           }
         }
         const unreadCounts: number[] = [];
-        const groupLabelByPeerKey: Record<string, string> = {};
         for (const row of next) {
           try {
             const chat = await api.listChat(session.sessionToken, row.chatKind, row.key);
@@ -3296,29 +3073,7 @@ function ThreadsPanel({
               ) {
                 unread += 1;
               }
-              const text = String(message.text ?? "");
-              const request = parseGroupInviteRequest(text);
-              if (request) {
-                if (message.toKey === meKey) {
-                  const inviterLabel = nameByKey[request.inviterKey] ?? displayNameForPeerKey(request.inviterKey);
-                  groupLabelByPeerKey[row.key] = `${inviterLabel} +1`;
-                } else if (message.fromKey === meKey) {
-                  const primaryLabel = nameByKey[request.primaryPeerKey] ?? displayNameForPeerKey(request.primaryPeerKey);
-                  groupLabelByPeerKey[request.primaryPeerKey] = `${primaryLabel} +1`;
-                }
-              }
-              const accept = parseGroupInviteAccept(text);
-              if (accept && message.toKey === meKey && accept.primaryPeerKey) {
-                const primaryLabel = nameByKey[accept.primaryPeerKey] ?? displayNameForPeerKey(accept.primaryPeerKey);
-                groupLabelByPeerKey[accept.primaryPeerKey] = `${primaryLabel} +1`;
-              }
-              const status = parseGroupInviteStatus(text);
-              if (status && message.toKey === meKey && status.outcome === "accepted") {
-                const inviterLabel = nameByKey[status.inviterKey] ?? displayNameForPeerKey(status.inviterKey);
-                const primaryLabel = nameByKey[status.primaryPeerKey] ?? displayNameForPeerKey(status.primaryPeerKey);
-                groupLabelByPeerKey[status.inviterKey] = `${inviterLabel} +1`;
-                groupLabelByPeerKey[status.primaryPeerKey] = `${primaryLabel} +1`;
-              }
+
             }
             unreadCounts.push(unread);
           } catch {
@@ -3329,7 +3084,7 @@ function ThreadsPanel({
         const nextWithUnread = next
           .map((row, index) => ({
             ...row,
-            displayName: displayNameForIdentity(row.key, groupLabelByPeerKey[row.key] ?? row.displayName),
+            displayName: displayNameForIdentity(row.key, row.displayName),
             unreadCount: unreadCounts[index] ?? 0
           }))
           .sort((a, b) => b.at - a.at);
@@ -3475,29 +3230,7 @@ function ThreadsPanel({
       async sendMessage(chatKind, toKey, text, media) {
         const res = await api.sendChat(session.sessionToken, chatKind, toKey, text, media);
         const msg = (res as any)?.message as ChatMessage;
-        const accept = parseGroupInviteAccept(msg.text ?? "");
-        if (accept && msg.toKey === meKey) {
-          const pending = pendingSentInvites[accept.inviteId];
-          if (pending) {
-            setThirdMemberKey(accept.candidateKey);
-            setGroupStatus(`Invite accepted by ${accept.candidateKey}.`);
-            setPendingSentInvites((prev) => {
-              const next = { ...prev };
-              delete next[accept.inviteId];
-              return next;
-            });
-          }
-        }
         setMessages((prev) => prev.some(m=>m.messageId===msg.messageId) ? prev : [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
-        if (chatKind === "cruise" && thirdMemberKey && hasPlus(session)) {
-          try {
-            const copy = await api.sendChat(session.sessionToken, chatKind, thirdMemberKey, text, media);
-            const copyMsg = (copy as any)?.message as ChatMessage;
-            setMessages((prev) => [...prev, copyMsg].sort((a, b) => a.createdAtMs - b.createdAtMs));
-          } catch (e) {
-            setLastError(normalizeErrorMessage(e));
-          }
-        }
         return msg;
       },
       async initiateMediaUpload(mimeType, sizeBytes) {
@@ -3514,25 +3247,8 @@ function ThreadsPanel({
         return res.downloadUrl;
       }
     }),
-    [api, meKey, pendingSentInvites, session.sessionToken, setLastError, thirdMemberKey]
+    [api, session.sessionToken]
   );
-
-  async function sendThirdInvite(): Promise<void> {
-    if (!hasPlus(session)) { openPlus("chats"); return; }
-    if (!selectedPeerKey || !thirdCandidateKey) return;
-    if (!rows.some((row) => row.key === thirdCandidateKey)) {
-      setLastError("You can only add a third user you have previously messaged.");
-      return;
-    }
-    try {
-      const inviteId = crypto.randomUUID();
-      await api.sendChat(session.sessionToken, "cruise", thirdCandidateKey, `${GROUP_INVITE_REQUEST_PREFIX}${inviteId}|${meKey}|${selectedPeerKey}`);
-      setPendingSentInvites((prev) => ({ ...prev, [inviteId]: { candidateKey: thirdCandidateKey } }));
-      setGroupStatus(`Invite sent to ${rows.find((r) => r.key === thirdCandidateKey)?.displayName ?? thirdCandidateKey}.`);
-    } catch (e) {
-      setLastError(normalizeErrorMessage(e));
-    }
-  }
 
   async function sendFireToSelectedPeer(): Promise<void> {
     if (!selectedPeerKey) return;
@@ -3584,6 +3300,10 @@ function ThreadsPanel({
     setSelectMode(false);
   }
 
+  const groupPanel = groupView ? <GroupConversations api={api} session={session} peerId={groupView.peerId}
+    candidates={rows.filter(row => row.key.startsWith("user:")).map(row => ({ id: row.key.slice(5), label: row.displayName }))}
+    onClose={() => setGroupView(null)} /> : null;
+
   if (selectedPeerKey) {
     const peerLabel = activeRow?.displayName ?? threadProfile?.displayName ?? (selectedPeerKey ? displayNameForPeerKey(selectedPeerKey) : "Anon");
     const thread = (
@@ -3605,6 +3325,10 @@ function ThreadsPanel({
             {threadView === "messages" ? "View Profile" : "Back to Thread"}
           </button>
         </div>
+        {session.userId && selectedPeerKey.startsWith("user:") && hasPlus(session) ? (
+          <button type="button" className="rd-btn" onClick={() => setGroupView({ peerId: selectedPeerKey.slice(5) })}>Start group conversation</button>
+        ) : null}
+        {groupPanel}
         {threadView === "messages" ? (
           <ChatWindow key={selectedPeerKey}
           readReceipts={hasPlus(session)}
@@ -3615,17 +3339,6 @@ function ThreadsPanel({
             client={client}
             title={peerLabel}
             peerSummary={{ displayName: peerLabel }}
-            thirdParty={
-              selectedChatKind === "cruise"
-                ? {
-                    candidates: thirdCandidates,
-                    selectedKey: thirdCandidateKey,
-                    onSelect: (key) => setThirdCandidateKey(key),
-                    onAdd: () => void sendThirdInvite(),
-                    disabled: false
-                  }
-                : undefined
-            }
             showHeader={false}
             edgeToEdge={true}
             fillHeight={isMobile}
@@ -3655,6 +3368,7 @@ function ThreadsPanel({
                   <div>Cut / Uncut: {threadProfile?.stats?.cutStatus ?? "-"}</div>
                   <div>Position: {threadProfile?.stats?.position ?? "-"}</div>
                   <ProfileDetailsView stats={threadProfile?.stats} />
+                  <ProfileExternalLinks member={threadProfile?.member} />
                   <div style={{ marginTop: 8 }}>Bio: {threadProfile?.bio ?? "-"}</div>
                 </div>
                 <div>
@@ -3688,6 +3402,8 @@ function ThreadsPanel({
 
   return (
     <div style={{ display: "grid", gap: 0, marginInline: 0, marginBlock: 0 }}>
+      {session.userId ? <button type="button" className="rd-btn" onClick={() => setGroupView({})}>Group conversations</button> : null}
+      {groupPanel}
       <div style={{ position: compact ? "sticky" : "static", top: 0, zIndex: 3, background: "var(--surface)", borderBottom: "1px solid rgba(255,122,136,0.24)", padding: "8px 10px" }}>
         <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "nowrap" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap" }}>
@@ -7284,11 +7000,11 @@ export function Router({
     <div className="rd-settings-page"><div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR SPACE</div><h1>Make it yours.</h1><InstallApp /><p>Your profile, your privacy, your preferences.</p></div></div>
       <div className="rd-settings-tabs" role="tablist" aria-label="Settings sections">{["profile", "privacy", "notifications", "membership", "account"].map(section => <button key={section} role="tab" aria-selected={settingsSection === section} onClick={() => setSettingsSection(section)}>{section[0].toUpperCase() + section.slice(1)}</button>)}</div>
       <div role="tabpanel" aria-label={settingsSection}>
-      {settingsSection === "profile" ? <div className="rd-profile-settings-stack"><SettingsProfile api={api} session={session} setLastError={setProfileError} /><MemberEditor api={api} session={session}/><PhotoVerificationPanel api={api} session={session}/></div> : null}
+      {settingsSection === "profile" ? <div className="rd-profile-settings-stack"><SettingsProfile api={api} session={session} setLastError={setProfileError} /><MemberEditor api={api} session={session}/><MemberProfileLinks api={api} session={session}/><PhotoVerificationPanel api={api} session={session}/></div> : null}
       {settingsSection === "privacy" ? <div className="rd-profile-settings-stack"><MemberPrivacy api={api} session={session}/><PrivacySettings api={api} session={session}/><PrivacyBlockList api={api} session={session}/></div> : null}
       {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings api={api} session={session} /></section> : null}
       {settingsSection === "membership" ? <div className="rd-profile-settings-stack"><PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /><BillingSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/></div> : null}
-      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
+      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><MembershipPrograms api={api} session={session}/><MarketingPreferences api={api} session={session}/><GrowthDashboard api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /></div> : null}
       </div>
     </div>
   );
@@ -7500,6 +7216,7 @@ export function Router({
         </div>
       ) : null}
       {activeTab === "ads" && !isMobile ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setAdsError} /> : null}
+      {activeTab === "live" ? <LivePanel key={session.sessionToken} api={api} session={session} /> : null}
       {activeTab === "groups" ? (
         <section aria-label="Groups">
           <div className="rd-row" aria-label="Group type">

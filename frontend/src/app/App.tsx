@@ -1,3 +1,6 @@
+import type { RegistrationPolicy } from "../../../shared/registrationPolicy";
+import { MARKETING_CONSENT_LABEL } from "../../../shared/marketing";
+import { LiveContext, useLiveState } from "./liveState";
 import { InstallApp } from "./Pwa";
 import { AccountNotices } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
@@ -20,7 +23,7 @@ import placeholderC from "../assets/reddoor-placeholder-3.svg";
 import { Icon } from "./Icon";
 
 type AuthView = "guest" | "register" | "login";
-type TopTab = "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
+type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
 type DiscoverFilter = "all" | "online" | "favorites";
 type DiscoverScreen = "map" | "chat";
 type ProfilePosition = "" | "top" | "bottom" | "side";
@@ -38,7 +41,7 @@ type ProfileSetupDraft = Readonly<{
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
 const DEFAULT_SHARED_API_BASE = "https://red-door-api.onrender.com";
-const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "cruise", "profile", "settings", "submissions"]);
+const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "live", "cruise", "profile", "settings", "submissions"]);
 const DEFAULT_TAB: TopTab = "discover";
 const FULL_PAGE_TAB_NAV = false;
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
@@ -327,6 +330,7 @@ export function App(): React.ReactElement {
 
   const [sessionToken, setSessionToken] = useState<string | null>(() => initialSessionToken());
   const [session, setSession] = useState<Session | null>(null);
+  const liveState = useLiveState(api, session);
 
   const [lastError, setLastError] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
@@ -350,6 +354,22 @@ export function App(): React.ReactElement {
     return () => window.removeEventListener("hashchange", receiveResetLink);
   }, []);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [policy, setPolicy] = useState<RegistrationPolicy | null>(null);
+  const [acceptedPolicy, setAcceptedPolicy] = useState(false);
+  const [policyRequest, setPolicyRequest] = useState(0);
+  useEffect(() => {
+    if (authView !== "register") return;
+    let active = true;
+    setPolicy(null);
+    setAcceptedPolicy(false);
+    void api.getRegistrationPolicy().then(result => {
+      if (active) setPolicy(result);
+    }).catch(() => { if (active) setPolicy({ status: "unavailable" }); });
+    return () => { active = false; };
+  }, [api, authView, policyRequest]);
+  const canRegister = policy?.status === "disabled" || (policy?.status === "required" && acceptedPolicy);
+
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [promoCode, setPromoCode] = useState("");
   const liveInboxStatus=useLiveInbox(session,resolveApiBasePath());
@@ -650,6 +670,10 @@ export function App(): React.ReactElement {
   }
 
   async function submitRegister(): Promise<void> {
+    if (!canRegister) return;
+    const policyAcceptance = policy?.status === "required" ? {
+      accepted: true as const, termsVersion: policy.terms.version, privacyVersion: policy.privacy.version
+    } : undefined;
     const normalizedDisplayName = registerDisplayName.trim();
     const registerAgeNumber = Number(registerAge);
     if (normalizedDisplayName.length < 2 || normalizedDisplayName.length > 32) {
@@ -664,7 +688,9 @@ export function App(): React.ReactElement {
     setLastError(null);
     setAuthInfo("");
     try {
-      await api.register(registerEmail, registerPassword, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent });
+      await api.register(registerEmail, registerPassword, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent, marketingConsent, policyAcceptance });
+      setMarketingConsent(false);
+      setAcceptedPolicy(false);
       setProfileSetupDraft((prev) => ({
         ...prev,
         displayName: normalizedDisplayName,
@@ -691,6 +717,7 @@ export function App(): React.ReactElement {
         setAuthInfo("Check your email for a verification code. Codes expire; you can resend after one minute.");
       }
     } catch (e) {
+      if ((e as ServiceError)?.code === "REGISTRATION_POLICY_REQUIRED") setPolicyRequest(current => current + 1);
       setLastError(normalizeUiError(e, "Register failed."));
     } finally {
       setBusy(false);
@@ -1053,7 +1080,10 @@ export function App(): React.ReactElement {
       ) : null}
 
       {showBottomNav ? <nav className="rd-desktop-nav" aria-label="Main navigation">{([
-        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Postings"], ["groups", "groups", "Groups"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
+        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Postings"], ["groups", "groups", "Groups"], ["live", "live", "Live"], ["settings", "settings", "Settings"]] as const).filter(([tab]) => tab !== "live" || liveState.enabled).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}{session?.userId ? <button type="button" onClick={() => {
+        setTabAndRoute("settings");
+        window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "account" }));
+      }}><span aria-hidden="true" style={{ fontSize: 23 }}>+</span><span>Membership</span></button> : null}</nav> : null}
       <div className="rd-inbox-live-status" role="status" hidden={activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
@@ -1209,8 +1239,19 @@ export function App(): React.ReactElement {
                       ) : null}
 
                       {authView === "register" ? (
-                        <label className="rd-field"><span className="rd-label">Promo code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" />{Date.now() < LAUNCH_END_MS ? <span className="rd-launch-offer">Have a launch or gift code? Enter it here for complimentary Plus through December 31, 2026. No card required. Paid renewal is a separate choice.</span> : null}</label>
+                        <label className="rd-field"><span className="rd-label">Promo code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" />{Date.now() < LAUNCH_END_MS ? <span className="rd-launch-offer">Launch and gift codes unlock complimentary Plus through December 31, 2026. Priority referral codes unlock a separate paid offer in Settings.</span> : null}</label>
                       ) : null}
+                      {authView === "register" && policy?.status === "required" ? <label className="rd-field">
+                        <span><input type="checkbox" checked={acceptedPolicy} required onChange={event => setAcceptedPolicy(event.target.checked)} /> I accept the{" "}
+                          <a href={policy.terms.url} target="_blank" rel="noopener noreferrer">Terms of Service</a>{" "}and{" "}
+                          <a href={policy.privacy.url} target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+                        </span>
+                      </label> : null}
+                      {authView === "register" && policy?.status === "unavailable" ? <div role="status">
+                        <p>Registration information is temporarily unavailable.</p>
+                        <button type="button" className="rd-btn" onClick={() => setPolicyRequest(current => current + 1)}>Retry</button>
+                      </div> : null}
+                      {authView === "register" ? <label className="rd-field"><span><input type="checkbox" checked={marketingConsent} onChange={event => setMarketingConsent(event.target.checked)} /> {MARKETING_CONSENT_LABEL}</span></label> : null}
                       {authView === "register" ? <label className="rd-field" style={{ fontSize: 12, color: "var(--muted)" }}><span><input type="checkbox" checked={analyticsConsent} onChange={e => setAnalyticsConsent(e.target.checked)} /> Help improve Badehaus X (optional)</span><span>Share activity counts using a protected account identifier. Daily activity is kept for 35 days; inactive measurement records are deleted after 35 days. No message content, photos, or location. Change this in settings anytime.</span></label> : null}
                       {authView === "register" ? (
                         <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
@@ -1219,7 +1260,7 @@ export function App(): React.ReactElement {
                       ) : null}
 
                       <div className="rd-row">
-                        <button type="submit" className="rd-btn primary" disabled={busy} aria-label={authView === "register" ? "Register" : "Login"}>
+                        <button type="submit" className="rd-btn primary" disabled={busy || (authView === "register" && !canRegister)} aria-label={authView === "register" ? "Register" : "Login"}>
                           {authView === "register" ? "Register" : "Login"}
                         </button>
                       </div>
@@ -1400,7 +1441,7 @@ export function App(): React.ReactElement {
               </section>
             ) : (
             <Suspense fallback={<section className="rd-card"><div className="rd-card-body">Loading screen...</div></section>}>
-              <Router
+              <LiveContext.Provider value={liveState}><Router
                 api={api}
                 session={session}
                 setSession={setSession}
@@ -1415,7 +1456,7 @@ export function App(): React.ReactElement {
                 setLastError={setLastError}
                 onUnreadCountChange={() => {}}
                 onLogout={onLogout}
-              />
+              /></LiveContext.Provider>
             </Suspense>
             )
           ) : null}
@@ -1423,7 +1464,7 @@ export function App(): React.ReactElement {
       </main>
 
       {showBottomNav ? (
-        <nav className="rd-mobile-nav" aria-label="Primary navigation">
+        <nav className={`rd-mobile-nav ${liveState.enabled ? "has-live" : ""}`} aria-label="Primary navigation">
           <button
             type="button"
             className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`}
@@ -1466,6 +1507,8 @@ export function App(): React.ReactElement {
             <Icon name="board" className="rd-ui-icon rd-mobile-nav-image" /><span>Postings</span>
           </button>
           <button className={`rd-mobile-nav-btn ${activeTab === "groups" ? "is-active" : ""}`} aria-label="Groups" aria-current={activeTab === "groups" ? "page" : undefined} onClick={()=>setTabAndRoute("groups")}><Icon name="groups" className="rd-ui-icon"/><span>Groups</span></button>
+          {liveState.enabled ? <button type="button" className={`rd-mobile-nav-btn ${activeTab === "live" ? "is-active" : ""}`}
+            aria-current={activeTab === "live" ? "page" : undefined} onClick={() => setTabAndRoute("live")}><Icon name="live" className="rd-ui-icon"/><span>Live</span></button> : null}
         </nav>
       ) : null}
     </div>

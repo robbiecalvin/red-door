@@ -1,9 +1,15 @@
+import { registrationPolicy } from "./services/registrationPolicy";
+import { installGrowthRoutes } from "./routes/growthRoutes";
+import { createReferralLedger } from "./services/referralLedger";
+import { DEFAULT_PRIORITY_RADIUS_KM, FOUNDER_PRICE_CENTS, PRIORITY_ACTIVITY_MS, PRIORITY_INVITATION_CODE, REFERRAL_INTRO_CENTS, REFERRAL_RENEWAL_CENTS, threeMonthsAfter, withinPriorityRadius } from "../../shared/membership";
+import { installLiveRoutes } from "./routes/liveRoutes";
+import { installGroupDmRoutes } from "./routes/groupDmRoutes";
 import { installLaunchReadiness } from "./services/launchReadiness";
 import { scheduleParameters } from "./services/renewalEnrollment";
 import { createCommunityRepository } from "./repositories/communityRepository";
 import { createPushService } from "./services/pushService";
 import { installMemberRoutes } from "./routes/memberRoutes";
-import { publicMember, hidesDiscovery, hidesPresence } from "./services/memberService";
+import { MemberError, publicMember, hidesDiscovery, hidesPresence } from "./services/memberService";
 import { createAnalyticsService } from "./services/analyticsService";
 import { analyticsRepository } from "./repositories/analyticsRepository";
 import { type AnalyticsCohort } from "../../shared/analytics";
@@ -11,6 +17,7 @@ import { LAUNCH_END_MS, launchGrant, promoCode } from "../../shared/plus";
 import { hasPlus, limits, type PlusData, type SavedSearch } from "../../shared/plus";
 import { stripeRequest, verifyStripeEvent, assertPlusPrice, signAlbumAccess, validAlbumAccess, billingConfiguration, inspectBilling } from "./services/subscriptionService";
 import http from "node:http";
+import { execFile } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -484,6 +491,14 @@ async function main(): Promise<void> {
   });
 
   const communityRepository = await createCommunityRepository(postgresPool);
+  const referralLedger = createReferralLedger(communityRepository);
+  function notifyReferral(ownerId: string, subject: string, text: string) {
+    const owner = authService.getUser(ownerId);
+    if (process.env.REFERRAL_EMAIL_ENABLED !== "true" || !emailSender || !owner?.emailVerified || owner.bannedAtMs) return;
+    void emailSender.sendMail({ from: smtpFrom, to: owner.email, subject, text }).catch(() => {
+      console.error("[Badehaus X] A referral notification could not be queued.");
+    });
+  }
   let favoritesPersistence:Promise<unknown>=Promise.resolve(),favoritesPersistenceError:unknown=null;
   const favoritesService=createFavoritesService({initialFavorites:await communityRepository.readSetting<Record<string,string[]>>("favorites"),onStateChanged:favorites=>{favoritesPersistence=communityRepository.update(s=>{s.settings.favorites=favorites;}).then(()=>{favoritesPersistenceError=null;}).catch(e=>{favoritesPersistenceError=e;});}});
   securedGuests=new Map(Object.entries(await communityRepository.setting<Record<string,number>>("securedGuests",()=>({}))).filter(([,expires])=>expires>Date.now()));
@@ -493,7 +508,7 @@ async function main(): Promise<void> {
   const blockService=createBlockService({initialBlocks:initialSafety.blocks,onStateChanged:blocks=>{safetyPersistence=communityRepository.update(s=>{s.blocks=blocks;}).then(()=>{safetyPersistenceError=null;}).catch(e=>{safetyPersistenceError=e;});}});
   const reportService=createReportService({initialReports:initialSafety.reports,onStateChanged:reports=>{safetyPersistence=communityRepository.update(s=>{s.reports=reports;}).then(()=>{safetyPersistenceError=null;}).catch(e=>{safetyPersistenceError=e;});}});
   const pushService = await createPushService(communityRepository, authService, process.env.PUBLIC_APP_URL ?? "");
-  const enrichProfile = <T extends {userId:string;mainPhotoMediaId?:string}>(profile:T) => {const user=authService.getUser(profile.userId);return {...profile,member:publicMember(user?.plusData?.member,user?.plusData?.photoVerification,profile.mainPhotoMediaId)};};
+  const enrichProfile = <T extends {userId:string;mainPhotoMediaId?:string}>(profile:T, includeProfileLinks = false) => {const user=authService.getUser(profile.userId);return {...profile,foundingMember:user?.plusData?.founderAtMs !== undefined,member:publicMember(user?.plusData?.member,user?.plusData?.photoVerification,profile.mainPhotoMediaId,Date.now(),includeProfileLinks)};};
   const hiddenPresence = (key:string) => {if(!key.startsWith("user:"))return false;const user=authService.getUser(key.slice(5));return Boolean(user && (user.bannedAtMs || hidesPresence(user.plusData?.member,user)));};
   const matchingService = createMatchingService({
     blockChecker: {
@@ -600,9 +615,25 @@ async function main(): Promise<void> {
     let event: any;
     try { event = verifyStripeEvent(req.body, String(req.headers["stripe-signature"] ?? ""), process.env.STRIPE_WEBHOOK_SECRET.trim()); }
     catch { return res.status(400).json({ message: "Invalid webhook signature." }); }
-    if (!["checkout.session.completed", "invoice.paid", "customer.subscription.updated", "customer.subscription.created", "customer.subscription.deleted", "invoice.payment_failed", "customer.updated", "subscription_schedule.updated", "subscription_schedule.canceled", "subscription_schedule.released", "subscription_schedule.aborted", "subscription_schedule.completed"].includes(event.type)) return res.json({ received: true });
+    if (!["charge.refunded", "checkout.session.completed", "invoice.paid", "customer.subscription.updated", "customer.subscription.created", "customer.subscription.deleted", "invoice.payment_failed", "customer.updated", "subscription_schedule.updated", "subscription_schedule.canceled", "subscription_schedule.released", "subscription_schedule.aborted", "subscription_schedule.completed"].includes(event.type)) return res.json({ received: true });
     try {
       const object = event.data.object;
+      if (event.type === "charge.refunded") {
+        const charge = await stripeRequest(`charges/${encodeURIComponent(object.id)}`);
+        const invoiceId = typeof charge.invoice === "string" ? charge.invoice : charge.invoice?.id;
+        if (invoiceId && charge.currency === "cad" && charge.livemode === event.livemode) {
+          const invoice = await stripeRequest(`invoices/${encodeURIComponent(invoiceId)}`);
+          const introPriceId = process.env.STRIPE_PRIORITY_INTRO_PRICE_ID?.trim();
+          if (introPriceId && invoice.lines?.data?.some((line: any) => line.price?.id === introPriceId)) {
+            const live = charge.livemode === true;
+            if (await referralLedger.refund(invoiceId, live, charge.amount_refunded) && live) {
+              const credit = (await referralLedger.list()).find(row => row.live && row.invoiceId === invoiceId);
+              if (credit) notifyReferral(credit.ownerId, "Badehaus X referral refund recorded", "An introductory purchase was refunded. Review the commission’s current status.");
+            }
+          }
+        }
+        return res.json({ received: true });
+      }
       if(event.type==="checkout.session.completed" && object.mode==="setup"){await finishRenewalSetup(object.id);return res.json({received:true});}
       if(object.object==="subscription_schedule"){
         const schedule=await stripeRequest(`subscription_schedules/${encodeURIComponent(object.id)}`),user=authService.getUser(schedule.metadata?.userId);
@@ -624,15 +655,46 @@ async function main(): Promise<void> {
       const user = typeof userId === "string" ? authService.getUser(userId) : undefined;
       if (!user) return res.status(400).json({ message: "Unknown subscription account." });
       const price = subscription.items?.data?.[0]?.price;
-      assertPlusPrice(price, false);
-      if (price.id !== process.env.STRIPE_PLUS_PRICE_ID?.trim()) return res.status(400).json({ message: "Unexpected subscription price." });
+      const founder = subscription.metadata?.membershipProgram === "founder";
+      const referral = subscription.metadata?.membershipProgram === "priority-referral";
+      assertPlusPrice(price, false, founder ? FOUNDER_PRICE_CENTS : referral ? REFERRAL_RENEWAL_CENTS : undefined);
+      if (referral && !user.plusData?.priorityReferralOwnerId) return res.status(400).json({ message: "Account is ineligible for the referral rate." });
+      if (founder && user.plusData?.founderRateEligible !== true) return res.status(400).json({ message: "Account is ineligible for the founder rate." });
+      if (price.id !== (founder ? process.env.STRIPE_FOUNDER_PRICE_ID : referral ? process.env.STRIPE_PRIORITY_RENEWAL_PRICE_ID : process.env.STRIPE_PLUS_PRICE_ID)?.trim()) return res.status(400).json({ message: "Unexpected subscription price." });
       const method=subscription.default_payment_method || (typeof subscription.customer==="object"?subscription.customer.invoice_settings?.default_payment_method:null);
       const plusData = { ...user.plusData, stripeCustomerId: typeof subscription.customer==="string"?subscription.customer:subscription.customer?.id, stripeSubscriptionId: subscription.id, stripeLivemode: price.livemode === true, stripePaymentMethodSaved:Boolean(method), stripeAutoRenew:Boolean(method && ["active","trialing"].includes(subscription.status) && !subscription.cancel_at_period_end),stripeNextBillingAtMs:Number(subscription.trial_end ?? subscription.current_period_end)*1000,stripeSubscriptionStatus:String(subscription.status) };
       const periodEnd = Number(subscription.current_period_end) * 1000;
       const paidInvoice = subscription.latest_invoice?.paid === true && subscription.latest_invoice?.status === "paid";
-      const grantPaidPeriod = subscription.status === "active" && paidInvoice && event.type !== "invoice.payment_failed" && Number.isFinite(periodEnd);
-      if (grantPaidPeriod) {
-        authService.updatePlus(userId, { tier: "premium", plusExpiresAtMs: Math.max(user.plusExpiresAtMs ?? 0, periodEnd), plusData });
+      const invoice = subscription.latest_invoice;
+      const introPriceId = process.env.STRIPE_PRIORITY_INTRO_PRICE_ID?.trim();
+      const qualifiedIntro = referral && introPriceId && paidInvoice && event.type !== "invoice.payment_failed" &&
+        typeof invoice.id === "string" && invoice.currency === "cad" && invoice.amount_paid >= REFERRAL_INTRO_CENTS &&
+        invoice.lines?.data?.some((line: any) => (line.price?.id ?? line.pricing?.price_details?.price) === introPriceId &&
+          line.amount >= REFERRAL_INTRO_CENTS && line.quantity === 1);
+      if (qualifiedIntro && user.plusData?.priorityReferralOwnerId &&
+        (!plusData.referralIntroInvoiceId || plusData.referralIntroInvoiceId === invoice.id)) {
+        const live = price.livemode === true && invoice.livemode === true && event.livemode === true;
+        const recorded = await referralLedger.record({
+          buyerId: user.id, ownerId: user.plusData.priorityReferralOwnerId, invoiceId: invoice.id,
+          grossCents: invoice.amount_paid, live
+        });
+        if (recorded && live) notifyReferral(user.plusData.priorityReferralOwnerId, "Badehaus X qualifying referral purchase", "A referral purchased the introductory offer. Your CAD $5.00 commission is pending review.");
+        plusData.referralIntroInvoiceId = invoice.id;
+        const latest = authService.getUser(user.id)?.plusData;
+        // Billing events may await persistence while the member changes an unrelated preference.
+        const billingFields = Object.fromEntries(Object.entries(plusData).filter(([key]) => key.startsWith("stripe") || key === "referralIntroInvoiceId"));
+        Object.assign(plusData, latest, billingFields);
+      }
+      const referralTrialEnd = Number(subscription.trial_end) * 1000;
+      const grantIntro = Boolean(qualifiedIntro && plusData.referralIntroInvoiceId === invoice.id && Number.isFinite(referralTrialEnd) && referralTrialEnd > Date.now());
+      const grantPaidPeriod = subscription.status === "active" && paidInvoice && event.type !== "invoice.payment_failed" && Number.isFinite(periodEnd) &&
+        (!referral || Boolean(plusData.referralIntroInvoiceId));
+      if (grantPaidPeriod || grantIntro) {
+        if (user.tier === "premium" && user.plusExpiresAtMs === undefined) {
+          authService.updatePlus(userId, { plusData });
+        } else {
+          authService.updatePlus(userId, { tier: "premium", plusExpiresAtMs: Math.max(user.plusExpiresAtMs ?? 0, grantPaidPeriod ? periodEnd : referralTrialEnd), plusData });
+        }
       } else {
         // Cancellation stops renewal; already paid or complimentary time remains available.
         authService.updatePlus(userId, { plusData });
@@ -810,6 +872,19 @@ async function main(): Promise<void> {
     const user = authService.getUser(session.value.userId);
     return user ? { user, session: session.value } : null;
   }
+  const stopGrowth = installGrowthRoutes(app, {
+    auth: authService, repository: communityRepository, ledger: referralLedger, member: plusUser, admin: requireAdminSession,
+    async persist() { await authPersistQueue; if (authPersistenceError) throw new Error("Consent persistence failed."); },
+    send: emailSender ? async message => {
+      const result = await emailSender.sendMail({ ...message, from: process.env.MARKETING_FROM?.trim() });
+      if (!result.accepted.length) throw new Error("SMTP did not accept the message.");
+    } : undefined,
+    sendSummary: emailSender && process.env.REFERRAL_EMAIL_ENABLED === "true" ? async (to, text) => {
+      const result = await emailSender.sendMail({ from: smtpFrom, to, subject: "Badehaus X Growth summary", text });
+      if (!result.accepted.length) throw new Error("SMTP did not accept the summary.");
+    } : undefined,
+    notify: notifyReferral
+  });
   const premiumError = (res: express.Response) => res.status(402).json({ code: "PLUS_REQUIRED", message: "This feature is included with Badehaus X Plus (CAD $7.99/month)." });
 
   app.get("/admin/billing/health", async (req, res) => {
@@ -843,14 +918,150 @@ async function main(): Promise<void> {
   app.get("/plus", (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const data = actor.user.plusData ?? {};
-    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.user.plusExpiresAtMs, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: billingConfiguration().configured, hasBillingAccount: Boolean(data.stripeCustomerId), hasPaymentMethod:data.stripePaymentMethodSaved===true, autoRenew:data.stripeAutoRenew===true,nextBillingAtMs:data.stripeNextBillingAtMs,redeemedPromoCodes:data.redeemedPromoCodes ?? [],providerTutorialPending:false,renewalScheduled:Boolean(data.stripeScheduleId && !["canceled","aborted","completed","released"].includes(data.stripeScheduleStatus ?? "")),subscriptionStatus:data.stripeSubscriptionStatus });
+    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.session.plusExpiresAtMs, founderTrialEndsAtMs: data.founderTrialEndsAtMs, founderRateEligible: data.founderRateEligible === true, priority: data.priorityApprovedAtMs !== undefined, priorityInvited: data.priorityInvited === true, referralOffer: !data.founderRateEligible && Boolean(data.priorityReferralOwnerId && !data.referralIntroInvoiceId), priorityPending: data.priorityRequestedAtMs !== undefined && data.priorityApprovedAtMs === undefined, priorityReferralCode: data.priorityApprovedAtMs !== undefined ? data.priorityReferralCode : undefined, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: billingConfiguration().configured && (!data.founderRateEligible || Boolean(process.env.STRIPE_FOUNDER_PRICE_ID?.trim()))
+      && (!(data.priorityReferralOwnerId && !data.referralIntroInvoiceId && !data.founderRateEligible) ||
+        Boolean(process.env.STRIPE_PRIORITY_INTRO_PRICE_ID?.trim() && process.env.STRIPE_PRIORITY_RENEWAL_PRICE_ID?.trim())), hasBillingAccount: Boolean(data.stripeCustomerId), hasPaymentMethod:data.stripePaymentMethodSaved===true, autoRenew:data.stripeAutoRenew===true,nextBillingAtMs:data.stripeNextBillingAtMs,redeemedPromoCodes:data.redeemedPromoCodes ?? [],providerTutorialPending:false,renewalScheduled:Boolean(data.stripeScheduleId && !["canceled","aborted","completed","released"].includes(data.stripeScheduleStatus ?? "")),subscriptionStatus:data.stripeSubscriptionStatus });
   });
   app.post("/plus/redeem",async(req,res)=>{const actor=plusUser(req,res);if(!actor)return;
     try {const code=promoCode(req.body?.code),expires=launchGrant(code)!;const user=authService.getUser(actor.user.id)!;if(user.plusData?.redeemedPromoCodes?.includes(code))return res.status(409).json({message:"You already used this promo code."});
-      const permanent=hasPlus(user)&&user.plusExpiresAtMs===undefined;
+      const permanent=user.tier==="premium"&&user.plusExpiresAtMs===undefined;
       authService.updatePlus(user.id,{tier:"premium",...(permanent?{}:{plusExpiresAtMs:Math.max(user.plusExpiresAtMs ?? 0,expires)}),plusData:{...user.plusData,redeemedPromoCodes:[...(user.plusData?.redeemedPromoCodes ?? []),code]}});
       await authPersistQueue;if(authPersistenceError)return res.status(503).json({message:"Unable to save this promotion. Please retry."});return res.json({ok:true,providerTutorial:false,expiresAtMs:expires});
     }catch(e){return res.status(400).json({message:(e as Error).message});}
+  });
+  let priorityRadiusKm = await communityRepository.readSetting<number>("priorityRadiusKm") ?? DEFAULT_PRIORITY_RADIUS_KM;
+  const recentPriority = new Map<string, { lat: number; lng: number; updatedAtMs: number }>();
+  const membershipChange = async (id: string, data: PlusData) => {
+    authService.updatePlus(id, { plusData: data });
+    await authPersistQueue;
+    if (authPersistenceError) throw new Error("Membership update could not be saved.");
+  };
+  async function deletePriorityProof(userId: string, mediaId?: string) {
+    if (!mediaId) return;
+    const media = await mediaRepo.getById(mediaId);
+    if (media?.kind === "priority_proof" && media.userId === userId) {
+      await mediaStorage.deleteObject?.({ bucket: s3Bucket || "local-dev-bucket", key: media.objectKey });
+    }
+  }
+  const priorityProofRetentionMs = 7 * 24 * 60 * 60 * 1000;
+  async function purgeExpiredPriorityData() {
+    const now = Date.now();
+    for (const [key, value] of recentPriority) {
+      if (now - value.updatedAtMs >= PRIORITY_ACTIVITY_MS) recentPriority.delete(key);
+    }
+    for (const id of authService.listRegisteredUserIds()) {
+      const data = authService.getUser(id)?.plusData;
+      if (!data?.priorityProofMediaId || now - (data.priorityRequestedAtMs ?? 0) < priorityProofRetentionMs) continue;
+      await deletePriorityProof(id, data.priorityProofMediaId);
+      const latest = authService.getUser(id)?.plusData;
+      if (latest?.priorityProofMediaId === data.priorityProofMediaId) {
+        await membershipChange(id, { ...latest, priorityRequestedAtMs: undefined, priorityProofMediaId: undefined });
+      }
+    }
+  }
+  const priorityCleanup = setInterval(() => void purgeExpiredPriorityData().catch(() => {}), 60 * 60 * 1000).unref();
+  app.post("/membership/priority/apply", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    if (String(req.body?.code).trim().toUpperCase() !== PRIORITY_INVITATION_CODE) return res.status(400).json({ message: "Invalid invitation code." });
+    try {
+      const profile = await profileRepo.getByUserId(actor.user.id);
+      if (!profile?.displayName || !profile.age) return res.status(400).json({ message: "Complete your profile before applying." });
+      const user = authService.getUser(actor.user.id)!;
+      if (user.plusData?.priorityApprovedAtMs !== undefined || user.plusData?.priorityRequestedAtMs !== undefined) return res.json({ ok: true });
+      const proof = await mediaRepo.getById(String(req.body?.proofMediaId ?? ""));
+      if (proof?.kind !== "priority_proof" || proof.userId !== user.id || !proof.uploadedAtMs ||
+        Date.now() - proof.createdAtMs > 60 * 60 * 1000) return res.status(400).json({ message: "Upload a new screenshot before applying." });
+      const latest = authService.getUser(user.id)!;
+      if (latest.plusData?.priorityRequestedAtMs !== undefined) return res.status(409).json({ message: "An application is already in review." });
+      await membershipChange(user.id, { ...latest.plusData, priorityRequestedAtMs: Date.now(), priorityProofMediaId: proof.mediaId });
+      return res.json({ ok: true });
+    } catch { return res.status(503).json({ message: "Could not save the application." }); }
+  });
+  app.post("/membership/priority/resign", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    const data = actor.user.plusData ?? {};
+    if (data.priorityApprovedAtMs === undefined && data.priorityRequestedAtMs === undefined) return res.json({ ok: true });
+    try {
+      await membershipChange(actor.user.id, { ...data, priorityInvited: undefined, priorityProofMediaId: undefined, priorityApprovedAtMs: undefined, priorityRequestedAtMs: undefined,
+        membershipAudit: [...(data.membershipAudit ?? []), { action: "resign-priority", actorId: actor.user.id, atMs: Date.now() }] });
+      await deletePriorityProof(actor.user.id, data.priorityProofMediaId);
+      return res.json({ ok: true });
+    } catch { return res.status(503).json({ message: "Could not save membership changes." }); }
+  });
+  app.get("/admin/membership/priority", (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    res.set("Cache-Control", "no-store");
+    return res.json({ radiusKm: priorityRadiusKm, applications: authService.listUsers().flatMap(row => {
+      const data = authService.getUser(row.id)?.plusData;
+      return data?.priorityRequestedAtMs === undefined && data?.priorityApprovedAtMs === undefined ? [] : [
+        { id: row.id, email: row.email, approved: data.priorityApprovedAtMs !== undefined }
+      ];
+    }) });
+  });
+  app.get("/admin/membership/priority/:id/proof", async (req, res) => {
+    if (!requireAdminSession(req, res)) return;
+    res.set({ "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
+    const user = authService.getUser(req.params.id);
+    const id = user?.plusData?.priorityProofMediaId;
+    try {
+      const unexpired = Date.now() - (user?.plusData?.priorityRequestedAtMs ?? 0) < priorityProofRetentionMs;
+      const proof = id && unexpired ? await mediaRepo.getById(id) : undefined;
+      if (proof?.kind !== "priority_proof" || proof.userId !== user?.id || !proof.uploadedAtMs) return res.status(404).json({ message: "Application screenshot unavailable." });
+      if (mediaStorageMode === "s3") {
+        const url = await mediaStorage.presignGetObject({ bucket: s3Bucket, key: proof.objectKey, expiresInSeconds: 30 });
+        const response = await fetch(url);
+        if (!response.ok) return res.status(404).json({ message: "Application screenshot unavailable." });
+        return res.type(proof.mimeType).send(Buffer.from(await response.arrayBuffer()));
+      }
+      const object = mediaStorageMode === "local" ? (mediaStorage as LocalObjectStorage).getObject(proof.objectKey) :
+        await (mediaStorage as PostgresObjectStorage).getObject(proof.objectKey);
+      if (!object) return res.status(404).json({ message: "Application screenshot unavailable." });
+      return res.type(proof.mimeType).send(object.data);
+    } catch { return res.status(503).json({ message: "Could not load the application screenshot." }); }
+  });
+  app.put("/admin/membership/radius", async (req, res) => {
+    const actor = requireAdminSession(req, res); if (!actor?.userId) return;
+    const radius = req.body?.radiusKm;
+    if (!Number.isInteger(radius) || radius < 1 || radius > DEFAULT_PRIORITY_RADIUS_KM) return res.status(400).json({ message: "Choose a radius from 1 to 100 kilometres." });
+    try {
+      await communityRepository.update(state => {
+        state.settings.priorityRadiusKm = radius;
+        state.settings.priorityRadiusLastChanged = { actorId: actor.userId, atMs: Date.now() };
+      });
+      priorityRadiusKm = radius;
+      return res.json({ ok: true, radiusKm: radius });
+    } catch { return res.status(503).json({ message: "Could not save the priority radius." }); }
+  });
+  app.post("/admin/membership", async (req, res) => {
+    const admin = requireAdminSession(req, res); if (!admin?.userId) return;
+    const action = req.body?.action;
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const row = authService.listUsers().find(user => user.email === email);
+    const user = row ? authService.getUser(row.id) : undefined;
+    if (!user?.ageVerified || !user.emailVerified || user.bannedAtMs) return res.status(404).json({ message: "Eligible account not found." });
+    const data = user.plusData ?? {};
+    const updates: Partial<PlusData> = {};
+    const now = Date.now();
+    if (action === "invite-founder") {
+      if (data.founderAtMs !== undefined) return res.json({ ok: true });
+      updates.founderAtMs = now;
+      updates.founderTrialEndsAtMs = threeMonthsAfter(now);
+      updates.founderRateEligible = true;
+    } else if (action === "approve-priority") {
+      if (data.priorityApprovedAtMs !== undefined) return res.json({ ok: true });
+      if (data.priorityRequestedAtMs === undefined || now - data.priorityRequestedAtMs >= priorityProofRetentionMs || !data.priorityProofMediaId) return res.status(409).json({ message: "This member has not applied." });
+      updates.priorityApprovedAtMs = now;
+      updates.priorityReferralCode = data.priorityReferralCode ?? `BX-${randomUUID().replace(/-/g, "").toUpperCase()}`;
+    } else if (action === "revoke-priority" || action === "reject-priority") {
+      updates.priorityInvited = undefined;
+      updates.priorityApprovedAtMs = undefined;
+      updates.priorityRequestedAtMs = undefined;
+    } else return res.status(400).json({ message: "Choose a membership action." });
+    try {
+      await membershipChange(user.id, { ...data, ...updates, priorityProofMediaId: action === "invite-founder" ? data.priorityProofMediaId : undefined, membershipAudit: [...(data.membershipAudit ?? []), { action, actorId: admin.userId, atMs: now }] });
+      if (action !== "invite-founder") await deletePriorityProof(user.id, data.priorityProofMediaId);
+      return res.json({ ok: true });
+    } catch { return res.status(503).json({ message: "Could not save membership changes." }); }
   });
   app.post("/plus/tutorial/dismiss",(_req,res)=>res.status(410).json({code:"FEATURE_DISABLED",message:"Provider tutorials are unavailable in the standalone release."}));
   app.put("/plus/preferences", async (req, res) => {
@@ -918,11 +1129,17 @@ async function main(): Promise<void> {
     const actor = plusUser(req, res); if (!actor) return;
     try {
       const deferred=req.path==="/billing/enroll";
+      const founder = actor.user.plusData?.founderRateEligible === true;
+      const referral = !founder && Boolean(actor.user.plusData?.priorityReferralOwnerId && !actor.user.plusData.referralIntroInvoiceId);
+      if (referral && (deferred || req.body?.acceptRenewal !== true)) return res.status(400).json({message:"Authorize the referral offer from Plus billing."});
+      const founderEndsAt = actor.user.plusData?.founderTrialEndsAtMs ?? 0;
+      if (actor.user.plusData?.priorityApprovedAtMs !== undefined) return res.status(409).json({message:"Priority includes complimentary Plus."});
+      if (founder && (deferred || req.body?.acceptRenewal !== true)) return res.status(400).json({message:"Authorize the founder rate from Plus billing."});
       const complimentary=actor.user.plusExpiresAtMs===LAUNCH_END_MS && hasPlus(actor.session);
       if(deferred && (req.body?.acceptRenewal!==true || !complimentary))return res.status(400).json({message:"Monthly renewal enrollment requires your explicit consent and active launch access."});
-      if(hasPlus(actor.session) && !deferred)return res.status(409).json({message:"You already have Plus. Use billing enrollment to keep it after complimentary access ends."});
+      if(hasPlus(actor.session) && !deferred && !(founder && actor.session.plusExpiresAtMs !== undefined && actor.session.plusExpiresAtMs <= founderEndsAt))return res.status(409).json({message:"You already have Plus. Use billing enrollment to keep it after complimentary access ends."});
       const appUrl = process.env.PUBLIC_APP_URL?.trim();
-      const priceId = process.env.STRIPE_PLUS_PRICE_ID?.trim();
+      const priceId = (founder ? process.env.STRIPE_FOUNDER_PRICE_ID : referral ? process.env.STRIPE_PRIORITY_RENEWAL_PRICE_ID : process.env.STRIPE_PLUS_PRICE_ID)?.trim();
       if (!billingConfiguration().configured || !appUrl || !priceId) return res.status(503).json({ message: "Subscriptions are not available for purchase yet." });
       if (!/^https:\/\//.test(appUrl)) throw new Error("Configure a secure public app URL.");
       if(deferred && actor.user.plusData?.stripeScheduleId){const schedule=await stripeRequest(`subscription_schedules/${encodeURIComponent(actor.user.plusData.stripeScheduleId)}`);if(!["canceled","aborted","completed","released"].includes(schedule.status))return res.status(409).json({message:"Your renewal is already scheduled. Manage billing or cancel that schedule first."});}
@@ -933,10 +1150,21 @@ async function main(): Promise<void> {
       const priorCheckoutId = actor.user.plusData?.stripeCheckoutSessionId;
       if (priorCheckoutId) {
         const prior = await stripeRequest(`checkout/sessions/${encodeURIComponent(priorCheckoutId)}`);
-        if (prior.status === "open") return res.json({ url: prior.url });
+        if (prior.status === "open") {
+          if ((prior.metadata?.membershipProgram ?? "standard") === (founder ? "founder" : referral ? "priority-referral" : "standard")) return res.json({ url: prior.url });
+          await stripeRequest(`checkout/sessions/${encodeURIComponent(prior.id)}/expire`, new URLSearchParams());
+        }
         if (prior.status === "complete" && !actor.user.plusData?.stripeSubscriptionId && !actor.user.plusData?.stripeScheduleId) return res.status(409).json({ message: "Payment is being confirmed. Refresh your subscription status shortly." });
       }
-      const price = await stripeRequest(`prices/${encodeURIComponent(priceId)}`); assertPlusPrice(price);
+      const price = await stripeRequest(`prices/${encodeURIComponent(priceId)}`); assertPlusPrice(price, true, founder ? FOUNDER_PRICE_CENTS : referral ? REFERRAL_RENEWAL_CENTS : undefined);
+      const introPriceId = process.env.STRIPE_PRIORITY_INTRO_PRICE_ID?.trim();
+      if (referral) {
+        if (!introPriceId) return res.status(503).json({ message: "The referral offer is not available for purchase yet." });
+        const intro = await stripeRequest(`prices/${encodeURIComponent(introPriceId)}`);
+        if (intro.id !== introPriceId || !intro.active || intro.currency !== "cad" || intro.unit_amount !== REFERRAL_INTRO_CENTS || intro.type !== "one_time" || intro.livemode !== price.livemode) {
+          return res.status(503).json({ message: "The Stripe referral price is not configured correctly." });
+        }
+      }
       if(deferred){
         let customer=actor.user.plusData?.stripeCustomerId;
         if(!customer){const created=await stripeRequest("customers",new URLSearchParams({email:actor.user.email,"metadata[userId]":actor.user.id}),`reddoor-customer:${actor.user.id}`);customer=created.id;authService.updatePlus(actor.user.id,{plusData:{...authService.getUser(actor.user.id)!.plusData,stripeCustomerId:customer}});await authPersistQueue;if(authPersistenceError)throw new Error("Unable to save customer.");}
@@ -945,12 +1173,30 @@ async function main(): Promise<void> {
         authService.updatePlus(actor.user.id,{plusData:{...authService.getUser(actor.user.id)!.plusData,stripeCheckoutSessionId:checkout.id}});await authPersistQueue;if(authPersistenceError)throw new Error("Unable to save checkout.");return res.json({url:checkout.url});
       }
       const params = new URLSearchParams({ mode: "subscription", "line_items[0][price]": priceId, "line_items[0][quantity]": "1", "subscription_data[metadata][userId]": actor.user.id, client_reference_id: actor.user.id, success_url: appUrl + "?billing=success", cancel_url: appUrl + "?billing=cancelled" });
+      if (founder) {
+        params.set("metadata[membershipProgram]", "founder");
+        params.set("subscription_data[metadata][membershipProgram]", "founder");
+        // Stripe requires at least 48 hours of trial time when using an exact end timestamp.
+        const remaining = founderEndsAt - Date.now();
+        if (remaining > 0 && remaining < 49 * 60 * 60 * 1000) {
+          return res.status(409).json({ message: "Your free period is almost over. Subscribe after it ends to keep the founder rate." });
+        }
+        if (remaining > 0) params.set("subscription_data[trial_end]", String(Math.ceil(founderEndsAt / 1000)));
+      }
+      if (referral) {
+        params.set("metadata[membershipProgram]", "priority-referral");
+        params.set("subscription_data[metadata][membershipProgram]", "priority-referral");
+        params.set("line_items[1][price]", introPriceId!);
+        params.set("line_items[1][quantity]", "1");
+        params.set("subscription_data[trial_end]", String(Math.ceil(threeMonthsAfter(Date.now()) / 1000)));
+        params.set("custom_text[submit][message]", "CAD $14.99 for the first three months, then CAD $9.99/month until canceled.");
+      }
       params.set("payment_method_collection","always");
       params.set("subscription_data[metadata][renewalConsent]","stripe-hosted-checkout");
 
       if (actor.user.plusData?.stripeCustomerId) params.set("customer", actor.user.plusData.stripeCustomerId);
       else params.set("customer_email", actor.user.email);
-      const checkout = await stripeRequest("checkout/sessions", params, `reddoor-plus:${actor.user.id}:${deferred?"renewal":"paid"}:${priorCheckoutId ?? "initial"}`);
+      const checkout = await stripeRequest("checkout/sessions", params, `reddoor-plus:${actor.user.id}:${deferred?"renewal":founder?"founder":referral?"referral":"paid"}:${priorCheckoutId ?? "initial"}`);
       const latestUser = authService.getUser(actor.user.id)!;
       authService.updatePlus(actor.user.id, { plusData: { ...latestUser.plusData, stripeCheckoutSessionId: checkout.id } });
       await authPersistQueue;
@@ -989,6 +1235,10 @@ async function main(): Promise<void> {
     window.count++; authRequestWindows.set(key, window); next();
   });
 
+  app.get("/auth/registration-policy", (_req, res) => {
+    return res.set("Cache-Control", "no-store").json(registrationPolicy());
+  });
+
   app.post("/auth/register", (req, res) => {
     if(!emailSender)return res.status(503).json({code:"SERVICE_UNAVAILABLE",message:"Registration email is unavailable. Please try later or contact support."});
     const age = req.body?.age;
@@ -996,7 +1246,20 @@ async function main(): Promise<void> {
     const email = (req.body as any)?.email;
     const password = (req.body as any)?.password;
     const phoneE164 = (req.body as any)?.phoneE164;
-    const result = authService.register(email, password, phoneE164, (req.body as any)?.promoCode, req.body?.analyticsConsent === true);
+    const policy = registrationPolicy();
+    if (policy.status === "unavailable") {
+      return res.status(503).json({ code: "REGISTRATION_POLICY_UNAVAILABLE", message: "Registration is temporarily unavailable. Please try again later." });
+    }
+    const submitted = req.body?.policyAcceptance;
+    if (policy.status === "required" && (submitted?.accepted !== true ||
+      submitted.termsVersion !== policy.terms.version || submitted.privacyVersion !== policy.privacy.version)) {
+      return res.status(400).json({ code: "REGISTRATION_POLICY_REQUIRED", message: "Review and accept the current Terms of Service and Privacy Policy." });
+    }
+    const accepted = policy.status === "required" ? {
+      accepted: true as const, termsVersion: policy.terms.version, privacyVersion: policy.privacy.version
+    } : undefined;
+    const result = authService.register(email, password, phoneE164, req.body?.promoCode,
+      req.body?.analyticsConsent === true, req.body?.marketingConsent === true, accepted);
     if (!result.ok) return sendError(res, result.error);
     const created = authService.listUsers().find(user => user.email === result.value.email);
     const user = created ? authService.getUser(created.id) : undefined;
@@ -1009,6 +1272,8 @@ async function main(): Promise<void> {
     const code = (req.body as any)?.code;
     const result = authService.verifyEmail(email, code);
     if (!result.ok) return sendError(res, result.error);
+    const ownerId = result.value.session?.userId ? authService.getUser(result.value.session.userId)?.plusData?.priorityReferralOwnerId : undefined;
+    if (ownerId) notifyReferral(ownerId, "Badehaus X verified referral", "Someone verified their account after registering with your referral code.");
     return res.status(200).json(result.value);
   });
 
@@ -1099,7 +1364,7 @@ async function main(): Promise<void> {
     if(viewer.ok && blockService.isBlocked(sessionKeyFromSession(domainSession(viewer.value)),`user:${userId}`))return res.status(404).json({code:"PROFILE_NOT_FOUND",message:"Profile not found."});
     const result = await profileService.getPublicByUserId(userId);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ profile: enrichProfile(result.value) });
+    return res.status(200).json({ profile: enrichProfile(result.value, viewer.ok && Boolean(viewer.value.userId) && viewer.value.ageVerified) });
   });
 
   app.get("/profile/public", async (_req, res) => {
@@ -1107,7 +1372,7 @@ async function main(): Promise<void> {
     const result = await profileService.listPublicProfiles();
     if (!result.ok) return sendError(res, result.error);
     const banned = bannedUserIds();
-    return res.status(200).json({ profiles: result.value.filter((profile) => {const user=authService.getUser(profile.userId);return !banned.has(profile.userId) && !(user && hidesDiscovery(user.plusData?.member,user));}).map(enrichProfile) });
+    return res.status(200).json({ profiles: result.value.filter((profile) => {const user=authService.getUser(profile.userId);return !banned.has(profile.userId) && !(user && hidesDiscovery(user.plusData?.member,user));}).map(profile => enrichProfile(profile)) });
   });
 
   app.put("/profile/me", async (req, res) => {
@@ -1708,9 +1973,49 @@ async function main(): Promise<void> {
   // Standalone release: the preserved bridge module is deliberately not registered.
   app.use(["/md", "/integrations/md", "/api/md", "/api/integrations/md"], (_req, res) => res.status(404).json({ code: "FEATURE_DISABLED", message: "This feature is unavailable in the standalone release." }));
   installLaunchReadiness(app,{admin:requireAdminSession,databasePing:postgresPool?()=>postgresPool.query("SELECT 1"):undefined,verifyMail:emailSender?()=>emailSender.verify():undefined,mediaMode:mediaStorageMode,persistenceHealthy:()=>!authPersistenceError&&!chatPersistenceError&&!safetyPersistenceError&&!favoritesPersistenceError&&!guestPersistError&&!metricsWriteError});
+  const shutdownLive = installLiveRoutes(app, {
+    session: (req, res) => plusUser(req, res)?.session ?? null,
+    admin: requireAdminSession,
+    eligible: (id, token) => {
+      const result = authService.getSession(token);
+      const user = authService.getUser(id);
+      return result.ok && result.value.userId === id && result.value.ageVerified && Boolean(user && !user.bannedAtMs);
+    },
+    discoverable: id => { const user = authService.getUser(id); return Boolean(user && !hidesDiscovery(user.plusData?.member, user)); },
+    blocked: (a, b) => blockService.isBlocked(`user:${a}`, `user:${b}`),
+    name: async id => (await profileRepo.getByUserId(id))?.displayName ?? "Member",
+    report: async (session, broadcastId, hostId, reason) => {
+      const result = reportService.reportLive(session, broadcastId, `user:${hostId}`, reason);
+      if (!result.ok) throw new MemberError(result.error.code, result.error.message);
+      await safetyPersistence;
+      if (safetyPersistenceError) throw new Error("Report persistence failed.");
+      return result.value.reportId;
+    }
+  });
+
+  installGroupDmRoutes(app, {
+    repository: communityRepository,
+    session: (req, res) => plusUser(req, res)?.session ?? null,
+    eligible: id => { const user = authService.getUser(id); return Boolean(user?.ageVerified && !user.bannedAtMs); },
+    blocked: (a, b) => blockService.isBlocked(`user:${a}`, `user:${b}`),
+    hasHistory: (a, b) => chatService.hasDirectHistory(`user:${a}`, `user:${b}`),
+    report: async (session, conversationId, message, reason) => {
+      const result = reportService.reportGroupMessage(session, {
+        kind: "group-dm-message", conversationId, messageId: message.id, targetKey: `user:${message.authorId}`, text: message.text
+      }, reason);
+      if (!result.ok) throw new MemberError(result.error.code, result.error.message);
+      await safetyPersistence;
+      if (safetyPersistenceError) throw new Error("Report persistence failed.");
+      return result.value.reportId;
+    }
+  });
+
   installMemberRoutes(app,{
     auth:authService,profiles:profileRepo,media:mediaRepo,storage:mediaStorage,bucket:s3Bucket || "local-dev-bucket",repository:communityRepository,
-    privacyChanged:(key,hideProfile)=>safeBroadcast(gateway.broadcast,"presence_removed",{key,hideProfile}),
+    privacyChanged: (key, hideProfile) => {
+      recentPriority.delete(key);
+      safeBroadcast(gateway.broadcast, "presence_removed", { key, hideProfile });
+    },
     member:plusUser,admin:requireAdminSession,blocked:(a,b)=>blockService.isBlocked(a,b),
     persist:async()=>{await authPersistQueue;if(authPersistenceError)throw new Error("Persistence unavailable");},push:pushService,
     privatePhoto:async(media)=>{if(mediaStorageMode==="s3"){const url=await mediaStorage.presignGetObject({bucket:s3Bucket,key:media.objectKey,expiresInSeconds:30});const response=await fetch(url);if(!response.ok)return null;return {data:Buffer.from(await response.arrayBuffer()),mimeType:media.mimeType};}return mediaStorageMode==="local"?(mediaStorage as LocalObjectStorage).getObject(media.objectKey):await (mediaStorage as PostgresObjectStorage).getObject(media.objectKey);}
@@ -1723,6 +2028,12 @@ async function main(): Promise<void> {
     const { lat, lng, status } = req.body as any;
     const result = presenceService.updatePresence(domainSession(sessionResult.value), { lat, lng, status });
     if (!result.ok) return sendError(res, result.error);
+    const user = sessionResult.value.userId ? authService.getUser(sessionResult.value.userId) : undefined;
+    const key = result.value.key;
+    if (!hiddenPresence(key) && (user?.plusData?.priorityApprovedAtMs !== undefined || user?.plusData?.founderAtMs !== undefined)) {
+      const { updatedAtMs, lat, lng } = result.value;
+      recentPriority.set(key, { updatedAtMs, lat, lng });
+    } else recentPriority.delete(key);
     return res.status(200).json({ presence: result.value });
   });
 
@@ -1771,7 +2082,24 @@ async function main(): Promise<void> {
       presenceMap.set(presence.key, presence);
     }
     
-    return res.status(200).json({ presence: Array.from(presenceMap.values()) });
+    const activeByKey = new Map(activePresence.map(row => [row.key, row]));
+    const viewer = activeByKey.get(viewerKey);
+    const priority: Record<string, number> = {};
+    for (const [key, recent] of recentPriority) {
+      const user = authService.getUser(key.slice(5));
+      const program = user?.plusData;
+      if (Date.now() - recent.updatedAtMs >= PRIORITY_ACTIVITY_MS || hiddenPresence(key) ||
+        (program?.priorityApprovedAtMs === undefined && program?.founderAtMs === undefined)) {
+        recentPriority.delete(key);
+        continue;
+      }
+      const online = activeByKey.get(key);
+      if (!viewer || key === viewerKey || blockService.isBlocked(viewerKey, key) ||
+        !withinPriorityRadius(viewer, online ?? recent, priorityRadiusKm)) continue;
+      priority[key] = online ? 2 : 1;
+    }
+    res.set("Cache-Control", "private, no-store");
+    return res.status(200).json({ presence: Array.from(presenceMap.values()), priority });
   });
 
   // Matching
@@ -2061,12 +2389,31 @@ async function main(): Promise<void> {
 
   server.listen(port, () => {
     console.log(`Badehaus X backend listening on http://localhost:${port}`);
+    if (process.env.LIVEKIT_CHECK_ON_STARTUP === "true" && process.env.LIVE_BETA_ENABLED !== "true") {
+      console.log("[LiveKit check] Checking room closure with Live disabled.");
+      execFile(process.execPath, [path.resolve(__dirname, "../../scripts/check-livekit-room-close.cjs")], {
+        timeout: 45_000,
+        env: {
+          LIVEKIT_URL: process.env.LIVEKIT_URL,
+          LIVEKIT_API_KEY: process.env.LIVEKIT_API_KEY,
+          LIVEKIT_API_SECRET: process.env.LIVEKIT_API_SECRET
+        }
+      }, (error, stdout, stderr) => {
+        if (stdout.trim()) console.log(stdout.trim());
+        if (stderr.trim()) console.error(stderr.trim());
+        console.log(error
+          ? "[LiveKit check] FAILED or inconclusive. Keep Live disabled."
+          : "[LiveKit check] PASSED. Room closure checks completed.");
+      });
+    }
   });
 
   const shutdown = async (): Promise<void> => {
     clearInterval(metricsCleanupTimer);
     clearInterval(chatCleanupTimer);
-    await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue, guestPersistQueue, safetyPersistence, favoritesPersistence, communityRepository.flush()]);
+    clearInterval(priorityCleanup);
+    stopGrowth();
+    await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue, guestPersistQueue, safetyPersistence, favoritesPersistence, communityRepository.flush(), shutdownLive()]);
     if (postgresPool) {
       await postgresPool.end();
     }

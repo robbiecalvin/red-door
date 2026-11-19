@@ -81,3 +81,11 @@ node --import tsx scripts/check-registration-browser.ts
 It creates temporary backend/Vite ports and a local TLS SMTP fixture, checks invalid
 and valid codes through the real registration UI, and cleans up its processes/data.
 This command passed; it does not send to an external inbox.
+
+## Terms of Service and Privacy Policy
+
+Publish the approved Terms of Service and Privacy Policy at version-specific HTTPS URLs. Set `REGISTRATION_TERMS_URL`, `REGISTRATION_TERMS_VERSION`, `REGISTRATION_PRIVACY_URL`, and `REGISTRATION_PRIVACY_VERSION` on the backend, then set `REGISTRATION_POLICY_REQUIRED=true`. Version identifiers can contain letters, digits, periods, underscores, and hyphens. Set a new version when the text changes.
+
+The registration form fetches the published policy configuration and displays the document links and an unchecked acceptance box. The backend checks both versions and stores them with a server timestamp on the new account. Marketing consent remains optional. Existing accounts can continue to sign in. If enforcement is enabled with invalid or missing configuration, new signup is temporarily unavailable.
+
+The local registration browser fixture covers unchecked, absent, stale, and valid acceptance and finishes email verification against an isolated SMTP fixture. For hosted verification, use a test account and an external inbox you control. Verify that both document links open, signup requires acceptance, the message arrives, the code opens the signed-in app, and the same credentials work after signing out. Also exercise password recovery and check the browser against both supported domains. Record results without including codes or passwords.

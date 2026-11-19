@@ -29,6 +29,8 @@
     "@fontsource/rajdhani": "5.2.6",
     "express": "^4.22.1",
     "jsonwebtoken": "9.0.2",
+    "livekit-client": "^2.24.1",
+    "livekit-server-sdk": "^2.20.0",
     "maplibre-gl": "6.18.0",
     "nodemailer": "10.5.0",
     "pg": "8.13.3",

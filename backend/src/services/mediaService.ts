@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { ProfileRepository, SessionLike } from "./profileService";
 
-export type MediaKind = "photo_main" | "photo_gallery" | "photo_private" | "photo_verification" | "video";
+export type MediaKind = "photo_main" | "photo_gallery" | "photo_private" | "photo_verification" | "priority_proof" | "video";
 
 export type ErrorCode =
   | "ANONYMOUS_FORBIDDEN"
@@ -99,7 +99,7 @@ function asInt(v: unknown): number | null {
 }
 
 function validateKind(v: unknown): Result<MediaKind> {
-  if (v === "photo_main" || v === "photo_gallery" || v === "photo_private" || v === "photo_verification" || v === "video") return ok(v);
+  if (v === "photo_main" || v === "photo_gallery" || v === "photo_private" || v === "photo_verification" || v === "priority_proof" || v === "video") return ok(v);
   return err("INVALID_INPUT", "Invalid media kind.");
 }
 
@@ -135,7 +135,7 @@ function extensionForMime(mimeType: string): string {
 
 function objectKeyFor(userId: string, mediaId: string, mimeType: string, kind: MediaKind): string {
   const ext = extensionForMime(mimeType);
-  return `${(kind === "photo_private" || kind === "photo_verification") ? "private-profiles" : "profiles"}/${userId}/${mediaId}.${ext}`;
+  return `${(kind === "photo_private" || kind === "photo_verification" || kind === "priority_proof") ? "private-profiles" : "profiles"}/${userId}/${mediaId}.${ext}`;
 }
 
 export function createMediaService(deps: MediaServiceDeps): Readonly<{
@@ -239,7 +239,7 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
 
       const updatedAtMs = nowMs();
       const updated = (() => {
-        if (media.kind === "photo_private" || media.kind === "photo_verification") return profile;
+        if (media.kind === "photo_private" || media.kind === "photo_verification" || media.kind === "priority_proof") return profile;
         if (media.kind === "photo_main") return { ...profile, mainPhotoMediaId: id, updatedAtMs };
         if (media.kind === "video") return { ...profile, videoMediaId: id, updatedAtMs };
         const nextGallery = Array.from(new Set([...(profile.galleryMediaIds ?? []), id])).slice(0, limits(session).gallery);
@@ -270,7 +270,7 @@ export function createMediaService(deps: MediaServiceDeps): Readonly<{
       const id = asString(mediaId);
       if (!id) return err("INVALID_INPUT", "mediaId is required.");
       const media = await deps.repo.getById(id);
-      if (media?.kind === "photo_private" || media?.kind === "photo_verification") return err("UNAUTHORIZED_ACTION", "Private media requires album access.");
+      if (media?.kind === "photo_private" || media?.kind === "photo_verification" || media?.kind === "priority_proof") return err("UNAUTHORIZED_ACTION", "Private media requires album access.");
       if (!media) return err("INVALID_INPUT", "Unknown media.");
       if (!media.uploadedAtMs) return err("MEDIA_UPLOAD_INCOMPLETE", "Upload is not complete.");
       const downloadUrl = await deps.storage.presignGetObject({ bucket, key: media.objectKey, expiresInSeconds: 60 * 10 });

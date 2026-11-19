@@ -8,9 +8,14 @@ export function isRightNow(expiresAtMs: number | undefined, now = Date.now()): b
 export const INTERESTS = ["Coffee", "Food", "Fitness", "Hiking", "Music", "Nightlife", "Gaming", "Art", "Travel", "Movies", "Books", "Dogs", "Sports", "Dancing", "Community", "Outdoors"] as const;
 export const PROFILE_PROMPTS = ["A great first hello is…", "My ideal first meet…", "Ask me about…", "We’ll get along if…", "A perfect weekend includes…"] as const;
 export type PromptAnswer = { prompt: string; answer: string };
+export const PROFILE_LINK_LABELS = { instagram: "Instagram", onlyfans: "OnlyFans" } as const;
+export type ProfileLinkPlatform = keyof typeof PROFILE_LINK_LABELS;
+export type ProfileLinks = Partial<Record<ProfileLinkPlatform, { url: string; visible: boolean }>>;
+
 export type MemberPreferences = {
   intent?: Intent;
   intentExpiresAtMs?: number;
+  profileLinks?: ProfileLinks;
   rightNowStartsAtMs?: number;
   rightNowExpiresAtMs?: number;
   interests: string[];
@@ -21,7 +26,7 @@ export type MemberPreferences = {
   discovery?: { intent: Intent | ""; interest: string; verifiedOnly: boolean };
 };
 export type PhotoVerification = { status: "challenge" | "pending" | "approved" | "rejected" | "outdated"; challenge: string; expiresAtMs: number; mainPhotoMediaId: string; proofMediaId?: string; submittedAtMs?: number; reviewedAtMs?: number; reason?: string };
-export type PublicMember = Pick<MemberPreferences, "interests" | "prompts" | "rightNowExpiresAtMs"> & { intent?: Intent; intentExpiresAtMs?: number; photoVerified: boolean };
+export type PublicMember = Pick<MemberPreferences, "interests" | "prompts" | "rightNowExpiresAtMs"> & { intent?: Intent; intentExpiresAtMs?: number; photoVerified: boolean; profileLinks?: Partial<Record<ProfileLinkPlatform, string>> };
 export type MemberSettings = { preferences: MemberPreferences; verification: PhotoVerification | null; plus: boolean };
 export const DEFAULT_MEMBER: MemberPreferences = { interests: [], prompts: [], hideLocation: false, incognito: false };
 export type CommunityPlan = { id: string; hostId: string; title: string; description: string; city: string; venue: string; category: "Coffee" | "Nightlife" | "Outdoors" | "Community"; startsAtMs: number; endsAtMs: number; createdAtMs: number; attendees: string[]; canceled?: boolean };
