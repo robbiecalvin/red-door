@@ -20,10 +20,15 @@ The check uses disposable rooms and prints only its result. Both a previously us
 
 ## Self-hosted LiveKit
 
-1. Run LiveKit on a dedicated VM with a public IP. Use [the beta configuration](../deploy/livekit.beta.yaml) and supply the credentials through LiveKit’s `LIVEKIT_KEYS` secret. Keep automatic room creation disabled so expired or ended rooms cannot be reopened with previously issued credentials.
-2. Terminate HTTPS and WSS on the streaming hostname and forward to LiveKit port 7880. Expose UDP 7882 and TCP 7881 on the media host. Keep the media hostname DNS-only in Cloudflare for this setup. Configure TURN/TLS and test it from restrictive mobile and Wi-Fi networks before inviting members.
-3. On the app backend, set `LIVEKIT_URL` to the secure WebSocket URL and configure `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` using the same credentials. Run one app backend instance per dedicated LiveKit instance for this beta. A backend restart closes leftover Badehaus X rooms.
-4. Set `LIVE_BETA_ENABLED=true` in the target environment. The flag defaults to off. Signed-in members can open Live. Broadcasting controls appear after the backend confirms that the provider is configured and reachable.
+1. Use a dedicated Linux VM with Docker Compose and a public IP. In Cloudflare, add a DNS-only A record for `live.badehausx.com` pointing to the VM. Allow incoming TCP 80 and 443 for HTTPS, TCP 7881 and UDP 7882 for media, and restrict SSH to your administrative access. LiveKit’s HTTP API binds to loopback and Caddy exposes it through HTTPS and WSS.
+2. On that VM, copy the repo’s `deploy` directory and create `deploy/.env.livekit` with file permissions `0600`. Set `LIVEKIT_HOST=live.badehausx.com` and fresh random values for `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`. Generate them locally on the VM with `openssl rand -hex 16` and `openssl rand -hex 32`, respectively. Start the services from the repo root.
+
+   ```sh
+   docker compose --env-file deploy/.env.livekit -f deploy/livekit.compose.yaml up -d
+   ```
+
+3. In Render, set `LIVEKIT_URL=wss://live.badehausx.com` and enter the same key and secret. Keep `LIVE_BETA_ENABLED=false` and set `LIVEKIT_CHECK_ON_STARTUP=true`. Redeploy and check the service logs for both room-close checks. Keep automatic room creation disabled.
+4. After both checks pass, enable Live for the hosted rehearsal. Configure TURN/TLS and verify playback on restrictive mobile and Wi-Fi networks before inviting members. Run one app backend instance per dedicated LiveKit instance for this beta. A backend restart closes leftover Badehaus X rooms.
 
 ## Local verification
 

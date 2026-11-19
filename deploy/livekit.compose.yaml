@@ -1,0 +1,25 @@
+services:
+  livekit:
+    image: livekit/livekit-server:v1.9.12
+    command: ["--config", "/etc/livekit.yaml"]
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET}"
+    volumes:
+      - ./livekit.beta.yaml:/etc/livekit.yaml:ro
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      LIVEKIT_HOST: "${LIVEKIT_HOST:?Set LIVEKIT_HOST}"
+    volumes:
+      - ./livekit.Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
