@@ -5,7 +5,7 @@ import { hasPlus } from "../../../shared/plus";
 import type { CommunityRepository } from "../repositories/communityRepository";
 import type { AuthService, Session, StoredUser } from "../services/authService";
 import { MemberError, text } from "../services/memberService";
-import { commissionCents, creditStatus, type createReferralLedger } from "../services/referralLedger";
+import { commissionCents, creditStatus, summarizeReferrals, type createReferralLedger } from "../services/referralLedger";
 
 type Segment = "all" | "plus" | "free" | "priority";
 type Campaign = {
@@ -144,6 +144,7 @@ export function installGrowthRoutes(app: Express, deps: {
     return res.json({
       verified: users().filter(row => row.emailVerified && row.plusData?.priorityReferralOwnerId === actor.user.id).length,
       credits: credits.map(row => ({ status: creditStatus(row), atMs: row.earnedAtMs })),
+      ...summarizeReferrals(credits, actor.user.plusData?.priorityApprovedAtMs !== undefined),
       commissionCents
     });
   }));

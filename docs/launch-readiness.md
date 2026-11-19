@@ -4,6 +4,20 @@
 
 Updated November 15, 2026 (America/Vancouver). Domains are not required for these checks. This records evidence, not an estimated completion percentage.
 
+## Current Phase 5 rehearsal
+
+Use the production site at `https://badehausx.com/` for read-only deployment checks and controlled signup, and a separate Stripe test-mode deployment for money flows. Hosted signup and inbox delivery were confirmed by the owner. Livestreaming is listed as **Coming soon** during this release.
+
+| Gate | Pass evidence |
+| --- | --- |
+| Release | GitHub Pages `/build-sha.txt` and Render's Live deploy show the intended commit. The administrator launch panel loads with the expected backend configuration. |
+| Billing | Standard, Founder, flyer renewal, and Priority referral test prices map to the intended offers. Confirm the charge or setup, signed webhook, membership, cancellation, and renewal failure. Confirm a paid referral produces one commission and a refund updates the same ledger entry. |
+| Devices | With two controlled registered accounts across iPhone Safari and Android Chrome, verify signup, map and Right Now, messaging, private-album approval and revocation, block/report, install, and update. Record model, OS, build SHA, result, and the failing step. |
+| Privacy and moderation | Verify that an ordinary account cannot open admin controls and that a moderator can read a submitted report and act on the reported account. Identify the support inbox and person responsible for reviewing and escalating reports. |
+| Policies and rollback | Record approval of the Terms and Privacy Policy and their final versioned URLs. Confirm who owns deploying and rolling back, retain the last known good frontend/backend commits, and verify recoverable backups. |
+
+Launch approval follows the above gates. Newsletter sends, live broadcasts, and payouts require their own rollout decisions.
+
 ## Completed in the isolated rehearsal
 
 | Area | Evidence | Limit |
@@ -64,7 +78,7 @@ Use a staging backend with Stripe test keys and an active CAD 7.99 monthly test 
 5. Changing/removing a payment method updates status correctly. Verify actual webhook deliveries/retries in Stripe's dashboard.
 6. Recovery email reaches a controlled external inbox, opens the configured HTTPS frontend, changes the password once, and revokes existing sessions. Verify administrator email ownership and wrong-code rejection too.
 
-Current authentication deliberately marks ordinary registrations verified automatically; administrator verification uses emailed codes. The mail rehearsal tests that existing behavior, not a requirement that every ordinary signup receives a verification email. If all-member email ownership verification is required for launch, that is an additional auth-flow change.
+The current standalone backend requires email ownership verification for new registered accounts. Check account recovery and administrator access separately from a successful signup.
 
 ## MD rehearsal before the new domains
 

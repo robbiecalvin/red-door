@@ -1,3 +1,4 @@
+import { brandedEmail } from "./services/brandedEmail";
 import { createResendEmail, ResendDeliveryError } from "./services/resendEmail";
 import { registrationPolicy } from "./services/registrationPolicy";
 import { installGrowthRoutes } from "./routes/growthRoutes";
@@ -371,17 +372,8 @@ async function main(): Promise<void> {
       console.warn("[Badehaus X] SMS not configured. Falling back to email/console.");
     }
     if (emailSender && user.email.trim() !== "") {
-      const subject = "Badehaus X verification code";
-      const text = `Your Badehaus X verification code is ${code}. It expires in 15 minutes.`;
-      const html = `<p>Your <strong>Badehaus X</strong> verification code is:</p><p style=\"font-size:24px;font-weight:700;letter-spacing:2px;\">${code}</p><p>This code expires in 15 minutes.</p>`;
-      return emailSender
-        .sendMail({
-          from: transactionalFrom.trim(),
-          to: user.email,
-          subject,
-          text,
-          html
-        })
+      const message = brandedEmail("Badehaus X verification code", `Your Badehaus X verification code is ${code}. It expires in 15 minutes.`);
+      return emailSender.sendMail({ from: transactionalFrom.trim(), to: user.email, ...message })
         .then(result => {
           if (!result.accepted.length) throw new Error("Email was not accepted.");
           console.log(apiSender
@@ -506,7 +498,7 @@ async function main(): Promise<void> {
   function notifyReferral(ownerId: string, subject: string, text: string) {
     const owner = authService.getUser(ownerId);
     if (process.env.REFERRAL_EMAIL_ENABLED !== "true" || !emailSender || !owner?.emailVerified || owner.bannedAtMs) return;
-    void emailSender.sendMail({ from: transactionalFrom, to: owner.email, subject, text }).catch(() => {
+    void emailSender.sendMail({ from: process.env.PRIORITY_EMAIL_FROM?.trim() || transactionalFrom, to: owner.email, ...brandedEmail(subject, text) }).catch(() => {
       console.error("[Badehaus X] A referral notification could not be queued.");
     });
   }
@@ -887,11 +879,11 @@ async function main(): Promise<void> {
     auth: authService, repository: communityRepository, ledger: referralLedger, member: plusUser, admin: requireAdminSession,
     async persist() { await authPersistQueue; if (authPersistenceError) throw new Error("Consent persistence failed."); },
     send: emailSender ? async message => {
-      const result = await emailSender.sendMail({ ...message, from: process.env.MARKETING_FROM?.trim() });
+      const result = await emailSender.sendMail({ ...message, ...brandedEmail(message.subject, message.text), from: process.env.MARKETING_FROM?.trim() });
       if (!result.accepted.length) throw new Error("SMTP did not accept the message.");
     } : undefined,
     sendSummary: emailSender && process.env.REFERRAL_EMAIL_ENABLED === "true" ? async (to, text) => {
-      const result = await emailSender.sendMail({ from: transactionalFrom, to, subject: "Badehaus X Growth summary", text });
+      const result = await emailSender.sendMail({ from: transactionalFrom, to, ...brandedEmail("Badehaus X Growth summary", text) });
       if (!result.accepted.length) throw new Error("SMTP did not accept the summary.");
     } : undefined,
     notify: notifyReferral
@@ -1416,7 +1408,11 @@ async function main(): Promise<void> {
       resetBase.hash = `reset=${reset.token}`;
       void authPersistQueue.then(() => {
         if (authPersistenceError) throw new Error("Persistence unavailable");
-        return emailSender.sendMail({ from: transactionalFrom, to: reset.email, subject: "Reset your Badehaus X password", text: `Reset your password using this link: ${resetBase.toString()}\n\nIt expires in 15 minutes and can be used once. If you did not request this, ignore this email.` });
+        return emailSender.sendMail({ from: transactionalFrom, to: reset.email, ...brandedEmail(
+          "Reset your Badehaus X password",
+          "This link expires in 15 minutes and can be used once. If you did not request this, ignore this email.",
+          { label: "Reset your password", url: resetBase }
+        ) });
       }).catch(() => console.error("[Badehaus X] Password recovery delivery failed."));
     }
     return res.json({ message: "If an eligible account exists, a reset link will be sent. Check your email." });

@@ -40,7 +40,11 @@ async function account(name: string, consent = false, promoCode?: string, market
     const before=mail.messages.length;
     await request("/auth/register", { email, password: "Smoke-test123!", phoneE164: "", age:25, analyticsConsent: consent, promoCode, marketingConsent });
     await request("/auth/login", {email,password:"Smoke-test123!"},undefined,undefined,403);
-    const message=await mail.next(before),code=/verification code is (\d{6})/.exec(message)?.[1];
+    const index = mail.messages.findIndex((message, index) =>
+      index >= before && message.includes(`To: ${email}\r\n`) && message.includes("Subject: Badehaus X verification code"));
+    expect(index).toBeGreaterThanOrEqual(before);
+    const message = await mail.next(index);
+    const code = /verification code is (\d{6})/.exec(message)?.[1];
     expect(code).toMatch(/^\d{6}$/);
     await request("/auth/verify-email", {email,code});
   }
@@ -741,6 +745,9 @@ describe("Core API and payment lifecycle smoke checks", () => {
       await request("/admin/growth", undefined, viewer.token, undefined, 403);
       const report = async () => (await request("/admin/growth", undefined, admin.token)).credits.filter((row: { invoiceId: string }) => row.invoiceId === "in_referral");
       expect(await report()).toMatchObject([{ ownerId: priority.id, buyerId: referral.id, live: true, status: "pending" }]);
+      expect(await request("/membership/referrals", undefined, priority.token)).toMatchObject({
+        priority: true, lifetimeReferrals: 1, monthlyReferrals: 1, monthlyEarningsCents: 500, unpaidCents: 500, paidCents: 0
+      });
       await request("/admin/growth/commission", { invoiceId: "in_referral", action: "record-payout", reference: "fixture-transfer" }, admin.token, undefined, 409);
       await request("/admin/growth/commission", { invoiceId: "in_referral", action: "approve" }, admin.token);
       await request("/admin/growth/commission", { invoiceId: "in_referral", action: "record-payout", reference: "fixture-transfer" }, admin.token);
@@ -750,6 +757,9 @@ describe("Core API and payment lifecycle smoke checks", () => {
       expect((await customWebhook("charge.refunded", { id: "ch_referral" }, "evt_referral_refund", true)).status).toBe(200);
       expect((await webhook("invoice.paid", "evt_referral_paid", true, true)).status).toBe(200);
       expect(await report()).toMatchObject([{ status: "reversed", refundedCents: 1499, payout: { reference: "fixture-transfer" } }]);
+      expect(await request("/membership/referrals", undefined, priority.token)).toMatchObject({
+        lifetimeReferrals: 0, monthlyReferrals: 0, monthlyEarningsCents: 0, unpaidCents: 0, paidCents: 500
+      });
       expect(await request("/plus", undefined, referral.token)).toMatchObject({ active: true, expiresAtMs: trialEnd * 1000, referralOffer: false });
     } finally { providerState = prior; }
     await request("/admin/membership", { action: "revoke-priority", email: "priority-owner@example.com" }, admin.token);

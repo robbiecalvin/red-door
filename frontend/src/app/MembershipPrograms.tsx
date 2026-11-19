@@ -1,3 +1,4 @@
+import { referralCurrency, type ReferralSummary } from "../../../shared/referralSummary";
 import { PRIORITY_INVITATION_CODE } from "../../../shared/membership";
 import React, { useEffect, useState } from "react";
 import type { apiClient, PlusStatus, Session } from "./api";
@@ -6,7 +7,7 @@ type Props = { api: ReturnType<typeof apiClient>; session: Session };
 type Queue = { radiusKm: number; applications: { id: string; email: string; approved: boolean }[] };
 
 export function MembershipPrograms({ api, session }: Props) {
-  const [referrals, setReferrals] = useState<{ verified: number; credits: { status: string; atMs: number }[] } | null>(null);
+  const [referrals, setReferrals] = useState<ReferralSummary | null>(null);
   const [status, setStatus] = useState<PlusStatus | null>(null);
   const [queue, setQueue] = useState<Queue | null>(null);
   const [code, setCode] = useState("");
@@ -32,7 +33,7 @@ export function MembershipPrograms({ api, session }: Props) {
   useEffect(() => {
     let active = true;
     if (status?.priority) {
-      void api.memberRequest<{ verified: number; credits: { status: string; atMs: number }[] }>(token, "/membership/referrals")
+      void api.memberRequest<ReferralSummary>(token, "/membership/referrals")
         .then(value => { if (active) setReferrals(value); }).catch(() => {});
     }
     return () => { active = false; };
@@ -61,7 +62,13 @@ export function MembershipPrograms({ api, session }: Props) {
     {status?.priority ? <>
       <p>Priority Member · Complimentary Plus</p>
       {status.priorityReferralCode ? <p>Your personal referral code is <code>{status.priorityReferralCode}</code>.</p> : null}
-      {referrals ? <p>{referrals.verified} verified referrals · {referrals.credits.filter(row => row.status === "pending").length} pending · {referrals.credits.filter(row => row.status === "earned").length} earned · {referrals.credits.filter(row => row.status === "paid").length} paid</p> : null}
+      {referrals ? <dl className="rd-billing-summary">
+        <div><dt>Referrals this month</dt><dd>{referrals.monthlyReferrals}</dd></div>
+        <div><dt>Lifetime referrals</dt><dd>{referrals.lifetimeReferrals}</dd></div>
+        <div><dt>Earnings this month</dt><dd>{referralCurrency.format(referrals.monthlyEarningsCents / 100)}</dd></div>
+        <div><dt>Unpaid balance</dt><dd>{referralCurrency.format(referrals.unpaidCents / 100)}</dd></div>
+        <div><dt>Total paid</dt><dd>{referralCurrency.format(referrals.paidCents / 100)}</dd></div>
+      </dl> : null}
       <button className="rd-btn" disabled={busy} onClick={() => void run(() => api.memberRequest(token, "/membership/priority/resign", {}), "Priority membership ended.")}>Resign from Priority</button>
     </> : <form onSubmit={event => {
       event.preventDefault();

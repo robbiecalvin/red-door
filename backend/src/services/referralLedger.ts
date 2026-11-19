@@ -1,3 +1,4 @@
+import type { ReferralSummary } from "../../../shared/referralSummary";
 import type { CommunityRepository } from "../repositories/communityRepository";
 import { MemberError, text } from "./memberService";
 
@@ -22,6 +23,25 @@ export function creditStatus(credit: ReferralCredit) {
   if (credit.refundedCents > 0) return "refund-review";
   if (credit.payout) return "paid";
   return credit.approved ? "earned" : "pending";
+}
+
+const vancouverMonth = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Vancouver", year: "numeric", month: "numeric"
+});
+
+export function summarizeReferrals(credits: readonly ReferralCredit[], priority: boolean, now = Date.now()): ReferralSummary {
+  const live = credits.filter(credit => credit.live);
+  const qualifying = live.filter(credit => credit.refundedCents === 0);
+  const month = vancouverMonth.format(now);
+  const monthlyReferrals = qualifying.filter(credit => vancouverMonth.format(credit.earnedAtMs) === month).length;
+  return {
+    priority,
+    lifetimeReferrals: qualifying.length,
+    monthlyReferrals,
+    monthlyEarningsCents: monthlyReferrals * commissionCents,
+    unpaidCents: qualifying.filter(credit => !credit.payout).length * commissionCents,
+    paidCents: live.filter(credit => credit.payout).length * commissionCents
+  };
 }
 
 export function createReferralLedger(repository: CommunityRepository) {

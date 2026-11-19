@@ -1,3 +1,4 @@
+import { ReferralToolbar } from "./ReferralToolbar";
 import type { RegistrationPolicy } from "../../../shared/registrationPolicy";
 import { MARKETING_CONSENT_LABEL } from "../../../shared/marketing";
 import { LiveContext, useLiveState } from "./liveState";
@@ -1059,6 +1060,10 @@ export function App(): React.ReactElement {
                     <Icon name="settings" className="rd-ui-icon" />
                   </button>
                 </div>
+                <ReferralToolbar api={api} session={session} onOpen={() => {
+                  setTabAndRoute("settings");
+                  window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "membership" }));
+                }} />
               </div>
             ) : <div className="rd-brand"><span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><InstallApp /></div>}
           </div>

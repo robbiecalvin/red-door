@@ -4,7 +4,7 @@ export class ResendDeliveryError extends Error {
   }
 }
 
-type Message = { from?: string; to: string; subject: string; text: string; headers?: Record<string, string> };
+type Message = { from?: string; to: string; subject: string; text: string; html?: string; headers?: Record<string, string> };
 
 export function createResendEmail(apiKey: string, sender: string, request = fetch) {
   if (!apiKey || !sender) return null;
