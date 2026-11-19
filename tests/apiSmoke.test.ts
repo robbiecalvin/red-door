@@ -1,5 +1,5 @@
 import { createCommunityRepository } from "../backend/src/repositories/communityRepository";
-import { createReferralLedger, creditStatus } from "../backend/src/services/referralLedger";
+import { createReferralLedger, creditStatus, payoutWindow } from "../backend/src/services/referralLedger";
 import { createTlsMail } from "./fixtures/tlsMail";
 import { WebSocket } from "ws";
 import { createAuthService } from "../backend/src/services/authService";
@@ -292,11 +292,12 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(data.cohorts.find((c: any) => c.cohort === "launch").paidConversions).toBe(0);
   });
   it("Given privacy opt-out When applied Then removes participant metrics and retains anonymous totals", async () => {
+    const before = await request("/admin/analytics", undefined, admin.token);
     await request("/account/privacy", { analyticsConsent: false }, bob.token, "PUT");
     expect((await request("/account/privacy", undefined, bob.token)).analyticsConsent).toBe(false);
     const data = await request("/admin/analytics", undefined, admin.token);
     expect(data.cohorts.find((c: any) => c.cohort === "free").participants).toBe(1);
-    expect(data.totals.registrations).toBe(Date.now() < LAUNCH_END_MS ? 3 : 2);
+    expect(data.totals.registrations).toBe(before.totals.registrations);
   });
   it("Given a Stripe sandbox payment When confirmed Then separates it from real paid conversion", async () => {
     const user = await account("sandbox", true);
@@ -687,6 +688,17 @@ describe("Core API and payment lifecycle smoke checks", () => {
   it("redeems Priority without a screenshot, respects discovery constraints, and gates referrals on paid proof", async () => {
     const priority = await account("priority-owner", false, "PRIORITY X90");
     const viewer = await account("priority-viewer");
+    const payoutContact = "/membership/payout-contact";
+    await request(payoutContact, undefined, viewer.token, undefined, 403);
+    await request(payoutContact, { contact: { kind: "email", value: "invalid" } }, priority.token, "PUT", 400);
+    await request(payoutContact, { contact: { kind: "phone", value: "too short" } }, priority.token, "PUT", 400);
+    expect(await request(payoutContact, { contact: { kind: "phone", value: "(604) 555-0140" } }, priority.token, "PUT"))
+      .toEqual({ contact: { kind: "phone", value: "+16045550140" } });
+    const contact = { kind: "email", value: "transfer-fixture@example.com" };
+    await request(payoutContact, { contact }, priority.token, "PUT");
+    expect(await request(payoutContact, undefined, priority.token)).toEqual({ contact });
+    expect(JSON.stringify(await request("/plus", undefined, priority.token))).not.toContain(contact.value);
+
     expect(await request("/plus", undefined, priority.token)).toMatchObject({ priority: true, active: true });
     await request("/profile/me", { displayName: "Priority Member Test", age: 25, bio: "Hello" }, priority.token, "PUT");
     const apply = "/membership/priority/apply";
@@ -744,21 +756,25 @@ describe("Core API and payment lifecycle smoke checks", () => {
       expect((await webhook("invoice.paid", "evt_referral_paid", true, true)).status).toBe(200);
       await request("/admin/growth", undefined, viewer.token, undefined, 403);
       const report = async () => (await request("/admin/growth", undefined, admin.token)).credits.filter((row: { invoiceId: string }) => row.invoiceId === "in_referral");
-      expect(await report()).toMatchObject([{ ownerId: priority.id, buyerId: referral.id, live: true, status: "pending" }]);
+      expect(await report()).toMatchObject([{ ownerId: priority.id, buyerId: referral.id, live: true, status: "pending", payoutContact: contact }]);
       expect(await request("/membership/referrals", undefined, priority.token)).toMatchObject({
         priority: true, lifetimeReferrals: 1, monthlyReferrals: 1, monthlyEarningsCents: 500, unpaidCents: 500, paidCents: 0
       });
       await request("/admin/growth/commission", { invoiceId: "in_referral", action: "record-payout", reference: "fixture-transfer" }, admin.token, undefined, 409);
       await request("/admin/growth/commission", { invoiceId: "in_referral", action: "approve" }, admin.token);
-      await request("/admin/growth/commission", { invoiceId: "in_referral", action: "record-payout", reference: "fixture-transfer" }, admin.token);
-      expect(await report()).toMatchObject([{ status: "paid", payout: { reference: "fixture-transfer" } }]);
+      await request("/admin/growth/payout", { ownerId: priority.id, invoiceIds: ["in_referral"], reference: "fixture-transfer" }, viewer.token, undefined, 403);
+      await request("/admin/growth/payout", { ownerId: viewer.id, invoiceIds: ["in_referral"], reference: "fixture-transfer" }, admin.token, undefined, 409);
+      const paid = await report();
+      expect(paid).toMatchObject([{ status: "earned", payoutContact: contact }]);
+      await request(payoutContact, { contact: null }, priority.token, "PUT");
+      expect(await request(payoutContact, undefined, priority.token)).toEqual({ contact: null });
       referralRefundCents = 1499;
       expect((await customWebhook("charge.refunded", { id: "ch_referral" }, "evt_referral_refund", true)).status).toBe(200);
       expect((await customWebhook("charge.refunded", { id: "ch_referral" }, "evt_referral_refund", true)).status).toBe(200);
       expect((await webhook("invoice.paid", "evt_referral_paid", true, true)).status).toBe(200);
-      expect(await report()).toMatchObject([{ status: "reversed", refundedCents: 1499, payout: { reference: "fixture-transfer" } }]);
+      expect(await report()).toMatchObject([{ status: "reversed", refundedCents: 1499 }]);
       expect(await request("/membership/referrals", undefined, priority.token)).toMatchObject({
-        lifetimeReferrals: 0, monthlyReferrals: 0, monthlyEarningsCents: 0, unpaidCents: 0, paidCents: 500
+        lifetimeReferrals: 0, monthlyReferrals: 0, monthlyEarningsCents: 0, unpaidCents: 0, paidCents: 0
       });
       expect(await request("/plus", undefined, referral.token)).toMatchObject({ active: true, expiresAtMs: trialEnd * 1000, referralOffer: false });
     } finally { providerState = prior; }
@@ -813,6 +829,94 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(await ledger.record({ ...credit, invoiceId: "in_sandbox", live: false })).toBe(true);
     await expect(ledger.review("in_sandbox", "admin", "approve", undefined)).rejects.toMatchObject({ status: 404 });
     expect(await ledger.record({ ...credit, buyerId: credit.ownerId, invoiceId: "in_self" })).toBe(false);
+  });
+
+  it("rehearses a grouped Priority payout through the admin API", async () => {
+    const owner = await account("payout-rehearsal", false, "PRIORITY X90");
+    const contact = { kind: "email", value: "payout-rehearsal@example.com" };
+    await request("/membership/payout-contact", { contact }, owner.token, "PUT");
+    const { payoutWindow: { closedAtMs } } = await request("/admin/growth", undefined, admin.token);
+    const invoiceIds = ["rehearsal-one", "rehearsal-two"];
+
+    const subsequentInvoices = ["rehearsal-three", "rehearsal-four"];
+
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    const repository = await createCommunityRepository(null, path.join(backendCwd ?? root, "backend/.data/community.json"));
+    await repository.update(state => {
+      const ledger = (state.settings.referralLedger ??= { credits: [], refunds: {} }) as {
+        credits: import("../backend/src/services/referralLedger").ReferralCredit[]
+      };
+      // Simulate live invoice credits in the isolated fixture because sandbox credits are excluded from payouts.
+      ledger.credits.push(...[...invoiceIds, ...subsequentInvoices].map(invoiceId => ({
+        invoiceId, ownerId: owner.id, buyerId: "buyer-" + invoiceId,
+        live: true, grossCents: 1499, refundedCents: 0, earnedAtMs: closedAtMs - 1,
+        approved: invoiceIds.includes(invoiceId) ? { actorId: admin.id, atMs: closedAtMs } : undefined
+      })));
+    });
+    await startBackend();
+
+    const operator = await account("admin");
+    const login = await request("/auth/login", { email: "payout-rehearsal@example.com", password: "Smoke-test123!" });
+    const groups = async () => (await request("/admin/growth", undefined, operator.token)).payouts;
+    expect(await groups()).toContainEqual(expect.objectContaining({ id: owner.id, contact, invoiceIds }));
+    const payout = { ownerId: owner.id, invoiceIds, reference: "MOCK-TRANSFER-001" };
+    expect(await request("/admin/growth/payout", payout, operator.token)).toEqual({ ok: true, paidCents: 1000 });
+    await request("/admin/growth/payout", payout, operator.token, undefined, 409);
+    expect(await groups()).not.toContainEqual(expect.objectContaining({ id: owner.id }));
+    expect(await request("/membership/referrals", undefined, login.session.sessionToken)).toMatchObject({ unpaidCents: 1000, paidCents: 1000 });
+    const dispute = { invoiceId: invoiceIds[0], disputeId: "dp_rehearsal", outcome: "lost" };
+    await request("/admin/growth/chargeback", dispute, login.session.sessionToken, undefined, 403);
+    await request("/admin/growth/chargeback", dispute, operator.token);
+    await request("/admin/growth/chargeback", dispute, operator.token, undefined, 409);
+    await request("/admin/growth/chargeback", { invoiceId: invoiceIds[1], disputeId: "dp_won", outcome: "won" }, operator.token);
+    expect(await request("/membership/referrals", undefined, login.session.sessionToken)).toMatchObject({
+      paidCents: 1000, pendingAdjustmentCents: 500, payoutAdjustments: []
+    });
+    for (const invoiceId of subsequentInvoices) {
+      await request("/admin/growth/commission", { invoiceId, action: "approve" }, operator.token);
+    }
+    expect(await groups()).toContainEqual(expect.objectContaining({
+      id: owner.id, invoiceIds: subsequentInvoices, netCents: 500, adjustmentCents: 500
+    }));
+    const nextPayout = { ownerId: owner.id, invoiceIds: subsequentInvoices, reference: "MOCK-TRANSFER-002" };
+    await request("/admin/growth/payout", { ...nextPayout, expectedCents: 1000 }, operator.token, undefined, 409);
+    expect(await request("/admin/growth/payout", { ...nextPayout, expectedCents: 500 }, operator.token))
+      .toEqual({ ok: true, paidCents: 500 });
+    await request("/admin/growth/payout", { ...nextPayout, expectedCents: 500 }, operator.token, undefined, 409);
+    expect(await request("/membership/referrals", undefined, login.session.sessionToken)).toMatchObject({
+      unpaidCents: 0, paidCents: 1500, pendingAdjustmentCents: 0, payoutAdjustments: [{ cents: 500 }]
+    });
+  });
+
+  it("uses 11 p.m. Pacific third-Friday cutoffs and records a batch once", async () => {
+    const before = Date.parse("2025-11-22T06:59:59Z");
+    const cutoff = Date.parse("2025-11-22T07:00:00Z");
+    expect(payoutWindow(before).nextAtMs).toBe(cutoff);
+    expect(payoutWindow(cutoff).closedAtMs).toBe(cutoff);
+    expect(payoutWindow(Date.parse("2026-07-18T05:59:59Z")).nextAtMs).toBe(Date.parse("2026-07-18T06:00:00Z"));
+    const ledger = createReferralLedger(await createCommunityRepository(null, path.join(root, "monthly-payout-fixture.json")));
+    const clock = jest.spyOn(Date, "now").mockReturnValue(before);
+    try {
+      for (const id of ["one", "two"]) {
+        await ledger.record({ ownerId: "owner", buyerId: id, invoiceId: id, live: true, grossCents: 1499 });
+        await ledger.review(id, "admin", "approve");
+      }
+      clock.mockReturnValue(cutoff + 1);
+      await ledger.record({ ownerId: "owner", buyerId: "next", invoiceId: "next", live: true, grossCents: 1499 });
+      await ledger.review("next", "admin", "approve");
+      await expect(ledger.recordPayout("owner", ["one", "two"], "admin", "transfer", before)).rejects.toMatchObject({ status: 409 });
+      await expect(ledger.recordPayout("owner", ["one", "next"], "admin", "transfer", cutoff + 1)).rejects.toMatchObject({ status: 409 });
+      expect(await ledger.recordPayout("owner", ["one", "two"], "admin", "transfer", cutoff + 1)).toBe(1000);
+      await expect(ledger.recordPayout("owner", ["one", "two"], "admin", "transfer", cutoff + 1)).rejects.toMatchObject({ status: 409 });
+      expect((await ledger.list()).map(creditStatus)).toEqual(["paid", "paid", "earned"]);
+      await ledger.resolveChargeback("one", "dp_fixture", "lost", "admin");
+      expect((await ledger.list())[0]).toMatchObject({ payout: { reference: "transfer" }, chargeback: { outcome: "lost" } });
+      const nextCutoff = payoutWindow(cutoff).nextAtMs;
+      await expect(ledger.recordPayout("owner", ["next"], "admin", "offset", nextCutoff, 500)).rejects.toMatchObject({ status: 409 });
+      expect(await ledger.recordPayout("owner", ["next"], "admin", "offset", nextCutoff, 0)).toBe(0);
+      expect((await ledger.list())[0]?.chargeback?.applied).toEqual({ atMs: nextCutoff, reference: "offset" });
+    } finally { clock.mockRestore(); }
   });
 
 });

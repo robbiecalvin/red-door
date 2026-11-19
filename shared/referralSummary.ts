@@ -5,6 +5,8 @@ export type ReferralSummary = {
   monthlyEarningsCents: number;
   unpaidCents: number;
   paidCents: number;
+  pendingAdjustmentCents?: number;
+  payoutAdjustments?: { atMs: number; cents: number }[];
 };
 
 export const referralCurrency = new Intl.NumberFormat("en-CA", {

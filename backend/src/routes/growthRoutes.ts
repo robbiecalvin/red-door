@@ -1,3 +1,4 @@
+import type { PayoutContact } from "../../../shared/payoutContact";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { MARKETING_CONSENT_VERSION, type MarketingConsent } from "../../../shared/marketing";
@@ -5,7 +6,7 @@ import { hasPlus } from "../../../shared/plus";
 import type { CommunityRepository } from "../repositories/communityRepository";
 import type { AuthService, Session, StoredUser } from "../services/authService";
 import { MemberError, text } from "../services/memberService";
-import { commissionCents, creditStatus, summarizeReferrals, type createReferralLedger } from "../services/referralLedger";
+import { commissionCents, creditStatus, eligibleForPayout, payoutWindow, pendingChargeback, summarizeReferrals, type createReferralLedger } from "../services/referralLedger";
 
 type Segment = "all" | "plus" | "free" | "priority";
 type Campaign = {
@@ -138,6 +139,33 @@ export function installGrowthRoutes(app: Express, deps: {
   let wake: NodeJS.Timeout | undefined;
   const timer = setInterval(() => void deliver().catch(() => {}), 15_000).unref();
 
+  app.get("/membership/payout-contact", route(async (req, res) => {
+    const actor = deps.member(req, res); if (!actor) return;
+    if (actor.user.plusData?.priorityApprovedAtMs === undefined) throw new MemberError("FORBIDDEN", "Priority membership is required.", 403);
+    return res.json({ contact: actor.user.plusData.payoutContact ?? null });
+  }));
+  app.put("/membership/payout-contact", route(async (req, res) => {
+    const actor = deps.member(req, res); if (!actor) return;
+    if (actor.user.plusData?.priorityApprovedAtMs === undefined) throw new MemberError("FORBIDDEN", "Priority membership is required.", 403);
+    const input = req.body?.contact;
+    let contact: PayoutContact | undefined;
+    if (input !== null) {
+      if (input?.kind !== "email" && input?.kind !== "phone") throw new MemberError("INVALID_INPUT", "Choose email or phone.");
+      const raw = text(input.value, 254, "E-transfer contact");
+      if (input.kind === "email") {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) throw new MemberError("INVALID_INPUT", "Enter a valid email address.");
+        contact = { kind: "email", value: raw };
+      } else {
+        const number = raw.replace(/[ (.)-]/g, "");
+        if (!/^(?:\+?1)?[2-9][0-9]{9}$/.test(number)) throw new MemberError("INVALID_INPUT", "Enter a valid 10-digit phone number, optionally starting with +1.");
+        contact = { kind: "phone", value: `+1${number.slice(-10)}` };
+      }
+    }
+    deps.auth.updatePlus(actor.user.id, { plusData: { ...actor.user.plusData, payoutContact: contact } });
+    await deps.persist();
+    return res.json({ contact: contact ?? null });
+  }));
+
   app.get("/membership/referrals", route(async (req, res) => {
     const actor = deps.member(req, res); if (!actor) return;
     const credits = (await deps.ledger.list()).filter(row => row.live && row.ownerId === actor.user.id);
@@ -166,14 +194,37 @@ export function installGrowthRoutes(app: Express, deps: {
     if (!deps.admin(req, res)) return;
     const members = users();
     const credits = await deps.ledger.list();
+    const window = payoutWindow();
+    const payoutGroups = new Map<string, { id: string; name: string; contact?: PayoutContact; invoiceIds: string[] }>();
+    for (const credit of credits) {
+      if (!eligibleForPayout(credit, window.closedAtMs)) continue;
+      const owner = deps.auth.getUser(credit.ownerId);
+      const group = payoutGroups.get(credit.ownerId) ?? {
+        id: credit.ownerId, name: owner?.email ?? "Referral owner", contact: owner?.plusData?.payoutContact, invoiceIds: []
+      };
+      group.invoiceIds.push(credit.invoiceId);
+      payoutGroups.set(credit.ownerId, group);
+    }
     const campaignRows = await campaigns();
     return res.json({
       referrals: members.filter(row => row.plusData?.priorityReferralOwnerId).length,
       verifiedReferrals: members.filter(row => row.emailVerified && row.plusData?.priorityReferralOwnerId).length,
       marketingSubscribers: members.filter(row => inAudience(row, "all")).length,
       marketingSendingEnabled: sendingEnabled,
+      payoutWindow: window,
+      payouts: [...payoutGroups.values()].map(group => {
+        const adjustments = credits.filter(credit => credit.ownerId === group.id && pendingChargeback(credit)).length;
+        const adjustmentCents = Math.min(adjustments, group.invoiceIds.length) * commissionCents;
+        return { ...group, adjustmentCents, netCents: group.invoiceIds.length * commissionCents - adjustmentCents };
+      }),
       commissionCents,
-      credits: credits.map(row => ({ ...row, ownerEmail: deps.auth.getUser(row.ownerId)?.email, status: creditStatus(row) })),
+      credits: credits.map(row => {
+        const owner = deps.auth.getUser(row.ownerId);
+        const status = creditStatus(row);
+        return { ...row, ownerEmail: owner?.email, status,
+          payoutContact: row.live && (status === "pending" || status === "earned") ? owner?.plusData?.payoutContact : undefined
+        };
+      }),
       campaigns: campaignRows.map(({ body, deliveries, ...row }) => ({ ...row,
         accepted: Object.values(deliveries).filter(status => status === "accepted").length,
         failed: Object.values(deliveries).filter(status => status === "failed").length,
@@ -184,9 +235,24 @@ export function installGrowthRoutes(app: Express, deps: {
   app.post("/admin/growth/commission", route(async (req, res) => {
     const actor = deps.admin(req, res); if (!actor?.userId) return;
     const row = await deps.ledger.review(text(req.body?.invoiceId, 120, "Invoice"), actor.userId, req.body?.action, req.body?.reference);
-    if (row.payout) deps.notify(row.ownerId, "Badehaus X referral payout recorded", "A CAD $5.00 referral payout was recorded.");
-    else deps.notify(row.ownerId, "Badehaus X referral commission approved", "A CAD $5.00 referral commission was approved.");
+    deps.notify(row.ownerId, "Badehaus X referral commission approved", "A CAD $5.00 referral commission was approved.");
     return res.json({ ok: true });
+  }));
+  app.post("/admin/growth/chargeback", route(async (req, res) => {
+    const actor = deps.admin(req, res); if (!actor?.userId) return;
+    await deps.ledger.resolveChargeback(text(req.body?.invoiceId, 120, "Invoice"), req.body?.disputeId, req.body?.outcome, actor.userId);
+    return res.json({ ok: true });
+  }));
+  app.post("/admin/growth/payout", route(async (req, res) => {
+    const actor = deps.admin(req, res); if (!actor?.userId) return;
+    const ownerId = text(req.body?.ownerId, 120, "Member");
+    const invoiceIds = req.body?.invoiceIds;
+    if (!Array.isArray(invoiceIds) || !invoiceIds.length || invoiceIds.some(id => typeof id !== "string" || !id || id.length > 120)) {
+      throw new MemberError("INVALID_INPUT", "Choose commissions to record.");
+    }
+    const paidCents = await deps.ledger.recordPayout(ownerId, invoiceIds, actor.userId, req.body?.reference, Date.now(), req.body?.expectedCents);
+    deps.notify(ownerId, "Badehaus X referral payout recorded", `A CAD $${(paidCents / 100).toFixed(2)} referral payout was recorded.`);
+    return res.json({ ok: true, paidCents });
   }));
   app.post("/admin/growth/campaign", route(async (req, res) => {
     const actor = deps.admin(req, res); if (!actor?.userId) return;
