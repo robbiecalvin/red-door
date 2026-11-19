@@ -1,6 +1,6 @@
 # Badehaus X launch policy package
 
-The owner approved the policy drafts on November 19, 2026. Publication requires the operator's legal name, jurisdiction, effective date, and verified support, privacy and reporting contacts. Confirm the product practices described here against production configuration and current law before approval.
+The owner approved the policy drafts on November 19, 2026. The owner excluded the operator name, jurisdiction, and support and privacy contact fields from this launch scope. The policy pages have not been published.
 
 ## Terms of Service
 
@@ -8,7 +8,7 @@ Badehaus X is for adults aged 18 and older. Use accurate age and account informa
 
 You retain ownership of your submissions. You give Badehaus X permission to host, display and moderate the material as needed to provide the features you use. Public articles may be read by visitors. Editorial submissions are reviewed before publication unless published directly by the operator. You can ask support to remove a contribution. Discuss any third-party rights or publication permissions with the editor before submitting.
 
-Badehaus X may restrict access or remove material for safety, legal or policy reasons. You can ask for a review through the approved support channel. The operator must confirm governing law, consumer rights, and dispute terms before publication.
+Badehaus X may restrict access or remove material for safety, legal or policy reasons. You can ask for a review through the approved support channel.
 
 ## Privacy Policy
 
@@ -16,7 +16,7 @@ We handle account details, optional profile fields, information used to run disc
 
 Choose what you disclose in your profile. Precise location shared in a conversation should be treated as sensitive. Keep other people's information private. E-transfer contacts are used for payout administration. Any approved payout sheet must be private and limited to authorized operators.
 
-Contact the verified privacy address to request access, correction or deletion where available. The operator should document how it verifies and responds to such requests. Confirm consent and retention rules for analytics, SMS, marketing email and age information.
+You can request access, correction or deletion where available. The operator should document how it verifies and responds to such requests. Confirm consent and retention rules for analytics, SMS, marketing email and age information.
 
 ## Community and moderation
 
@@ -34,4 +34,4 @@ Priority referral commissions are CAD $5 for each qualifying payment confirmed b
 
 ## Newsletter and invitations
 
-Newsletter registration is optional. Each marketing newsletter includes an unsubscribe link. Confirm the exact sender identity, contact information and consent record requirements before sending. Verify SMS consent for each invitation recipient and test the invitation link and opt-out instructions using an authorized test number before distribution.
+Newsletter registration is optional. Each marketing newsletter includes an unsubscribe link. Verify recipient consent and the sending configuration before sending. Verify SMS consent for each invitation recipient and test the invitation link and opt-out instructions using an authorized test number before distribution.
