@@ -1,3 +1,4 @@
+import { backroomLaunch } from "../../../shared/backroomLaunch";
 import { publishedArticles } from "./backroomRoutes";
 import type { PayoutContact } from "../../../shared/payoutContact";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -182,10 +183,17 @@ export function installGrowthRoutes(app: Express, deps: {
       : null;
     const sections = [`Badehaus X weekly · ${weekStart} to ${weekEnd} (UTC, end exclusive)`];
     if (signupCount !== null) sections.push(`New registrations: ${signupCount}`);
-    if (articles.length) {
+    const launchDay = "2026-11-19";
+    const editorial = [
+      ...(launchDay >= weekStart && launchDay < weekEnd ? backroomLaunch.map(article => ({
+        ...article, url: `https://badehausx.com/thebackroom/${article.slug}/`
+      })) : []),
+      ...articles.map(article => ({ ...article, url: `https://badehausx.com/thebackroom/#${article.slug}` }))
+    ];
+    if (editorial.length) {
       sections.push("New in The Backroom");
-      for (const article of articles) {
-        const item = `${article.title}\n${article.synopsis}\nhttps://badehausx.com/thebackroom/#${article.slug}`;
+      for (const article of editorial) {
+        const item = `${article.title}\n${article.synopsis}\n${article.url}`;
         if (sections.join("\n\n").length + item.length + 2 > 3500) break;
         sections.push(item);
       }

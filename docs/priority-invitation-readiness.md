@@ -1,19 +1,19 @@
 # Priority invitation readiness
 
-23 of 38 milestones are accounted for (22 complete for implementation or review, one waived by the owner), using the same milestone counts as the initial 12 of 38 estimate. Hosted verification, editorial approval, and permission to send remain separate gates. The owner approved the social copy and policy drafts on November 19, 2026.
+25 of 38 milestones are accounted for (24 complete for implementation or review, one waived by the owner), using the same milestone counts as the initial 12 of 38 estimate. Hosted verification, editorial approval, and permission to send remain separate gates. The owner approved the social copy and policy drafts on November 19, 2026.
 
 | Area | Complete | Remaining |
 | --- | ---: | --- |
 | Priority referrals and payouts | 5/7 | Provision and reconcile the private Google Sheet. Verify the production payout email with the approved sender and a controlled recipient. The feed and email passed an isolated rehearsal. |
 | Email and notifications | 2/5 | Sender and inbox setup, remaining notifications, retry and delivery verification. |
 | Newsletter | 4/5 | Send and verify an approved test edition on the hosted configuration. The draft generator and review step are implemented. |
-| The Backroom | 4/5 | Prepare and approve launch articles. Public reading, Priority drafts and submissions, and admin review passed local checks. Publish the feature revision and confirm its live URL. |
+| The Backroom | 5/5 | Five owner-approved launch articles and cover graphics are included in the publication revision. |
 | After Dark | 1/5 | Story publishing, likes, moderation, and provider review. |
 | Social campaign | 3/3 | The four-week calendar, 28 captions and 28 original graphics have owner approval. Publishing is pending. |
 | Legal and policies | 4/4 | The owner approved the policy drafts and waived adding operator, jurisdiction, support and privacy contact fields for this launch. Publication is pending. |
-| Invitation texts | 0/4 | Approve copy, verify candidates and SMS consent, run a controlled phone test, and authorize sending. |
+| Invitation texts | 1/4 | Verify SMS consent for the confirmed candidates, run a controlled phone test, and authorize sending. |
 
-## Invitation copy for review
+## Approved invitation copy
 
 You’re invited to Priority on Badehaus X, the new gay cruising app. 🔥
 

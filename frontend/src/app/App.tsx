@@ -1071,6 +1071,7 @@ export function App(): React.ReactElement {
             ) : <div className="rd-brand"><span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><InstallApp /></div>}
           </div>
         </header>
+        <nav aria-label="Badehaus X information" className="rd-row" style={{ padding: "0.5rem 1rem" }}><a href="./legal/">Policies</a>{!session?.ageVerified ? <a href="./thebackroom/">The Backroom</a> : null}</nav>
       {session && session.ageVerified === true && topMenuOpen ? (
         <div className="rd-top-collapse" role="dialog" aria-label="Account functions">
           {session.role === "admin" ? <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setAnalyticsOpen(true); }} aria-label="Open activity dashboard"><Icon name="board" className="rd-ui-icon" /></button> : null}

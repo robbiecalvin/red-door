@@ -1,3 +1,4 @@
+import { backroomLaunch } from "../../../shared/backroomLaunch";
 import type { Express, Request, Response } from "express";
 import type { Article } from "../../../shared/backroom";
 import type { CommunityRepository } from "../repositories/communityRepository";
@@ -46,6 +47,7 @@ export function installBackroomRoutes(app: Express, deps: {
     if (!admin && actor.user.plusData?.priorityApprovedAtMs === undefined) throw new MemberError("FORBIDDEN", "Priority access is required.", 403);
     const slug = req.params.slug;
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length > 80) throw new MemberError("INVALID_INPUT", "Pick a URL slug using lowercase letters, digits and hyphens.");
+    if (backroomLaunch.some(article => article.slug === slug)) throw new MemberError("CONFLICT", "This slug is already published.", 409);
     const action = req.body?.action;
     if (action !== "draft" && action !== "submit") throw new MemberError("INVALID_INPUT", "Choose whether to save or submit.");
     const status = action === "draft" ? "draft" : admin ? "published" : "pending";

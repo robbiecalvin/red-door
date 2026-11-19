@@ -1,3 +1,4 @@
+import { backroomLaunch } from "../../../shared/backroomLaunch";
 import React, { useEffect, useState } from "react";
 import type { Article } from "../../../shared/backroom";
 import type { apiClient, Session } from "./api";
@@ -52,7 +53,15 @@ export function Backroom({ api, session }: Props) {
     }
   }
   return <main className="rd-settings-body" style={{ maxWidth: 760, margin: "auto", padding: "clamp(18px, 5vw, 64px)" }}>
-    <header><a href="../">Badehaus X{session?.userId ? "" : " · Sign in"}</a><h1>The Backroom</h1></header>
+    <header><a href="../">Badehaus X{session?.userId ? "" : " · Sign in"}</a> · <a href="../legal/">Policies</a><h1>The Backroom</h1></header>
+    {!article ? <section aria-label="Launch articles">
+      {backroomLaunch.map(entry => <article className="rd-card rd-settings-body" key={entry.slug}>
+        <a href={`./${entry.slug}/`}>
+          <img style={{ width: "100%", height: "auto" }} width={1200} height={600} loading="lazy" src={`./covers/${entry.slug}.png`} alt="" />
+          <h2>{entry.title}</h2>
+        </a><p>{entry.synopsis}</p>
+      </article>)}
+    </section> : null}
     {article ? <article className="rd-card rd-settings-body">
       <a href="#">All articles</a>
       <h2>{article.title}</h2>
@@ -61,7 +70,7 @@ export function Backroom({ api, session }: Props) {
       <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{article.body}</div>
     </article> : articles?.length ? articles.map(item => <article className="rd-card rd-settings-body" key={item.slug}>
       <h2><a href={`#${item.slug}`}>{item.title}</a></h2><p>{item.synopsis}</p>
-    </article>) : <p>{articles ? "Articles will appear here when published." : "Loading articles…"}</p>}
+    </article>) : null}
     {editor ? <section className="rd-card rd-settings-body">
       <h2>{editor.admin ? "Editorial desk" : "Contribute an article"}</h2>
       {editor.articles.map(item => <details key={item.slug}>
