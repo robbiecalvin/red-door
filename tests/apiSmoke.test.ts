@@ -61,9 +61,10 @@ async function webhook(type: string, id: string, valid = true, livemode = false)
 }
 let admin: { token: string; id: string }, alice: { token: string; id: string }, bob: { token: string; id: string };
 let backendCwd: string | undefined;
-async function startBackend(){
+const sheetsToken = "fixture-only-priority-sheets-passphrase";
+async function startBackend(referralEmail = false){
   backend = spawn(process.execPath, ["--import", require.resolve("tsx"), "--import", path.resolve(__dirname, "fixtures/stripe-fetch.mjs"), path.resolve(__dirname, "../backend/src/server.ts")], {
-    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", NODE_EXTRA_CA_CERTS:mail.ca, SMTP_HOST: "127.0.0.1", SMTP_PORT:String(mail.port), SMTP_SECURE:"true", SMTP_USER:"fixture-user", SMTP_PASS:"fixture-pass", SMTP_FROM:"noreply@example.com", MARKETING_SEND_ENABLED:"true", MARKETING_FROM:"news@example.com", MARKETING_CONTACT_ADDRESS:"Badehaus X fixture postal address", MARKETING_PUBLIC_API_URL:"https://example.com", REFERRAL_EMAIL_ENABLED:"false", TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", STRIPE_FOUNDER_PRICE_ID: founderPrice.id, STRIPE_PRIORITY_RENEWAL_PRICE_ID: referralPrice.id, STRIPE_PRIORITY_INTRO_PRICE_ID: introPrice.id, PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
+    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", NODE_EXTRA_CA_CERTS:mail.ca, SMTP_HOST: "127.0.0.1", SMTP_PORT:String(mail.port), SMTP_SECURE:"true", SMTP_USER:"fixture-user", SMTP_PASS:"fixture-pass", SMTP_FROM:"noreply@example.com", MARKETING_SEND_ENABLED:"true", MARKETING_FROM:"news@example.com", MARKETING_CONTACT_ADDRESS:"Badehaus X fixture postal address", MARKETING_PUBLIC_API_URL:"https://example.com", REFERRAL_EMAIL_ENABLED:String(referralEmail), PRIORITY_SHEETS_SYNC_TOKEN:sheetsToken, TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", STRIPE_FOUNDER_PRICE_ID: founderPrice.id, STRIPE_PRIORITY_RENEWAL_PRICE_ID: referralPrice.id, STRIPE_PRIORITY_INTRO_PRICE_ID: introPrice.id, PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
   });
   let startup = ""; backend.stderr?.on("data", chunk => { startup += chunk; });
   let ready = false;
@@ -831,6 +832,29 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(await ledger.record({ ...credit, buyerId: credit.ownerId, invoiceId: "in_self" })).toBe(false);
   });
 
+  it("keeps Backroom drafts private, then publishes reviewed contributions", async () => {
+    const author = await account("backroom-priority", false, "PRIORITY X90");
+    const reader = await account("backroom-reader");
+    const route = "/backroom/editor/voices-after-midnight";
+    const article = { title: "Voices after midnight", byline: "Night editor", synopsis: "An editorial feature.", body: "The room is open." };
+    await request(route, { ...article, action: "draft" }, reader.token, "PUT", 403);
+    await request(route, { ...article, action: "draft" }, author.token, "PUT");
+    expect(await request("/backroom/articles")).toEqual([]);
+    await request(route, { ...article, action: "submit" }, author.token, "PUT");
+    await request("/backroom/review/voices-after-midnight", { action: "publish" }, author.token, undefined, 403);
+    await request(route, { ...article, action: "draft" }, author.token, "PUT", 409);
+    await request("/backroom/review/voices-after-midnight", { action: "publish" }, admin.token);
+    const result = await request("/backroom/articles");
+    expect(result).toMatchObject([{ ...article, status: "published", slug: "voices-after-midnight" }]);
+    expect(result[0].authorId).toBeUndefined();
+    await request("/admin/growth/newsletter-draft", undefined, author.token, undefined, 403);
+    const draft = await request("/admin/growth/newsletter-draft", undefined, admin.token);
+    expect(draft.subject).toContain("Badehaus X weekly");
+    expect(draft.body).not.toContain("New registrations:");
+    const withSignups = await request("/admin/growth/newsletter-draft?includeSignups=true", undefined, admin.token);
+    expect(withSignups.body).toMatch(/New registrations: \d+/);
+  });
+
   it("rehearses a grouped Priority payout through the admin API", async () => {
     const owner = await account("payout-rehearsal", false, "PRIORITY X90");
     const contact = { kind: "email", value: "payout-rehearsal@example.com" };
@@ -854,15 +878,18 @@ describe("Core API and payment lifecycle smoke checks", () => {
         approved: invoiceIds.includes(invoiceId) ? { actorId: admin.id, atMs: closedAtMs } : undefined
       })));
     });
-    await startBackend();
+    await startBackend(true);
 
     const operator = await account("admin");
     const login = await request("/auth/login", { email: "payout-rehearsal@example.com", password: "Smoke-test123!" });
     const groups = async () => (await request("/admin/growth", undefined, operator.token)).payouts;
     expect(await groups()).toContainEqual(expect.objectContaining({ id: owner.id, contact, invoiceIds }));
+    const messageIndex = mail.messages.length;
     const payout = { ownerId: owner.id, invoiceIds, reference: "MOCK-TRANSFER-001" };
     expect(await request("/admin/growth/payout", payout, operator.token)).toEqual({ ok: true, paidCents: 1000 });
     await request("/admin/growth/payout", payout, operator.token, undefined, 409);
+    expect(await mail.next(messageIndex)).toContain("Subject: Badehaus X referral payout recorded");
+    expect(mail.messages.filter(message => message.includes("Subject: Badehaus X referral payout recorded"))).toHaveLength(1);
     expect(await groups()).not.toContainEqual(expect.objectContaining({ id: owner.id }));
     expect(await request("/membership/referrals", undefined, login.session.sessionToken)).toMatchObject({ unpaidCents: 1000, paidCents: 1000 });
     const dispute = { invoiceId: invoiceIds[0], disputeId: "dp_rehearsal", outcome: "lost" };
@@ -887,6 +914,11 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(await request("/membership/referrals", undefined, login.session.sessionToken)).toMatchObject({
       unpaidCents: 0, paidCents: 1500, pendingAdjustmentCents: 0, payoutAdjustments: [{ cents: 500 }]
     });
+    const feed = base + "/integrations/priority-sheets";
+    expect((await fetch(feed)).status).toBe(401);
+    const snapshot = await (await fetch(feed, { headers: { Authorization: `Bearer ${sheetsToken}` } })).json();
+    expect(snapshot.rows).toContainEqual(expect.objectContaining({ memberId: owner.id, contact: contact.value,
+      referrals: 3, earnedCents: 1500, paidCents: 1500, unpaidCents: 0 }));
   });
 
   it("uses 11 p.m. Pacific third-Friday cutoffs and records a batch once", async () => {

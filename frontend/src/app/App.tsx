@@ -1,3 +1,4 @@
+import { Backroom } from "./Backroom";
 import { ReferralToolbar } from "./ReferralToolbar";
 import type { RegistrationPolicy } from "../../../shared/registrationPolicy";
 import { MARKETING_CONSENT_LABEL } from "../../../shared/marketing";
@@ -999,7 +1000,7 @@ export function App(): React.ReactElement {
       setActiveTab(tabFromLocation());
       return;
     }
-    if (!window.location.hash) window.history.replaceState(null, "", hashForTab(tabFromLocation(), "chat"));
+    if (!/\/thebackroom\/?$/.test(window.location.pathname) && !window.location.hash) window.history.replaceState(null, "", hashForTab(tabFromLocation(), "chat"));
     const onHashChange = (): void => {
       setActiveTab(tabFromHash());
       setDiscoverScreen(discoverScreenFromHash());
@@ -1028,6 +1029,7 @@ export function App(): React.ReactElement {
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
   const showBottomNav = Boolean(session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking);
   const desktopWideSession = Boolean(session && session.ageVerified === true && !isMobile);
+  if (/\/thebackroom\/?$/.test(window.location.pathname)) return <Backroom api={api} session={session} />;
 
   return (
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav" : ""}`}>
@@ -1042,6 +1044,7 @@ export function App(): React.ReactElement {
                 <div className="rd-brand" aria-label="Badehaus X">
                   <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><button type="button" className="rd-plus-badge" onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Badehaus X Plus">{session && hasPlus(session) ? "PLUS ✓" : "PLUS +"}</button>
                   <InstallApp />
+                  <a className="rd-btn" href="./thebackroom/">The Backroom</a>
                 </div>
                 <button
                   type="button"

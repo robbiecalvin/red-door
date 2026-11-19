@@ -20,3 +20,7 @@ The template pass uses current email triggers and their existing opt-in and deli
 - The Backroom URL is `https://badehausx.com/thebackroom`. The working interpretation is that published articles can be read by anyone, with the contribution workflow reserved for Priority members.
 - Everyone can read After Dark under the platform's applicable age rules. Story review timing and extras are still open.
 - Keep individuals unnamed in public material. The public business or legal entity identity and support or privacy contact still need confirmation.
+
+## Priority spreadsheet reconciliation
+
+The ledger is authoritative. The private `scripts/priority-sheets.gs` script refreshes a dedicated sheet from a read-only snapshot. Create a restricted spreadsheet and attach the script. Set `PRIORITY_SHEET_ID`, `BADEHAUS_API_ORIGIN` and `PRIORITY_SHEETS_SYNC_TOKEN` in Google Script Properties, and set the same randomly generated token (at least 32 characters) in Render. Run `syncPriorityPayouts` once to reconcile against the Growth dashboard before adding a time-driven trigger. A failed fetch leaves the current sheet in place and can be rerun. Keep the spreadsheet and its bound script restricted to authorized operators.
