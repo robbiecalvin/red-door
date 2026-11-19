@@ -1219,12 +1219,32 @@ async function main(): Promise<void> {
     if (!object) return res.status(404).end();
     res.setHeader("Content-Type", object.mimeType); return res.send(object.data);
   });
+  const checkoutInProgress = new Set<string>();
   const checkoutHandler:express.RequestHandler = async (req,res) => {
     const actor = plusUser(req, res); if (!actor) return;
+    if (checkoutInProgress.has(actor.user.id)) return res.status(409).json({ message: "Checkout is already opening. Try again shortly." });
+    checkoutInProgress.add(actor.user.id);
     try {
       const deferred=req.path==="/billing/enroll";
       const founder = actor.user.plusData?.founderRateEligible === true;
-      const referral = !founder && Boolean(actor.user.plusData?.priorityReferralOwnerId && !actor.user.plusData.referralIntroInvoiceId);
+      const explicitReferral = req.body?.referralCode !== undefined;
+      let referralOwnerId = actor.user.plusData?.priorityReferralOwnerId;
+      if (explicitReferral) {
+        if (founder || deferred || actor.user.plusData?.referralIntroInvoiceId) {
+          return res.status(409).json({ message: "This account is ineligible for the introductory referral offer." });
+        }
+        const code = typeof req.body.referralCode === "string" ? req.body.referralCode.trim().toUpperCase() : "";
+        const owner = /^BX-[0-9A-F]{32}$/.test(code) ? authService.listRegisteredUserIds().map(id => authService.getUser(id))
+          .find(user => user && user.plusData && user.plusData.priorityReferralCode === code && user.plusData.priorityApprovedAtMs !== undefined &&
+            user.emailVerified && user.ageVerified && !user.bannedAtMs && user.id !== actor.user.id) : undefined;
+        if (!owner) return res.status(400).json({ message: "Enter a valid Priority member referral code." });
+        if (referralOwnerId && referralOwnerId !== owner.id) {
+          return res.status(409).json({ message: "A different referral code is already associated with this account." });
+        }
+        referralOwnerId = owner.id;
+      }
+      const referral = !founder && !deferred && (explicitReferral || req.body?.offer !== "standard") &&
+        Boolean(referralOwnerId && !actor.user.plusData?.referralIntroInvoiceId);
       if (referral && (deferred || req.body?.acceptRenewal !== true)) return res.status(400).json({message:"Authorize the referral offer from Plus billing."});
       const founderEndsAt = actor.user.plusData?.founderTrialEndsAtMs ?? 0;
       if (actor.user.plusData?.priorityApprovedAtMs !== undefined) return res.status(409).json({message:"Priority includes complimentary Plus."});
@@ -1245,7 +1265,8 @@ async function main(): Promise<void> {
       if (priorCheckoutId) {
         const prior = await stripeRequest(`checkout/sessions/${encodeURIComponent(priorCheckoutId)}`);
         if (prior.status === "open") {
-          if ((prior.metadata?.membershipProgram ?? "standard") === (founder ? "founder" : referral ? "priority-referral" : "standard")) return res.json({ url: prior.url });
+          if ((prior.metadata?.membershipProgram ?? "standard") === (founder ? "founder" : referral ? "priority-referral" : "standard") &&
+            (!referral || actor.user.plusData?.priorityReferralOwnerId === referralOwnerId)) return res.json({ url: prior.url });
           await stripeRequest(`checkout/sessions/${encodeURIComponent(prior.id)}/expire`, new URLSearchParams());
         }
         if (prior.status === "complete" && !actor.user.plusData?.stripeSubscriptionId && !actor.user.plusData?.stripeScheduleId) return res.status(409).json({ message: "Payment is being confirmed. Refresh your subscription status shortly." });
@@ -1292,12 +1313,13 @@ async function main(): Promise<void> {
       else params.set("customer_email", actor.user.email);
       const checkout = await stripeRequest("checkout/sessions", params, `reddoor-plus:${actor.user.id}:${deferred?"renewal":founder?"founder":referral?"referral":"paid"}:${priorCheckoutId ?? "initial"}`);
       const latestUser = authService.getUser(actor.user.id)!;
-      authService.updatePlus(actor.user.id, { plusData: { ...latestUser.plusData, stripeCheckoutSessionId: checkout.id } });
+      authService.updatePlus(actor.user.id, { plusData: { ...latestUser.plusData, stripeCheckoutSessionId: checkout.id, ...(referral ? { priorityReferralOwnerId: referralOwnerId } : {}) } });
       await authPersistQueue;
       if (authPersistenceError) return res.status(503).json({ message: "Unable to save checkout. Please retry." });
       recordMetric(() => metrics.billing(price.livemode === true ? "checkout_started" : "test_checkout_started", checkout.id));
       return res.json({ url: checkout.url });
     } catch (e) { return res.status(502).json({ message: (e as Error).message }); }
+    finally { checkoutInProgress.delete(actor.user.id); }
   };
   app.post("/billing/checkout",checkoutHandler);
   app.post("/billing/enroll",checkoutHandler);

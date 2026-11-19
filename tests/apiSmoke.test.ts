@@ -714,9 +714,12 @@ describe("Core API and payment lifecycle smoke checks", () => {
     await request("/members/me", { hideLocation: true }, priority.token, "PUT");
     expect(await rank()).toBeUndefined();
 
-    const referral = await account("priority-referred", false, awarded.priorityReferralCode);
+    const referral = await account("priority-referred");
+    expect(await request("/plus", undefined, referral.token)).toMatchObject({ active: false, referralOffer: false });
+    await request("/billing/checkout", { referralCode: "invalid", acceptRenewal: true }, referral.token, undefined, 400);
+    await request("/billing/checkout", { referralCode: awarded.priorityReferralCode }, referral.token, undefined, 400);
+    await request("/billing/checkout", { referralCode: awarded.priorityReferralCode.toLowerCase(), acceptRenewal: true }, referral.token);
     expect(await request("/plus", undefined, referral.token)).toMatchObject({ active: false, referralOffer: true });
-    await request("/billing/checkout", { acceptRenewal: true }, referral.token);
     expect(checkoutParams.get("line_items[0][price]")).toBe(referralPrice.id);
     expect(checkoutParams.get("line_items[1][price]")).toBe(introPrice.id);
     const trialEnd = Number(checkoutParams.get("subscription_data[trial_end]"));

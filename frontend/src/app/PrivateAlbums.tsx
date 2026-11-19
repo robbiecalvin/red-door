@@ -59,10 +59,17 @@ export function PrivateAlbumsSettings({ api, session }: Props) {
   const { userId, sessionToken: token } = session;
   async function refresh() {
     if (!userId) return;
-    const [next, requests, album] = await Promise.all([
+    const results = await Promise.allSettled([
       api.getPlus(token), api.memberRequest<Queue>(token, route), api.getPrivateAlbum(token, userId)
-    ]);
-    setStatus(next); setQueue(requests); setOwned(album);
+    ] as const);
+    const [plan, requests, album] = results;
+    if (plan.status === "fulfilled") setStatus(plan.value);
+    if (requests.status === "fulfilled") setQueue(requests.value);
+    if (album.status === "fulfilled") setOwned(album.value);
+    if (requests.status === "rejected" && requests.reason?.context?.status === 404) {
+      throw new Error("Album requests are unavailable on this server version. You can still manage your own photos.");
+    }
+    for (const result of results) if (result.status === "rejected") throw result.reason;
   }
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
