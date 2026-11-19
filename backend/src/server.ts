@@ -1082,7 +1082,7 @@ async function main(): Promise<void> {
   app.post("/plus/tutorial/dismiss",(_req,res)=>res.status(410).json({code:"FEATURE_DISABLED",message:"Provider tutorials are unavailable in the standalone release."}));
   app.put("/plus/preferences", async (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
-    const data: PlusData = { ...actor.user.plusData };
+    const data: PlusData = {};
     if (req.body.savedSearches !== undefined) {
       if (!hasPlus(actor.session)) return premiumError(res);
       const searches = req.body.savedSearches;
@@ -1100,16 +1100,94 @@ async function main(): Promise<void> {
       }
       data[key] = [...new Set(values)] as string[];
     }
-    authService.updatePlus(actor.user.id, { plusData: data });
+    const latest = authService.getUser(actor.user.id)?.plusData ?? {};
+    if (data.albumSharedWith?.some(id => !latest.albumSharedWith?.includes(id))) {
+      return res.status(403).json({ message: "Approve a private album request to grant access." });
+    }
+    authService.updatePlus(actor.user.id, { plusData: { ...latest, ...data } });
     await authPersistQueue;
     if (authPersistenceError) return res.status(503).json({ message: "Unable to save preferences. Please retry." });
+    return res.json({ ok: true });
+  });
+  function albumPeer(viewerId: string, peerId: string) {
+    const peer = authService.getUser(peerId);
+    return peer && peer.id !== viewerId && peer.emailVerified && peer.ageVerified && !peer.bannedAtMs &&
+      !blockService.isBlocked(`user:${viewerId}`, `user:${peerId}`) ? peer : undefined;
+  }
+  app.get("/plus/album-requests", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    res.set("Cache-Control", "private, no-store");
+    const id = actor.user.id;
+    const data = actor.user.plusData;
+    const describe = async (ids: readonly string[]) => Promise.all(ids.map(async id => ({
+      id, name: (await profileRepo.getByUserId(id))?.displayName ?? "Member"
+    })));
+    const visible = (ids: readonly string[]) => ids.filter(peerId => albumPeer(id, peerId));
+    try {
+      const shared = authService.listRegisteredUserIds().filter(ownerId => {
+        const owner = albumPeer(id, ownerId);
+        return owner?.plusData?.privateMediaIds?.length && owner.plusData.albumSharedWith?.includes(id);
+      });
+      const [pending, access, received] = await Promise.all([
+        describe(visible(data?.albumRequests ?? [])), describe(visible(data?.albumSharedWith ?? [])), describe(shared)
+      ]);
+      return res.json({ pending, access, received });
+    } catch { return res.status(503).json({ message: "Could not load private album requests." }); }
+  });
+  app.get("/plus/album-requests/:ownerId", (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    res.set("Cache-Control", "private, no-store");
+    const owner = albumPeer(actor.user.id, req.params.ownerId);
+    const data = owner?.plusData;
+    if (!owner || !data?.privateMediaIds?.length) return res.json({ status: "unavailable" });
+    if (data.albumSharedWith?.includes(actor.user.id)) return res.json({ status: "approved" });
+    if (hidesDiscovery(data.member, owner)) return res.json({ status: "unavailable" });
+    return res.json({ status: data.albumRequests?.includes(actor.user.id) ? "pending" : "available" });
+  });
+  app.post("/plus/album-requests/:ownerId", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    const owner = albumPeer(actor.user.id, req.params.ownerId);
+    const data = owner?.plusData;
+    if (!owner || !data?.privateMediaIds?.length || hidesDiscovery(data.member, owner)) {
+      return res.status(404).json({ message: "This private album is unavailable." });
+    }
+    if (data.albumSharedWith?.includes(actor.user.id)) return res.json({ status: "approved" });
+    const pending = new Set(data.albumRequests ?? []);
+    if (!pending.has(actor.user.id) && pending.size >= 100) return res.status(409).json({ message: "This member has too many pending requests." });
+    pending.add(actor.user.id);
+    authService.updatePlus(owner.id, { plusData: { ...data, albumRequests: [...pending] } });
+    await authPersistQueue;
+    if (authPersistenceError) return res.status(503).json({ message: "Unable to save the request. Please retry." });
+    return res.json({ status: "pending" });
+  });
+  app.post("/plus/album-requests/:memberId/respond", async (req, res) => {
+    const actor = plusUser(req, res); if (!actor) return;
+    const id = req.params.memberId;
+    const data = actor.user.plusData ?? {};
+    const action = req.body?.action;
+    if (action !== "approve" && action !== "decline" && action !== "revoke") return res.status(400).json({ message: "Choose approve, decline, or revoke." });
+    const pending = new Set(data.albumRequests ?? []);
+    const access = new Set(data.albumSharedWith ?? []);
+    if (action === "approve") {
+      if (!pending.has(id) || !albumPeer(actor.user.id, id) || !data.privateMediaIds?.length) {
+        return res.status(404).json({ message: "This album request is unavailable." });
+      }
+      if (!access.has(id) && access.size >= 100) return res.status(409).json({ message: "Revoke an existing share before approving another." });
+      access.add(id);
+    }
+    if (action === "revoke") access.delete(id);
+    pending.delete(id);
+    authService.updatePlus(actor.user.id, { plusData: { ...data, albumRequests: [...pending], albumSharedWith: [...access] } });
+    await authPersistQueue;
+    if (authPersistenceError) return res.status(503).json({ message: "Unable to save the response. Please retry." });
     return res.json({ ok: true });
   });
   app.get("/plus/albums/:userId", async (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const owner = authService.getUser(req.params.userId);
     const blocked = blockService.isBlocked(`user:${actor.user.id}`, `user:${req.params.userId}`);
-    if (!owner || blocked || (owner.id !== actor.user.id && !owner.plusData?.albumSharedWith?.includes(actor.user.id))) return res.status(403).json({ message: "This album has not been shared with you." });
+    res.set("Cache-Control", "private, no-store");
+    if (!owner || owner.bannedAtMs || blocked || (owner.id !== actor.user.id && !owner.plusData?.albumSharedWith?.includes(actor.user.id))) return res.status(403).json({ message: "This album has not been shared with you." });
     const mediaIds = owner.plusData?.privateMediaIds ?? [];
     const photos = [];
     for (const id of mediaIds) {

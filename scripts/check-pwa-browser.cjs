@@ -10,7 +10,7 @@ const server=http.createServer((req,res)=>{
  const relative=decodeURIComponent(url.pathname.slice('/red-door/'.length))||'index.html';
  if(relative.startsWith('api/')||relative.startsWith('media/')){privateHits++;res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'}).end(JSON.stringify({private:'controlled-private-sentinel'}));return;}
  const file=path.resolve(root,relative);if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile()){res.writeHead(404).end();return;}
- let body=fs.readFileSync(file);if(relative==='sw.js' && variant==='b')body=Buffer.from(body.toString().replace("const VERSION = '","const VERSION = 'browser-update-b-"));
+ let body=fs.readFileSync(file);if(relative==='sw.js' && variant!=='a')body=Buffer.from(body.toString().replace("const VERSION = '","const VERSION = 'browser-update-"+variant+"-"));
  res.writeHead(200,{'content-type':mime[path.extname(file)]||'application/octet-stream','cache-control':'no-cache'});res.end(body);
 });
 (async()=>{
@@ -48,6 +48,12 @@ const server=http.createServer((req,res)=>{
   keys=await page.evaluate(()=>caches.keys());assert.ok(keys.some(k=>k.includes('browser-update-b-')));
   assert.ok(keys.length<=2,'keep at most current and previous public builds for this scope');
   await page.evaluate(()=>window.dispatchEvent(new Event('appinstalled')));assert.equal(await page.getByRole('button',{name:'Install Badehaus X',exact:true}).count(),0);
+  const toolbar=page.locator('header.rd-topbar');
+  await toolbar.getByRole('button',{name:'App installed',exact:true}).waitFor();
+  variant='c';await page.evaluate(async()=>{await (await navigator.serviceWorker.getRegistration()).update();});
+  await toolbar.getByRole('button',{name:'Update app',exact:true}).click({timeout:15000});
+  await page.waitForFunction(async()=>!(await navigator.serviceWorker.getRegistration())?.waiting);
+
   // iPhone install guidance is tested in Chromium with a simulated user agent, not an actual phone.
   const apple=await browser.newContext({userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',viewport:{width:390,height:844},isMobile:true,hasTouch:true});
   await apple.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());const iphone=await apple.newPage();await iphone.goto(base);await iphone.getByRole('button',{name:'Install Badehaus X',exact:true}).click();await iphone.getByText('Add to Home Screen',{exact:true}).waitFor();await apple.close();

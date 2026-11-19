@@ -1034,13 +1034,13 @@ export function App(): React.ReactElement {
       {analyticsOpen && session?.role === "admin" ? <AdminAnalytics api={api} session={session} onClose={() => setAnalyticsOpen(false)} /> : null}
       <AccountNotices api={api} session={session} ready={Boolean(session?.ageVerified && !profileSetupChecking && !profileSetupRequired && !plusOpen)} loginSequence={loginSequence}/>
       {plusOpen ? <PlusPanel api={api} session={session} feature={plusFeature} onClose={() => setPlusOpen(false)} onRegister={() => { setPlusOpen(false); onLogout(); setAuthView("register"); }} /> : null}
-      {session ? (
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
-            {session.ageVerified === true ? (
+            {session?.ageVerified === true ? (
               <div className="rd-topbar-session">
                 <div className="rd-brand" aria-label="Badehaus X">
                   <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><button type="button" className="rd-plus-badge" onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Badehaus X Plus">{session && hasPlus(session) ? "PLUS ✓" : "PLUS +"}</button>
+                  <InstallApp />
                 </div>
                 <button
                   type="button"
@@ -1060,10 +1060,9 @@ export function App(): React.ReactElement {
                   </button>
                 </div>
               </div>
-            ) : null}
+            ) : <div className="rd-brand"><span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><InstallApp /></div>}
           </div>
         </header>
-      ) : null}
       {session && session.ageVerified === true && topMenuOpen ? (
         <div className="rd-top-collapse" role="dialog" aria-label="Account functions">
           {session.role === "admin" ? <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setAnalyticsOpen(true); }} aria-label="Open activity dashboard"><Icon name="board" className="rd-ui-icon" /></button> : null}
@@ -1076,7 +1075,6 @@ export function App(): React.ReactElement {
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("submissions"); }} aria-label="Open submissions">
             <Icon name="book" className="rd-ui-icon" />
           </button>
-          <InstallApp />
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); void onLogout(); }} aria-label="Log out">
             <Icon name="logout" className="rd-ui-icon" />
           </button>
@@ -1185,7 +1183,6 @@ export function App(): React.ReactElement {
                   ) : null}
 
                   <p className="rd-auth-note"><Icon name="shield" />For adults 18 and over. You choose what to share.</p>
-                  <InstallApp />
 
                   {authView === "register" || authView === "login" ? (
                     <form

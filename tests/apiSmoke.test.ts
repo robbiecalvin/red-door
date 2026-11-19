@@ -197,17 +197,39 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect((await fetch(link.downloadUrl)).status).toBe(403);
     await request("/unblock", { targetKey: `user:${alice.id}` }, bob.token);
   });
-  it("Given a private album When shared then revoked Then rejects public and stale private links", async () => {
+  it("Given a private album request When approved then revoked Then rejects unauthorized and stale private links", async () => {
+    const owner = await account("private-album-owner");
+    const viewer = await account("private-album-viewer");
+    await request("/profile/me", { displayName: "Album owner", age: 25 }, owner.token, "PUT");
     const bytes = Buffer.from("private smoke image");
-    const upload = await request("/profile/media/initiate", { kind: "photo_private", mimeType: "image/png", sizeBytes: bytes.length }, alice.token);
+    const upload = await request("/profile/media/initiate", { kind: "photo_private", mimeType: "image/png", sizeBytes: bytes.length }, owner.token);
     expect((await fetch(upload.uploadUrl, { method: "PUT", body: bytes, headers: { "content-type": "image/png" } })).status).toBe(200);
-    await request("/profile/media/complete", { mediaId: upload.mediaId }, alice.token);
-    await request("/plus/preferences", { privateMediaIds: [upload.mediaId], albumSharedWith: [bob.id] }, alice.token, "PUT");
+    await request("/profile/media/complete", { mediaId: upload.mediaId }, owner.token);
+    const route = "/plus/album-requests";
+    const target = `${route}/${owner.id}`;
+    const respond = `${route}/${viewer.id}/respond`;
+    expect(await request(target, undefined, viewer.token)).toEqual({ status: "unavailable" });
+    await request("/plus/preferences", { privateMediaIds: [upload.mediaId] }, owner.token, "PUT");
+    await request("/plus/preferences", { albumSharedWith: [viewer.id] }, owner.token, "PUT", 403);
+    await request(respond, { action: "approve" }, owner.token, undefined, 404);
+    expect(await request(target, undefined, viewer.token)).toEqual({ status: "available" });
+    expect(await request(target, {}, viewer.token)).toEqual({ status: "pending" });
+    await request(target, {}, viewer.token);
+    expect((await request(route, undefined, owner.token)).pending).toEqual([{ id: viewer.id, name: "Member" }]);
+    await request(`/plus/albums/${owner.id}`, undefined, viewer.token, undefined, 403);
+    await request(respond, { action: "decline" }, owner.token);
+    expect(await request(target, undefined, viewer.token)).toEqual({ status: "available" });
+    await request(target, {}, viewer.token);
+    await request(respond, { action: "approve" }, owner.token);
+    expect((await request(route, undefined, viewer.token)).received).toEqual([{ id: owner.id, name: "Album owner" }]);
     await request(`/media/public/${upload.mediaId}/url`, undefined, undefined, undefined, 400);
-    const album = await request(`/plus/albums/${alice.id}`, undefined, bob.token);
+    const album = await request(`/plus/albums/${owner.id}`, undefined, viewer.token);
     expect(Buffer.from(await (await fetch(album.photos[0].downloadUrl)).arrayBuffer())).toEqual(bytes);
-    await request("/plus/preferences", { albumSharedWith: [] }, alice.token, "PUT");
+    await request(respond, { action: "revoke" }, owner.token);
     expect((await fetch(album.photos[0].downloadUrl)).status).toBe(403);
+    await request("/block", { targetKey: `user:${viewer.id}` }, owner.token);
+    expect(await request(target, undefined, viewer.token)).toEqual({ status: "unavailable" });
+    await request(target, {}, viewer.token, undefined, 404);
   });
   it("Given Checkout starts When the browser returns without a verified webhook Then grants no Plus", async () => {
     const result = await request("/billing/checkout", {}, alice.token);

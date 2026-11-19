@@ -70,6 +70,7 @@ export type PlusData = {
   pinnedKeys?: string[];
   privateMediaIds?: string[];
   albumSharedWith?: string[];
+  albumRequests?: string[];
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
   stripeLivemode?: boolean;
