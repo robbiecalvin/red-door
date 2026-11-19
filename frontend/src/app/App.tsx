@@ -688,7 +688,7 @@ export function App(): React.ReactElement {
     setLastError(null);
     setAuthInfo("");
     try {
-      await api.register(registerEmail, registerPassword, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent, marketingConsent, policyAcceptance });
+      const registration = await api.register(registerEmail, registerPassword, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent, marketingConsent, policyAcceptance });
       setMarketingConsent(false);
       setAcceptedPolicy(false);
       setProfileSetupDraft((prev) => ({
@@ -714,7 +714,9 @@ export function App(): React.ReactElement {
         setPendingVerificationEmail(registerEmail.trim());
         setAuthView("register");
         setVerificationCode("");
-        setAuthInfo("Check your email for a verification code. Codes expire; you can resend after one minute.");
+        setAuthInfo((registration as { emailDeliveryAccepted?: boolean }).emailDeliveryAccepted === false
+          ? "Your account was created, but the email provider could not send the code. Try Resend code after one minute."
+          : "Check your email for a verification code. Codes expire; you can resend after one minute.");
       }
     } catch (e) {
       if ((e as ServiceError)?.code === "REGISTRATION_POLICY_REQUIRED") setPolicyRequest(current => current + 1);

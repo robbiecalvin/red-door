@@ -77,6 +77,7 @@ export type Session = Readonly<{
 }>;
 
 export type RegisterResult = Readonly<{
+  delivery?: Promise<boolean>;
   email: string;
   verificationRequired: true;
 }>;
@@ -138,7 +139,7 @@ export type AuthServiceDeps = Readonly<{
     code: string,
     channel: "sms" | "email",
     user: Pick<StoredUser, "email" | "phoneE164" | "id">
-  ) => void;
+  ) => unknown;
   adminEmails?: ReadonlyArray<string>;
 }>;
 
@@ -380,7 +381,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     });
   }
 
-  function setVerificationCode(user: StoredUser, now: number): StoredUser {
+  function setVerificationCode(user: StoredUser, now: number): void | Promise<boolean> {
     const code = codeGenerator();
     if (!/^\d{6}$/.test(code)) {
       throw new Error("Verification code generator must return a 6-digit code.");
@@ -399,12 +400,12 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     persistUsers();
     const destination = deps.emailOnlyVerification || adminEmails.has(updated.email) ? updated.email : typeof updated.phoneE164 === "string" && isLikelyValidPhoneE164(updated.phoneE164) ? updated.phoneE164 : updated.email;
     const channel: "sms" | "email" = destination === updated.email ? "email" : "sms";
-    onVerificationCodeIssued(destination, code, channel, {
+    const delivery = onVerificationCodeIssued(destination, code, channel, {
       id: updated.id,
       email: updated.email,
       phoneE164: updated.phoneE164
     });
-    return updated;
+    if (delivery instanceof Promise) return delivery.then(value => value === true, () => false);
   }
 
   if (deps.initialState) {
@@ -619,11 +620,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       usersByEmail.set(normalizedEmail, user);
       usersById.set(user.id, user);
       persistUsers();
-      if (!user.emailVerified) {
-        setVerificationCode(user, now);
-      }
+      const delivery = !user.emailVerified ? setVerificationCode(user, now) : undefined;
       notifyStateChanged();
-      return ok({ email: normalizedEmail, verificationRequired: true });
+      return ok({ email: normalizedEmail, verificationRequired: true, ...(delivery ? { delivery } : {}) });
     },
 
     verifyEmail(email: string, code: string): Result<VerifyEmailResult> {
@@ -702,9 +701,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return err("UNAUTHORIZED_ACTION", "Email already verified.");
       }
       if (typeof user.verificationLastSentAtMs === "number" && nowMs() - user.verificationLastSentAtMs < 60000) return err("RATE_LIMITED", "Wait one minute before requesting another code.");
-      setVerificationCode(user, nowMs());
+      const delivery = setVerificationCode(user, nowMs());
       notifyStateChanged();
-      return ok({ email: normalizedEmail, verificationRequired: true });
+      return ok({ email: normalizedEmail, verificationRequired: true, ...(delivery ? { delivery } : {}) });
     },
 
     login(email: string, password: string): Result<VerifyEmailResult> {

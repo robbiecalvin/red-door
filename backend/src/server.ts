@@ -337,7 +337,7 @@ async function main(): Promise<void> {
     code: string,
     channel: "sms" | "email",
     user: { email: string; phoneE164: string | null }
-  ): void => {
+  ): void | Promise<boolean> => {
     if (channel === "sms" && smsConfigured) {
       const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(twilioAccountSid)}/Messages.json`;
       const body = new URLSearchParams({
@@ -374,7 +374,7 @@ async function main(): Promise<void> {
       const subject = "Badehaus X verification code";
       const text = `Your Badehaus X verification code is ${code}. It expires in 15 minutes.`;
       const html = `<p>Your <strong>Badehaus X</strong> verification code is:</p><p style=\"font-size:24px;font-weight:700;letter-spacing:2px;\">${code}</p><p>This code expires in 15 minutes.</p>`;
-      void emailSender
+      return emailSender
         .sendMail({
           from: transactionalFrom.trim(),
           to: user.email,
@@ -387,13 +387,14 @@ async function main(): Promise<void> {
           console.log(apiSender
             ? `[Badehaus X] Verification email accepted by Resend. Message ID: ${result.messageId}`
             : "[Badehaus X] Verification email accepted by SMTP.");
+          return true;
         })
         .catch((error: unknown) => {
           const provider = apiSender ? "Resend" : "SMTP";
           const status = error instanceof ResendDeliveryError ? ` (HTTP ${error.status})` : "";
           console.error(`[Badehaus X] Verification delivery failed via ${provider}${status}.`);
+          return false;
         });
-      return;
     }
     console.warn("[Badehaus X] Verification delivery is not configured; no code was sent.");
   };
@@ -1249,7 +1250,7 @@ async function main(): Promise<void> {
     return res.set("Cache-Control", "no-store").json(registrationPolicy());
   });
 
-  app.post("/auth/register", (req, res) => {
+  app.post("/auth/register", async (req, res) => {
     if(!emailSender)return res.status(503).json({code:"SERVICE_UNAVAILABLE",message:"Registration email is unavailable. Please try later or contact support."});
     const age = req.body?.age;
     if (!Number.isInteger(age) || age < 18 || age > 120) return res.status(400).json({ code: "AGE_GATE_REQUIRED", message: "Declare an age between 18 and 120 to register." });
@@ -1274,7 +1275,8 @@ async function main(): Promise<void> {
     const created = authService.listUsers().find(user => user.email === result.value.email);
     const user = created ? authService.getUser(created.id) : undefined;
     if (user) recordMetric(() => metrics.registration(user.id, cohortFor(user), user.plusData?.analyticsConsent === true));
-    return res.status(200).json(result.value);
+    const { delivery, ...registration } = result.value;
+    return res.json({ ...registration, emailDeliveryAccepted: await delivery });
   });
 
   app.post("/auth/verify-email", (req, res) => {
@@ -1287,12 +1289,16 @@ async function main(): Promise<void> {
     return res.status(200).json(result.value);
   });
 
-  app.post("/auth/resend-verification", (req, res) => {
+  app.post("/auth/resend-verification", async (req, res) => {
     if(!emailSender)return res.status(503).json({code:"SERVICE_UNAVAILABLE",message:"Verification email is unavailable. Please try later or contact support."});
     const email = (req.body as any)?.email;
     const result = authService.resendVerificationCode(email);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json(result.value);
+    const { delivery, ...registration } = result.value;
+    if (await delivery === false) return res.status(503).json({
+      code: "VERIFICATION_DELIVERY_FAILED", message: "The email provider could not send the code. Wait one minute and try again."
+    });
+    return res.json(registration);
   });
 
   app.post("/auth/password-reset/request", (req, res) => {
