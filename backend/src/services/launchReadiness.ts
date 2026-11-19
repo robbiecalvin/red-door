@@ -5,6 +5,7 @@ type Check = { status: "passed" | "needs_configuration" | "failed"; detail: stri
 export function installLaunchReadiness(app: Express, deps: {
   admin(req: Request, res: Response): unknown;
   databasePing?: () => Promise<unknown>;
+  httpsMailConfigured?: boolean;
   verifyMail?: () => Promise<unknown>;
   mediaMode: "local" | "postgres" | "s3";
   persistenceHealthy(): boolean;
@@ -20,7 +21,7 @@ export function installLaunchReadiness(app: Express, deps: {
     }
     await Promise.all([
       probe("database", deps.databasePing, "PostgreSQL is not configured; local state requires a persistent disk."),
-      probe("smtp", deps.verifyMail, "SMTP is not configured. Password recovery cannot send email."),
+      probe("smtp", deps.verifyMail, deps.httpsMailConfigured ? "HTTPS email is configured. Confirm actual delivery through hosted signup." : "Email delivery is not configured."),
     ]);
     const billing = await inspectBilling();
     checks.stripe = { status: billing.configuration.configured && billing.stripeConnection === "ok" && billing.priceValid ? "passed" : billing.stripeConnection === "error" ? "failed" : "needs_configuration", detail: billing.configuration.configured && billing.priceValid ? `CAD $7.99 monthly price verified (${billing.mode} mode).` : "Check the backend Stripe variables and the CAD $7.99 monthly price." };

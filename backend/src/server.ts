@@ -1,3 +1,4 @@
+import { createResendEmail } from "./services/resendEmail";
 import { registrationPolicy } from "./services/registrationPolicy";
 import { installGrowthRoutes } from "./routes/growthRoutes";
 import { createReferralLedger } from "./services/referralLedger";
@@ -309,7 +310,7 @@ async function main(): Promise<void> {
   const twilioFromNumber = process.env.TWILIO_FROM_NUMBER ?? "";
   const smsConfigured = twilioAccountSid.trim() !== "" && twilioAuthToken.trim() !== "" && twilioFromNumber.trim() !== "";
 
-  const emailSender = smtpConfigured
+  const smtpSender = smtpConfigured
     ? nodemailer.createTransport({
         host: smtpHost.trim(),
         port: smtpPortRaw,
@@ -326,6 +327,10 @@ async function main(): Promise<void> {
         }
       })
     : null;
+  const apiFrom = process.env.RESEND_FROM?.trim() ?? "";
+  const apiSender = createResendEmail(process.env.RESEND_API_KEY?.trim() ?? "", apiFrom);
+  const emailSender = apiSender ?? smtpSender;
+  const transactionalFrom = apiSender ? apiFrom : smtpFrom;
 
   const verificationCodeSender = (
     destination: string,
@@ -371,7 +376,7 @@ async function main(): Promise<void> {
       const html = `<p>Your <strong>Badehaus X</strong> verification code is:</p><p style=\"font-size:24px;font-weight:700;letter-spacing:2px;\">${code}</p><p>This code expires in 15 minutes.</p>`;
       void emailSender
         .sendMail({
-          from: smtpFrom.trim(),
+          from: transactionalFrom.trim(),
           to: user.email,
           subject,
           text,
@@ -495,7 +500,7 @@ async function main(): Promise<void> {
   function notifyReferral(ownerId: string, subject: string, text: string) {
     const owner = authService.getUser(ownerId);
     if (process.env.REFERRAL_EMAIL_ENABLED !== "true" || !emailSender || !owner?.emailVerified || owner.bannedAtMs) return;
-    void emailSender.sendMail({ from: smtpFrom, to: owner.email, subject, text }).catch(() => {
+    void emailSender.sendMail({ from: transactionalFrom, to: owner.email, subject, text }).catch(() => {
       console.error("[Badehaus X] A referral notification could not be queued.");
     });
   }
@@ -880,7 +885,7 @@ async function main(): Promise<void> {
       if (!result.accepted.length) throw new Error("SMTP did not accept the message.");
     } : undefined,
     sendSummary: emailSender && process.env.REFERRAL_EMAIL_ENABLED === "true" ? async (to, text) => {
-      const result = await emailSender.sendMail({ from: smtpFrom, to, subject: "Badehaus X Growth summary", text });
+      const result = await emailSender.sendMail({ from: transactionalFrom, to, subject: "Badehaus X Growth summary", text });
       if (!result.accepted.length) throw new Error("SMTP did not accept the summary.");
     } : undefined,
     notify: notifyReferral
@@ -1295,7 +1300,7 @@ async function main(): Promise<void> {
       resetBase.hash = `reset=${reset.token}`;
       void authPersistQueue.then(() => {
         if (authPersistenceError) throw new Error("Persistence unavailable");
-        return emailSender.sendMail({ from: smtpFrom, to: reset.email, subject: "Reset your Badehaus X password", text: `Reset your password using this link: ${resetBase.toString()}\n\nIt expires in 15 minutes and can be used once. If you did not request this, ignore this email.` });
+        return emailSender.sendMail({ from: transactionalFrom, to: reset.email, subject: "Reset your Badehaus X password", text: `Reset your password using this link: ${resetBase.toString()}\n\nIt expires in 15 minutes and can be used once. If you did not request this, ignore this email.` });
       }).catch(() => console.error("[Badehaus X] Password recovery delivery failed."));
     }
     return res.json({ message: "If an eligible account exists, a reset link will be sent. Check your email." });
@@ -1972,7 +1977,7 @@ async function main(): Promise<void> {
 
   // Standalone release: the preserved bridge module is deliberately not registered.
   app.use(["/md", "/integrations/md", "/api/md", "/api/integrations/md"], (_req, res) => res.status(404).json({ code: "FEATURE_DISABLED", message: "This feature is unavailable in the standalone release." }));
-  installLaunchReadiness(app,{admin:requireAdminSession,databasePing:postgresPool?()=>postgresPool.query("SELECT 1"):undefined,verifyMail:emailSender?()=>emailSender.verify():undefined,mediaMode:mediaStorageMode,persistenceHealthy:()=>!authPersistenceError&&!chatPersistenceError&&!safetyPersistenceError&&!favoritesPersistenceError&&!guestPersistError&&!metricsWriteError});
+  installLaunchReadiness(app,{admin:requireAdminSession,databasePing:postgresPool?()=>postgresPool.query("SELECT 1"):undefined,verifyMail:!apiSender&&smtpSender?()=>smtpSender.verify():undefined,httpsMailConfigured:Boolean(apiSender),mediaMode:mediaStorageMode,persistenceHealthy:()=>!authPersistenceError&&!chatPersistenceError&&!safetyPersistenceError&&!favoritesPersistenceError&&!guestPersistError&&!metricsWriteError});
   const shutdownLive = installLiveRoutes(app, {
     session: (req, res) => plusUser(req, res)?.session ?? null,
     admin: requireAdminSession,
