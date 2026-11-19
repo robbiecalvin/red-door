@@ -602,7 +602,10 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         plusData: { analyticsConsent: analyticsConsent === true, ...(acceptedPolicy ? { registrationPolicy: { ...acceptedPolicy, acceptedAtMs: now, source: "registration" as const } } : {}), ...(marketingConsent === true ? {
           marketing: { enabled: true, token: crypto.randomBytes(32).toString("hex"),
             history: [{ enabled: true, atMs: now, source: "registration", version: MARKETING_CONSENT_VERSION }] }
-        } : {}), ...(priorityInvited ? { priorityInvited } : {}), ...(referralOwner ? { priorityReferralOwnerId: referralOwner.id } : {}), ...(plusExpiresAtMs ? {redeemedPromoCodes:[normalizePromoCode(promoCode)],providerTutorialPending:!deps.emailOnlyVerification && normalizePromoCode(promoCode)===PROVIDER_LAUNCH_CODE} : {}) },
+        } : {}), ...(priorityInvited ? {
+          priorityInvited: true, priorityApprovedAtMs: now,
+          priorityReferralCode: `BX-${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`
+        } : {}), ...(referralOwner ? { priorityReferralOwnerId: referralOwner.id } : {}), ...(plusExpiresAtMs ? {redeemedPromoCodes:[normalizePromoCode(promoCode)],providerTutorialPending:!deps.emailOnlyVerification && normalizePromoCode(promoCode)===PROVIDER_LAUNCH_CODE} : {}) },
         role: "user",
         ageVerified: false,
         // The standalone server never enables the legacy verification bypass.

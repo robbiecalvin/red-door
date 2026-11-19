@@ -975,18 +975,23 @@ async function main(): Promise<void> {
     const actor = plusUser(req, res); if (!actor) return;
     if (!isPriorityInvitation(req.body?.code)) return res.status(400).json({ message: "Invalid invitation code." });
     try {
-      const profile = await profileRepo.getByUserId(actor.user.id);
-      if (!profile?.displayName || !profile.age) return res.status(400).json({ message: "Complete your profile before applying." });
-      const user = authService.getUser(actor.user.id)!;
-      if (user.plusData?.priorityApprovedAtMs !== undefined || user.plusData?.priorityRequestedAtMs !== undefined) return res.json({ ok: true });
-      const proof = await mediaRepo.getById(String(req.body?.proofMediaId ?? ""));
-      if (proof?.kind !== "priority_proof" || proof.userId !== user.id || !proof.uploadedAtMs ||
-        Date.now() - proof.createdAtMs > 60 * 60 * 1000) return res.status(400).json({ message: "Upload a new screenshot before applying." });
-      const latest = authService.getUser(user.id)!;
-      if (latest.plusData?.priorityRequestedAtMs !== undefined) return res.status(409).json({ message: "An application is already in review." });
-      await membershipChange(user.id, { ...latest.plusData, priorityRequestedAtMs: Date.now(), priorityProofMediaId: proof.mediaId });
+      const { id, plusData: data = {} } = actor.user;
+      if (data.priorityApprovedAtMs !== undefined) return res.json({ ok: true });
+      if (data.membershipAudit?.some(row => row.action === "revoke-priority")) {
+        return res.status(403).json({ message: "Contact support to restore your Priority membership." });
+      }
+      const now = Date.now();
+      await membershipChange(id, {
+        ...data, priorityInvited: true, priorityApprovedAtMs: now,
+        priorityRequestedAtMs: undefined, priorityProofMediaId: undefined,
+        priorityReferralCode: data.priorityReferralCode ?? `BX-${randomUUID().replace(/-/g, "").toUpperCase()}`,
+        membershipAudit: [...(data.membershipAudit ?? []), { action: "redeem-priority", actorId: id, atMs: now }]
+      });
+      await deletePriorityProof(id, data.priorityProofMediaId).catch(() => {
+        console.error("[Badehaus X] Unable to delete a legacy Priority screenshot.");
+      });
       return res.json({ ok: true });
-    } catch { return res.status(503).json({ message: "Could not save the application." }); }
+    } catch { return res.status(503).json({ message: "Could not redeem the invitation." }); }
   });
   app.post("/membership/priority/resign", async (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
@@ -1060,7 +1065,7 @@ async function main(): Promise<void> {
       updates.founderRateEligible = true;
     } else if (action === "approve-priority") {
       if (data.priorityApprovedAtMs !== undefined) return res.json({ ok: true });
-      if (data.priorityRequestedAtMs === undefined || now - data.priorityRequestedAtMs >= priorityProofRetentionMs || !data.priorityProofMediaId) return res.status(409).json({ message: "This member has not applied." });
+      updates.priorityRequestedAtMs = undefined;
       updates.priorityApprovedAtMs = now;
       updates.priorityReferralCode = data.priorityReferralCode ?? `BX-${randomUUID().replace(/-/g, "").toUpperCase()}`;
     } else if (action === "revoke-priority" || action === "reject-priority") {

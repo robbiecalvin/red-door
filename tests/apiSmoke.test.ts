@@ -658,26 +658,20 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(checkoutParams.get("subscription_data[metadata][membershipProgram]")).toBe("founder");
   });
 
-  it("reviews private Priority proof, respects discovery constraints, and gates the referral offer on paid proof", async () => {
+  it("redeems Priority without a screenshot, respects discovery constraints, and gates referrals on paid proof", async () => {
     const priority = await account("priority-owner", false, "PRIORITY X90");
-    expect(await request("/plus", undefined, priority.token)).toMatchObject({ priorityInvited: true, active: false });
     const viewer = await account("priority-viewer");
+    expect(await request("/plus", undefined, priority.token)).toMatchObject({ priority: true, active: true });
     await request("/profile/me", { displayName: "Priority Member Test", age: 25, bio: "Hello" }, priority.token, "PUT");
     const apply = "/membership/priority/apply";
-    await request(apply, { code: "PRIORITYX90" }, priority.token, undefined, 400);
-    const bytes = Buffer.from("private test screenshot");
-    const upload = await request("/profile/media/initiate", { kind: "priority_proof", mimeType: "image/png", sizeBytes: bytes.length }, priority.token);
-    expect((await fetch(upload.uploadUrl, { method: "PUT", body: bytes, headers: { "content-type": "image/png" } })).status).toBe(200);
-    await request("/profile/media/complete", { mediaId: upload.mediaId }, priority.token);
-    await request(apply, { code: "PRIORITYX90", proofMediaId: upload.mediaId }, viewer.token, undefined, 400);
-    await request(apply, { code: "PRIORITY X90", proofMediaId: upload.mediaId }, priority.token);
-    await request(`/media/public/${upload.mediaId}/url`, undefined, undefined, undefined, 400);
-    const proofUrl = base + `/admin/membership/priority/${priority.id}/proof`;
-    expect((await fetch(proofUrl, { headers: { "x-session-token": viewer.token } })).status).toBe(403);
-    expect(Buffer.from(await (await fetch(proofUrl, { headers: { "x-session-token": admin.token } })).arrayBuffer())).toEqual(bytes);
-    expect((await request("/plus", undefined, priority.token)).active).toBe(false);
-    await request("/admin/membership", { action: "approve-priority", email: "priority-owner@example.com" }, admin.token);
-    expect((await fetch(proofUrl, { headers: { "x-session-token": admin.token } })).status).toBe(404);
+    const existing = await account("priority-existing");
+    await request(apply, { code: "wrong" }, existing.token, undefined, 400);
+    expect(await request("/plus", undefined, existing.token)).toMatchObject({ priority: false, active: false });
+    await request(apply, { code: "PRIORITY X90" }, existing.token);
+    const claimed = await request("/plus", undefined, existing.token);
+    expect(claimed).toMatchObject({ priority: true, active: true });
+    await request(apply, { code: "PRIORITY X90" }, existing.token);
+    expect((await request("/plus", undefined, existing.token)).priorityReferralCode).toBe(claimed.priorityReferralCode);
     const awarded = await request("/plus", undefined, priority.token);
     expect(awarded).toMatchObject({ priority: true, active: true });
     expect(awarded.priorityReferralCode).toMatch(/^BX-[0-9A-F]{32}$/);
@@ -735,6 +729,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
     } finally { providerState = prior; }
     await request("/admin/membership", { action: "revoke-priority", email: "priority-owner@example.com" }, admin.token);
     expect(await request("/plus", undefined, priority.token)).toMatchObject({ active: false, priority: false });
+    await request("/membership/priority/apply", { code: "PRIORITY X90" }, priority.token, undefined, 403);
     await request("/auth/register", { email: "revoked-referral@example.com", password: "Smoke-test123!", age: 25, promoCode: awarded.priorityReferralCode }, undefined, undefined, 400);
   });
 
