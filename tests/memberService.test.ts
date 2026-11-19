@@ -1,5 +1,5 @@
-import { DEFAULT_MEMBER, PROFILE_PROMPTS } from "../shared/member";
-import { publicMember, updateMember, hidesPresence, hidesDiscovery, makePlan } from "../backend/src/services/memberService";
+import { DEFAULT_MEMBER, PROFILE_PROMPTS, RIGHT_NOW_DURATION_MS } from "../shared/member";
+import { currentMember, publicMember, updateMember, hidesPresence, hidesDiscovery, makePlan } from "../backend/src/services/memberService";
 import { validPushSubscription } from "../backend/src/services/pushService";
 import { createCommunityRepository } from "../backend/src/repositories/communityRepository";
 import fs from "node:fs";
@@ -15,6 +15,39 @@ describe("Member discovery, privacy, and plans",()=>{
     expect(publicMember(changed,undefined,undefined,now+7200000).intent).toBeUndefined();
   });
   it.each([0,0.5,24,-1])("rejects an unsupported intent duration %s",intentHours=>expect(()=>updateMember(undefined,{intent:"tonight",intentHours},free,now)).toThrow());
+  it("expires Right Now at the same time for public discovery and member settings", () => {
+    const available = updateMember(undefined, { rightNow: true, rightNowExpiresAtMs: now + 86400000 }, free, now);
+    const expiry = now + RIGHT_NOW_DURATION_MS;
+    expect(available.rightNowExpiresAtMs).toBe(expiry);
+    expect(updateMember(available, { rightNow: true }, free, now + 1000).rightNowExpiresAtMs).toBe(expiry);
+    expect(updateMember(available, { interests: ["Coffee"] }, free, now + 1000).rightNowExpiresAtMs).toBe(expiry);
+    expect(publicMember(available, undefined, undefined, expiry - 1).rightNowExpiresAtMs).toBe(expiry);
+    expect(publicMember(available, undefined, undefined, expiry)).not.toHaveProperty("rightNowExpiresAtMs");
+    expect(currentMember(available, expiry)).not.toHaveProperty("rightNowExpiresAtMs");
+    expect(updateMember(available, { rightNow: false }, free, now + 1000)).not.toHaveProperty("rightNowExpiresAtMs");
+    expect(updateMember(available, { rightNow: true }, free, expiry).rightNowExpiresAtMs).toBe(expiry + RIGHT_NOW_DURATION_MS);
+    expect(() => updateMember(undefined, { rightNow: "true" }, free, now)).toThrow();
+  });
+  it("keeps a scheduled window private until it starts and expires it even without a client", () => {
+    const start = now + 7200000;
+    const end = start + RIGHT_NOW_DURATION_MS;
+    const schedule = updateMember(undefined, { rightNowStartsAtMs: start }, free, now);
+    expect(schedule).toMatchObject({ rightNowStartsAtMs: start, rightNowExpiresAtMs: end });
+    expect(currentMember(schedule, start - 1)).toHaveProperty("rightNowStartsAtMs", start);
+    expect(publicMember(schedule, undefined, undefined, start - 1)).not.toHaveProperty("rightNowExpiresAtMs");
+    expect(publicMember(schedule, undefined, undefined, start)).toHaveProperty("rightNowExpiresAtMs", end);
+    expect(publicMember(schedule, undefined, undefined, start)).not.toHaveProperty("rightNowStartsAtMs");
+    expect(publicMember(schedule, undefined, undefined, end)).not.toHaveProperty("rightNowExpiresAtMs");
+    expect(currentMember(schedule, end)).not.toHaveProperty("rightNowStartsAtMs");
+    expect(updateMember(schedule, { rightNowStartsAtMs: start + 1000 }, free, now).rightNowStartsAtMs).toBe(start + 1000);
+    expect(updateMember(schedule, { rightNow: false }, free, now)).not.toHaveProperty("rightNowExpiresAtMs");
+    expect(updateMember(schedule, { rightNow: true }, free, now)).toHaveProperty("rightNowExpiresAtMs", now + RIGHT_NOW_DURATION_MS);
+    expect(updateMember(schedule, { rightNow: true }, free, now)).not.toHaveProperty("rightNowStartsAtMs");
+    expect(() => updateMember(schedule, { rightNowStartsAtMs: end + 1000 }, free, start)).toThrow(/active/);
+    for (const invalid of [now, now - 1, Infinity, "tomorrow", 8640000000000000]) {
+      expect(() => updateMember(undefined, { rightNowStartsAtMs: invalid }, free, now)).toThrow(/future/);
+    }
+  });
   it("clears intent immediately",()=>{const p=updateMember(undefined,{intent:"chatting",intentHours:1},free,now);expect(updateMember(p,{intent:""},free,now).intentExpiresAtMs).toBeUndefined();});
   it("validates interests and prompts and strips client claims of verification",()=>{
     const p=updateMember(undefined,{interests:["Coffee","Coffee"],prompts:[{prompt:PROFILE_PROMPTS[0],answer:"Ask about my dog."}],photoVerified:true},free,now);

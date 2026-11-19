@@ -1,12 +1,12 @@
 import type { Express, Request, Response } from "express";
 import { randomBytes, randomUUID } from "node:crypto";
-import { DEFAULT_MEMBER, type PublicPlan } from "../../../shared/member";
+import { type PublicPlan } from "../../../shared/member";
 import { hasPlus } from "../../../shared/plus";
 import type { AuthService, Session, StoredUser } from "../services/authService";
 import type { ProfileRepository } from "../services/profileService";
 import type { MediaRecord, MediaRepository, ObjectStorage } from "../services/mediaService";
 import type { CommunityRepository } from "../repositories/communityRepository";
-import { makePlan, MemberError, text, updateMember } from "../services/memberService";
+import { currentMember, makePlan, MemberError, text, updateMember } from "../services/memberService";
 import { validPushSubscription } from "../services/pushService";
 export function installMemberRoutes(app:Express,deps:{
   auth:AuthService; profiles:ProfileRepository; media:MediaRepository; storage:ObjectStorage; bucket:string;
@@ -22,7 +22,7 @@ export function installMemberRoutes(app:Express,deps:{
   async function removeProof(userId:string) {const v=auth.getUser(userId)?.plusData?.photoVerification;if(v?.proofMediaId){const m=await media.getById(v.proofMediaId);if(m?.kind==="photo_verification" && m.userId===userId)await deps.storage.deleteObject?.({bucket:deps.bucket,key:m.objectKey});}}
   async function purgeProofs(){for(const id of auth.listRegisteredUserIds()){const v=auth.getUser(id)?.plusData?.photoVerification;if(v?.status==="pending"&&v.expiresAtMs<=Date.now()){await removeProof(id);await save(id,{photoVerification:{...v,status:"rejected",proofMediaId:undefined,reason:"Photo review request expired. Please submit again."}});}}}
   const cleanup=setInterval(()=>void purgeProofs().catch(()=>{}),3600000);cleanup.unref();void purgeProofs().catch(()=>{});
-  app.get("/members/me",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;let v=a.user.plusData?.photoVerification;const profile=await profiles.getByUserId(a.user.id);if(v?.status==="approved" && v.mainPhotoMediaId!==profile?.mainPhotoMediaId)v={...v,status:"outdated",reason:"Your main photo changed. Request a fresh review for the new photo."};res.json({preferences:{...DEFAULT_MEMBER,...a.user.plusData?.member},verification:v ?? null,plus:hasPlus(a.session)});}));
+  app.get("/members/me",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;let v=a.user.plusData?.photoVerification;const profile=await profiles.getByUserId(a.user.id);if(v?.status==="approved" && v.mainPhotoMediaId!==profile?.mainPhotoMediaId)v={...v,status:"outdated",reason:"Your main photo changed. Request a fresh review for the new photo."};res.json({preferences:currentMember(auth.getUser(a.user.id)?.plusData?.member),verification:v ?? null,plus:hasPlus(a.session)});}));
   app.put("/members/me",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;const preferences=updateMember(a.user.plusData?.member,req.body,a.session);await save(a.user.id,{member:preferences});if(preferences.hideLocation || preferences.incognito || preferences.hideProfile)deps.privacyChanged?.(`user:${a.user.id}`,Boolean(preferences.incognito || preferences.hideProfile));res.json({preferences,plus:hasPlus(a.session),verification:auth.getUser(a.user.id)?.plusData?.photoVerification ?? null});}));
   app.post("/members/verification/challenge",wrap(async(req,res)=>{
     const a=member(req,res);if(!a)return;const p=await profiles.getByUserId(a.user.id);if(!p?.mainPhotoMediaId)throw new MemberError("PHOTO_REQUIRED","Add a main profile photo before requesting verification.");

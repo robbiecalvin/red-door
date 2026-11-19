@@ -290,6 +290,21 @@ describe("Core API and payment lifecycle smoke checks", () => {
     const member=await request("/members/me",{intent:"chatting",intentHours:1,interests:["Coffee","Hiking"],prompts:[{prompt:"Ask me about…",answer:"My favorite trail"}]},alice.token,"PUT");
     expect(member.preferences.intentExpiresAtMs).toBeGreaterThan(Date.now());
     const profile=await request(`/profile/public/${alice.id}`);expect(profile.profile.member.interests).toEqual(["Coffee","Hiking"]);expect(profile.profile.member.intent).toBe("chatting");expect(profile.profile.member.hideLocation).toBeUndefined();
+    await request("/members/me", { rightNow: true }, guest.session.sessionToken, "PUT", 403);
+    const availability = await request("/members/me", { rightNow: true }, alice.token, "PUT");
+    const expiry = availability.preferences.rightNowExpiresAtMs;
+    expect(expiry).toBeGreaterThan(Date.now());
+    expect((await request(`/profile/public/${alice.id}`)).profile.member.rightNowExpiresAtMs).toBe(expiry);
+    await request("/members/me", { rightNow: false }, alice.token, "PUT");
+    expect((await request(`/profile/public/${alice.id}`)).profile.member).not.toHaveProperty("rightNowExpiresAtMs");
+    const start = Date.now() + 3600000;
+    const schedule = await request("/members/me", { rightNowStartsAtMs: start }, alice.token, "PUT");
+    expect(schedule.preferences.rightNowStartsAtMs).toBe(start);
+    expect((await request("/members/me", undefined, alice.token)).preferences.rightNowStartsAtMs).toBe(start);
+    const beforeStart = (await request(`/profile/public/${alice.id}`)).profile.member;
+    expect(beforeStart).not.toHaveProperty("rightNowExpiresAtMs");
+    expect(beforeStart).not.toHaveProperty("rightNowStartsAtMs");
+    await request("/members/me", { rightNow: false }, alice.token, "PUT");
     const observer=new WebSocket(base.replace("http:","ws:"));await once(observer,"open");const hello=once(observer,"message");observer.send(JSON.stringify({type:"auth",payload:{sessionToken:alice.token}}));await hello;
     const removed=once(observer,"message");
     await request("/members/me",{hideProfile:true},bob.token,"PUT");
@@ -440,6 +455,122 @@ describe("Core API and payment lifecycle smoke checks", () => {
     function run(args:string[]){const result=spawnSync(process.execPath,[script,...args],{cwd:root,env:{...process.env,DATABASE_URL:"",NEON_DATABASE_URL:""},encoding:"utf8"});expect({status:result.status,error:result.stderr}).toEqual({status:0,error:""});}
     run(["create","--source",path.join(root,"backend/.data"),"--backup",backup,"--offline"]);run(["verify","--backup",backup]);run(["restore-local","--backup",backup,"--target",path.join(restored,"backend/.data")]);
     backendCwd=restored;await startBackend();await assertRestored();
+  });
+
+  it("keeps private group locations and membership behind host approval", async () => {
+    const host = await account("group-host");
+    const member = await account("group-member");
+    const invitee = await account("group-invitee");
+    const address = "Fixture private address";
+    const start = Date.now() + 1800000;
+    const end = start + 1800000;
+    const week = 7 * 86400000;
+    const created = await request("/public-postings", {
+      type: "event", title: "Private group fixture", body: "Summary", groupDetails: "Group details", groupFormat: "open-house",
+      lat: 49.123456, lng: -123.123456, guestLimit: 1, eventStartAtMs: end, locationInstructions: address,
+      groupSchedule: [{ startsAtMs: start, endsAtMs: end }, { startsAtMs: start + week, endsAtMs: end + week }]
+    }, host.token);
+    const postingId = created.posting.postingId;
+    const discussion = `/public-postings/event/${postingId}/discussion`;
+    expect(created.posting).toMatchObject({ groupStartsAtMs: start, groupFormat: "open-house" });
+    const lookup = async (token?: string) => (await request("/public-postings?type=event", undefined, token))
+      .postings.find((posting: { postingId: string }) => posting.postingId === postingId);
+    const expectPrivate = (posting: unknown) => {
+      expect(posting).not.toHaveProperty("locationInstructions");
+      expect(posting).not.toHaveProperty("lat");
+      expect(posting).not.toHaveProperty("lng");
+    };
+
+    expectPrivate(await lookup());
+    expectPrivate(await lookup(member.token));
+    expectPrivate((await request("/admin/public-postings", undefined, admin.token)).postings
+      .find((posting: { postingId: string }) => posting.postingId === postingId));
+    await request("/public-postings/event/request-join", { postingId }, member.token, undefined, 400);
+    await request("/chat/send", { chatKind: "cruise", toKey: `user:${host.id}`, text: "Hello, host" }, member.token);
+    const pending = await request("/public-postings/event/request-join", { postingId }, member.token);
+    expectPrivate(pending.posting);
+    await request(discussion, undefined, member.token, undefined, 404);
+    await request(discussion, { text: "Pending member" }, member.token, undefined, 404);
+    await request(discussion, { text: "Host welcome" }, host.token, undefined, 201);
+    expect((await lookup(invitee.token)).joinRequestUserIds).toEqual([]);
+    await request("/public-postings/event/respond-request", { postingId, targetUserId: member.id, accept: true }, invitee.token, undefined, 400);
+    await request("/public-postings/event/respond-request", { postingId, targetUserId: member.id, accept: true }, host.token);
+    expect(await lookup(member.token)).toMatchObject({ locationInstructions: address, lat: 49.123456, lng: -123.123456 });
+    const nextDate = (await request("/public-postings?type=event", undefined, member.token)).postings
+      .find((posting: { groupSeriesId?: string; groupOccurrence?: number }) => posting.groupSeriesId === postingId && posting.groupOccurrence === 2);
+    expect(nextDate).toMatchObject({ groupStartsAtMs: start + week, attendeeCount: 0 });
+    expectPrivate(nextDate);
+    await request(`/public-postings/event/${nextDate.postingId}/discussion`, undefined, member.token, undefined, 404);
+    expect((await request(discussion, undefined, member.token)).messages.map((message: {text: string}) => message.text)).toEqual(["Host welcome"]);
+    const groupReply = await request(discussion, { text: "Group-only reply" }, member.token, undefined, 201);
+    const reportRoute = `${discussion}/${groupReply.message.messageId}/report`;
+    await request(reportRoute, { reason: "Fixture concern" }, invitee.token, undefined, 404);
+    await request(reportRoute, { reason: "Fixture concern" }, member.token, undefined, 404);
+    const report = await request(reportRoute, { reason: "Fixture concern" }, host.token, undefined, 201);
+    await request("/admin/safety-reports", undefined, member.token, undefined, 403);
+    expect((await request("/admin/safety-reports", undefined, admin.token)).reports).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reportId: report.reportId, reason: "Fixture concern", target: expect.objectContaining({
+        kind: "group-message", postingId, text: "Group-only reply", targetKey: `user:${member.id}`
+      }) })
+    ]));
+    expect((await request(discussion, undefined, host.token)).messages).toHaveLength(2);
+    const direct = await request(`/chat/messages?chatKind=cruise&otherKey=user:${host.id}`, undefined, member.token);
+    expect(direct.messages.map((message: {text: string}) => message.text)).toEqual(["Hello, host"]);
+    await request("/public-postings/event/invite", { postingId, targetUserId: invitee.id, expiresAtMs: Date.now() - 1 }, host.token, undefined, 400);
+    const expiresAtMs = Date.now() + 60000;
+    const issued = await request("/public-postings/event/invite", { postingId, targetUserId: invitee.id, expiresAtMs }, host.token);
+    expect(issued.invite.expiresAtMs).toBe(expiresAtMs);
+    const invitations = await request("/public-postings/event/invites", undefined, invitee.token);
+    expectPrivate(invitations.postings[0]);
+    expect(invitations.postings[0].acceptedUserIds).toEqual([]);
+    expect(invitations.postings[0].inviteExpiresAtByUserId).toEqual({ [invitee.id]: expiresAtMs });
+    await request("/chat/send", { chatKind: "cruise", toKey: `user:${host.id}`, text: "Hello from the waitlist" }, invitee.token);
+    const waiting = await request("/public-postings/event/respond", { postingId, accept: true }, invitee.token);
+    expectPrivate(waiting.posting);
+    expect(waiting.posting).toMatchObject({ attendeeCount: 1, guestLimit: 1, joinRequestUserIds: [invitee.id] });
+    await request("/public-postings/event/respond-request", { postingId, targetUserId: invitee.id, accept: true }, host.token, undefined, 400);
+    expect((await lookup(host.token)).joinRequestUserIds).toContain(invitee.id);
+
+    const removal = `/public-postings/event/${postingId}/attendees/${member.id}`;
+    await request(removal, undefined, invitee.token, "DELETE", 404);
+    await request(removal, undefined, host.token, "DELETE");
+    const departed = await lookup(member.token);
+    expectPrivate(departed);
+    await request(discussion, undefined, member.token, undefined, 404);
+    expect(departed.attendeeCount).toBe(0);
+    expectPrivate((await request("/public-postings/event/respond", { postingId, accept: true }, invitee.token)).posting);
+    await request("/public-postings/event/respond-request", { postingId, targetUserId: invitee.id, accept: true }, host.token);
+    expect(await lookup(invitee.token)).toMatchObject({ attendeeCount: 1, joinRequestUserIds: [], locationInstructions: address });
+
+    const queued = await request("/public-postings/event/request-join", { postingId }, member.token);
+    expectPrivate(queued.posting);
+    expect(queued.posting.joinRequestUserIds).toEqual([member.id]);
+    const withdrawn = await request("/public-postings/event/respond", { postingId, accept: false }, member.token);
+    expect(withdrawn.posting.joinRequestUserIds).toEqual([]);
+    await request("/block", { targetKey: `user:${invitee.id}` }, host.token);
+    expect(await lookup(invitee.token)).toBeUndefined();
+    await request(discussion, undefined, invitee.token, undefined, 404);
+    const cancel = `/public-postings/event/${nextDate.postingId}`;
+    await request(cancel, undefined, member.token, "DELETE", 404);
+    await request(cancel, undefined, host.token, "DELETE");
+    const remaining = (await request("/public-postings?type=event", undefined, host.token)).postings;
+    expect(remaining).toEqual(expect.arrayContaining([expect.objectContaining({ postingId })]));
+    expect(remaining).not.toEqual(expect.arrayContaining([expect.objectContaining({ postingId: nextDate.postingId })]));
+    await request(`${cancel}/discussion`, undefined, host.token, undefined, 404);
+  });
+
+  it("enforces Plus on posting creation without restricting free members from reading", async () => {
+    const free = await account("posting-free");
+    const draft = { type: "ad", title: "Posting smoke fixture", body: "Details", availability: "hosting" };
+    await request("/public-postings", draft, free.token, undefined, 402);
+    if (Date.now() >= LAUNCH_END_MS) return;
+    const publisher = await account("posting-plus", false, BADEHAUS_FLYER_CODE);
+    const published = await request("/public-postings", draft, publisher.token);
+    expect(published.posting).toMatchObject({ authorUserId: publisher.id, availability: "hosting" });
+    const feed = await request("/public-postings?type=ad", undefined, free.token);
+    expect(feed.postings).toEqual(expect.arrayContaining([expect.objectContaining({
+      postingId: published.posting.postingId, title: draft.title, availability: "hosting"
+    })]));
   });
 
 });

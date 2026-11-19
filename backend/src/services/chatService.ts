@@ -101,6 +101,7 @@ export type ChatService = Readonly<{
   markRead(session: Session, chatKind: ChatKind, otherKey: string): Result<{ readAtMs: number }>;
   getThread(chatKind: ChatKind, aKey: string, bKey: string): ChatThread;
   snapshotState(): ChatPersistenceState;
+  hasDirectHistory(aKey: string, bKey: string): boolean;
   purgeExpired(): void;
 }>;
 
@@ -648,6 +649,14 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
       const b = normalizeKey(bKey);
       const [x, y] = a < b ? [a, b] : [b, a];
       return { chatId: id, chatKind, aKey: x, bKey: y };
+    },
+
+    hasDirectHistory(aKey, bKey) {
+      return (["cruise", "date"] as const).some(kind => {
+        const id = threadKey(kind, aKey, bKey);
+        purgeExpiredInThread(kind, id, nowMs());
+        return (messagesByThread.get(id) ?? []).some(message => !message.text.startsWith("GROUP_INVITE_"));
+      });
     },
 
     purgeExpired() {

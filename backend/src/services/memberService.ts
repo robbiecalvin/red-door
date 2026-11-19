@@ -1,4 +1,4 @@
-import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, type MemberPreferences, type PublicMember, type PhotoVerification, type CommunityPlan } from "../../../shared/member";
+import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, RIGHT_NOW_DURATION_MS, isRightNow, type MemberPreferences, type PublicMember, type PhotoVerification, type CommunityPlan } from "../../../shared/member";
 import { hasPlus, type PlusIdentity } from "../../../shared/plus";
 import { containsDisallowedKidVariation } from "./contentPolicy";
 export class MemberError extends Error { constructor(public code: string, message: string, public status = 400) { super(message); } }
@@ -6,9 +6,40 @@ export function text(value: unknown, max: number, label: string): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > max || containsDisallowedKidVariation(value)) throw new MemberError("INVALID_INPUT", `${label} is required (maximum ${max} characters).`);
   return value.trim();
 }
+export function currentMember(preferences: MemberPreferences | undefined, now = Date.now()): MemberPreferences {
+  const member = { ...DEFAULT_MEMBER, ...preferences };
+  if (!isRightNow(member.rightNowExpiresAtMs, now)) {
+    delete member.rightNowStartsAtMs;
+    delete member.rightNowExpiresAtMs;
+  }
+  return member;
+}
+
 export function updateMember(current: MemberPreferences | undefined, input: unknown, identity: PlusIdentity, now = Date.now()): MemberPreferences {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new MemberError("INVALID_INPUT", "Invalid member preferences.");
-  const p = input as Record<string, unknown>, next = { ...DEFAULT_MEMBER, ...current };
+  const p = input as Record<string, unknown>, next = currentMember(current, now);
+  const scheduled = (next.rightNowStartsAtMs ?? 0) > now;
+  if (p.rightNowStartsAtMs !== undefined) {
+    const start = p.rightNowStartsAtMs;
+    if (p.rightNow !== undefined || typeof start !== "number" || !Number.isSafeInteger(start) ||
+        start <= now || !Number.isFinite(new Date(start + RIGHT_NOW_DURATION_MS).getTime())) {
+      throw new MemberError("INVALID_INPUT", "Choose a future start time for Right Now.");
+    }
+    if (next.rightNowExpiresAtMs !== undefined && !scheduled) {
+      throw new MemberError("RIGHT_NOW_ACTIVE", "Turn off your active Right Now window before scheduling another.", 409);
+    }
+    next.rightNowStartsAtMs = start;
+    next.rightNowExpiresAtMs = start + RIGHT_NOW_DURATION_MS;
+  } else if (p.rightNow !== undefined) {
+    if (typeof p.rightNow !== "boolean") throw new MemberError("INVALID_INPUT", "Choose whether you are available right now.");
+    if (!p.rightNow) {
+      delete next.rightNowStartsAtMs;
+      delete next.rightNowExpiresAtMs;
+    } else if (scheduled || next.rightNowExpiresAtMs === undefined) {
+      delete next.rightNowStartsAtMs;
+      next.rightNowExpiresAtMs = now + RIGHT_NOW_DURATION_MS;
+    }
+  }
   if (p.intent !== undefined) {
     if (p.intent === "") { delete next.intent; delete next.intentExpiresAtMs; }
     else {
@@ -41,8 +72,9 @@ export function updateMember(current: MemberPreferences | undefined, input: unkn
   return next;
 }
 export function publicMember(preferences: MemberPreferences | undefined, verification: PhotoVerification | undefined, mainPhotoMediaId?: string, now=Date.now()): PublicMember {
-  const member={...DEFAULT_MEMBER,...preferences};
-  return {interests:member.interests,prompts:member.prompts,...(member.intent && (member.intentExpiresAtMs ?? 0)>now ? {intent:member.intent,intentExpiresAtMs:member.intentExpiresAtMs} : {}),photoVerified:Boolean(mainPhotoMediaId && verification?.status === "approved" && verification.mainPhotoMediaId === mainPhotoMediaId)};
+  const member=currentMember(preferences, now);
+  const activeRightNow = (member.rightNowStartsAtMs ?? 0) <= now && member.rightNowExpiresAtMs !== undefined;
+  return {interests:member.interests,prompts:member.prompts,...(activeRightNow ? {rightNowExpiresAtMs:member.rightNowExpiresAtMs} : {}),...(member.intent && (member.intentExpiresAtMs ?? 0)>now ? {intent:member.intent,intentExpiresAtMs:member.intentExpiresAtMs} : {}),photoVerified:Boolean(mainPhotoMediaId && verification?.status === "approved" && verification.mainPhotoMediaId === mainPhotoMediaId)};
 }
 export function hidesDiscovery(member: MemberPreferences | undefined, identity: PlusIdentity): boolean { return member?.hideProfile === true || member?.incognito === true; }
 export function hidesPresence(member: MemberPreferences | undefined, identity: PlusIdentity): boolean { return member?.hideLocation === true || hidesDiscovery(member,identity); }

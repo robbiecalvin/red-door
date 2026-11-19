@@ -142,4 +142,18 @@ describe("reportService", () => {
     if (!res.ok) throw new Error("unreachable");
     expect(res.value.reason.length).toBe(500);
   });
+  it("preserves a group message and its gathering for safety review", () => {
+    const service = createReportService({ nowMs: () => 1000 });
+    const session = { sessionToken: "reporter", userType: "registered", mode: "cruise", userId: "reporter", ageVerified: true } as const;
+    const target = {
+      kind: "group-message", postingId: "gathering", messageId: "message", targetKey: "user:sender", text: "Fixture message"
+    } as const;
+    expect(service.reportGroupMessage(session, target, " ")).toMatchObject({ ok: false });
+    expect(service.reportGroupMessage({ ...session, ageVerified: false }, target, "Concern")).toMatchObject({ ok: false });
+    expect(service.reportGroupMessage(session, target, " Concern ")).toMatchObject({
+      ok: true, value: { fromKey: "user:reporter", target, reason: "Concern", createdAtMs: 1000 }
+    });
+    expect(service.listReports()).toHaveLength(1);
+  });
+
 });

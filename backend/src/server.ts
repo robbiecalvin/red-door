@@ -114,7 +114,7 @@ function sendError(res: Response, error: AnyServiceError): void {
         ? 404
       : code === "PAYMENT_EXPIRED"
         ? 410
-      : code === "PAYMENT_REQUIRED"
+      : code === "PAYMENT_REQUIRED" || code === "PLUS_REQUIRED"
         ? 402
       : code === "MEMBERSHIP_CODE_NOT_FOUND"
         ? 404
@@ -381,9 +381,6 @@ async function main(): Promise<void> {
     console.warn("[RedDoor] Verification delivery is not configured; no code was sent.");
   };
 
-  const publicPostingsService = createPublicPostingsService({
-    persistenceFilePath: path.resolve(process.cwd(), "backend/.data/public-postings.json")
-  });
   const submissionsService = createSubmissionsService();
   const cruisingSpotsService = createCruisingSpotsService({
     persistenceFilePath: path.resolve(process.cwd(), "backend/.data/cruise-spots.json")
@@ -544,6 +541,11 @@ async function main(): Promise<void> {
   try { metrics = createAnalyticsService({ secret: jwtSecret, enabled: process.env.ANALYTICS_ENABLED !== "false", initialState: metricsRepo ? await metricsRepo.load() : undefined, filePath: metricsRepo ? undefined : path.resolve(process.cwd(), "backend/.data/analytics.json"), onChange: metricsRepo ? state => { metricsQueue = metricsQueue.then(async () => { await metricsRepo.save(state); metricsWriteError = null; }).catch((error: unknown) => { metricsWriteError = error; console.error("[RedDoor] Analytics persistence failed."); }); } : undefined }); }
   catch { console.error("[RedDoor] Analytics initialization failed; collection is disabled."); metrics = createAnalyticsService({ secret: jwtSecret, enabled: false }); }
   const recordMetric = (action: () => void) => { try { action(); metricsWriteError = null; } catch (error) { metricsWriteError = error; console.error("[RedDoor] Analytics unavailable; application request continues."); } };
+  const publicPostingsService = createPublicPostingsService({
+    persistenceFilePath: path.resolve(process.cwd(), "backend/.data/public-postings.json"),
+    blocked: (hostId, viewerId) => blockService.isBlocked(`user:${hostId}`, `user:${viewerId}`),
+    hasDirectHistory: (hostId, viewerId) => chatService.hasDirectHistory(`user:${hostId}`, `user:${viewerId}`)
+  });
   chatService.purgeExpired();
   const chatCleanupTimer = setInterval(() => { try { chatService.purgeExpired(); } catch { console.error("[RedDoor] Chat retention cleanup failed."); } }, 3600000);
   chatCleanupTimer.unref();
@@ -1087,6 +1089,7 @@ async function main(): Promise<void> {
   });
 
   app.get("/profile/public/:userId", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
     const userId = String((req.params as any)?.userId ?? "").trim();
     if (bannedUserIds().has(userId)) {
       return sendError(res, { code: "PROFILE_NOT_FOUND", message: "Profile not found." });
@@ -1100,6 +1103,7 @@ async function main(): Promise<void> {
   });
 
   app.get("/profile/public", async (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const result = await profileService.listPublicProfiles();
     if (!result.ok) return sendError(res, result.error);
     const banned = bannedUserIds();
@@ -1209,6 +1213,12 @@ async function main(): Promise<void> {
     return res.status(200).json(result.value);
   });
 
+  // Group responses can contain attendee-only locations.
+  app.use("/public-postings", (_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    next();
+  });
+
   // Community postings (ads/events)
   app.get("/public-postings", (req, res) => {
     const token = getSessionToken(req);
@@ -1228,9 +1238,13 @@ async function main(): Promise<void> {
       title: (req.body as any)?.title,
       body: (req.body as any)?.body,
       photoMediaId: (req.body as any)?.photoMediaId,
+      availability: req.body?.availability,
       lat: (req.body as any)?.lat,
       lng: (req.body as any)?.lng,
       eventStartAtMs: (req.body as any)?.eventStartAtMs,
+      guestLimit: req.body?.guestLimit,
+      groupSchedule: req.body?.groupSchedule,
+      groupFormat: req.body?.groupFormat,
       locationInstructions: (req.body as any)?.locationInstructions,
       groupDetails: (req.body as any)?.groupDetails
     });
@@ -1245,7 +1259,8 @@ async function main(): Promise<void> {
     const result = publicPostingsService.inviteToEvent(
       sessionResult.value,
       (req.body as any)?.postingId,
-      (req.body as any)?.targetUserId
+      (req.body as any)?.targetUserId,
+      req.body?.expiresAtMs
     );
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ invite: result.value });
@@ -1294,6 +1309,55 @@ async function main(): Promise<void> {
     const result = publicPostingsService.listEventInvites(domainSession(sessionResult.value));
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ postings: result.value });
+  });
+
+  app.get("/public-postings/event/:postingId/discussion", (req, res) => {
+    const session = authService.getSession(getSessionToken(req) ?? "");
+    if (!session.ok) return sendError(res, session.error);
+    const result = publicPostingsService.listGroupDiscussion(session.value, req.params.postingId);
+    if (!result.ok) return sendError(res, result.error);
+    return res.json({ messages: result.value });
+  });
+
+  app.post("/public-postings/event/:postingId/discussion", (req, res) => {
+    const session = authService.getSession(getSessionToken(req) ?? "");
+    if (!session.ok) return sendError(res, session.error);
+    const result = publicPostingsService.sendGroupMessage(session.value, req.params.postingId, req.body?.text);
+    if (!result.ok) return sendError(res, result.error);
+    return res.status(201).json({ message: result.value });
+  });
+
+  app.delete("/public-postings/event/:postingId/attendees/:userId", (req, res) => {
+    const session = authService.getSession(getSessionToken(req) ?? "");
+    if (!session.ok) return sendError(res, session.error);
+    const result = publicPostingsService.removeGroupAttendee(session.value, req.params.postingId, req.params.userId);
+    if (!result.ok) return sendError(res, result.error);
+    return res.json(result.value);
+  });
+
+  app.delete("/public-postings/event/:postingId", (req, res) => {
+    const session = authService.getSession(getSessionToken(req) ?? "");
+    if (!session.ok) return sendError(res, session.error);
+    const result = publicPostingsService.cancelGroup(session.value, req.params.postingId);
+    if (!result.ok) return sendError(res, result.error);
+    return res.json(result.value);
+  });
+
+  app.post("/public-postings/event/:postingId/discussion/:messageId/report", async (req, res) => {
+    const session = authService.getSession(getSessionToken(req) ?? "");
+    if (!session.ok) return sendError(res, session.error);
+    const result = publicPostingsService.listGroupDiscussion(session.value, req.params.postingId);
+    if (!result.ok) return sendError(res, result.error);
+    const message = result.value.find(item => item.messageId === req.params.messageId);
+    if (!message || message.authorUserId === session.value.userId) return res.status(404).json({ message: "Message not found." });
+    const report = reportService.reportGroupMessage(session.value, {
+      kind: "group-message", postingId: req.params.postingId, messageId: message.messageId,
+      targetKey: `user:${message.authorUserId}`, text: message.text
+    }, req.body?.reason);
+    if (!report.ok) return sendError(res, report.error);
+    await safetyPersistence;
+    if (safetyPersistenceError) return res.status(503).json({ message: "Unable to save the report. Please retry." });
+    return res.status(201).json({ reportId: report.value.reportId });
   });
 
   // Cruising spots

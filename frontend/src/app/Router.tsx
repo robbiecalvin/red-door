@@ -1,3 +1,8 @@
+import { GroupDiscussion } from "./GroupDiscussion";
+import { MAX_GROUP_OCCURRENCES, type GroupFormat, type GroupOccurrence } from "../../../shared/groupSchedule";
+import { isPostingAvailability, POSTING_AVAILABILITY, type PostingAvailability } from "../../../shared/postingStatus";
+import { groupIsFull, validGuestLimit } from "../../../shared/groupCapacity";
+import { isRightNow } from "../../../shared/member";
 import { ProfileDetailsEditor, ProfileDetailsView } from "./ProfileDetails";
 import { parseProfileDetails, type ProfileDetails } from "../../../shared/profileDetails";
 import { InstallApp } from "./Pwa";
@@ -6,7 +11,7 @@ import { AdminLaunchChecks } from "./AdminLaunchChecks";
 import { BillingSettings, PromoCodeForm } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { CommunityPanel } from "./CommunityPanel";
-import { MemberEditor, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentControl, IntentBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, FirstConnections, DiscoveryChoices, type DiscoveryChoice } from "./MemberPanels";
+import { MemberEditor, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentControl, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, FirstConnections, DiscoveryChoices, type DiscoveryChoice } from "./MemberPanels";
 import type { PublicMember } from "../../../shared/member";
 import { queueReply } from "./replyDraft";
 import { PlusMembershipCard } from "./PlusShowcase";
@@ -1248,6 +1253,8 @@ function CruiseSurface({
 
       {selectedProfileKey ? (() => {
         const profile = selectedPublicProfile;
+        const liveProfile = visiblePublicProfiles.find(row => chatKeyFromProfileUserId(row.userId) === selectedProfileKey);
+        const rightNowExpiresAtMs = (liveProfile ?? profile)?.member?.rightNowExpiresAtMs;
         const stats = profile?.stats;
         const isSelf = selectedProfileKey === meKey;
         const unreadCount = unreadByProfileKey[selectedProfileKey] ?? 0;
@@ -1280,6 +1287,7 @@ function CruiseSurface({
           <Sheet title={displayName} onClose={close} className="rd-member-profile">
             <div className="rd-member-profile-status">
               <span className={isOnline ? "is-online" : ""}>{isOnline ? "Online now" : "Offline"}</span>
+              <RightNowBadge expiresAtMs={rightNowExpiresAtMs} />
               {selectedProfileDistanceLabel ? <span>{selectedProfileDistanceLabel}</span> : null}
             </div>
             <div className="rd-member-profile-layout">
@@ -1535,7 +1543,18 @@ function CruiseChat({
   const activeCallPeerRef = useRef<string | null>(null);
   const [remoteVideoStream, setRemoteVideoStream] = useState<MediaStream | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState<boolean>(discoverFilter === "favorites");
+  const [rightNowOnly, setRightNowOnly] = useState(false);
   const [discoveryNow,setDiscoveryNow]=useState(Date.now());
+  useEffect(() => {
+    const now = Date.now();
+    const nextExpiry = publicProfiles.reduce((earliest, profile) => {
+      const expiry = profile.member?.rightNowExpiresAtMs;
+      return isRightNow(expiry, now) ? Math.min(earliest, expiry!) : earliest;
+    }, Infinity);
+    if (!Number.isFinite(nextExpiry)) return;
+    const timer = window.setTimeout(() => setDiscoveryNow(Date.now()), nextExpiry - now);
+    return () => window.clearTimeout(timer);
+  }, [publicProfiles, discoveryNow]);
   useEffect(()=>{const id=window.setInterval(()=>setDiscoveryNow(Date.now()),30000);return()=>clearInterval(id);},[]);
   const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
   const [onlineStatusFilter, setOnlineStatusFilter] = useState<"all" | "online" | "offline">(
@@ -1613,6 +1632,7 @@ function CruiseChat({
     const maxCock = filterMaxCockSize.trim() ? Number(filterMaxCockSize) : undefined;
 
     const filtered = baseCards.filter((p) => {
+      if (rightNowOnly && !isRightNow(p.member?.rightNowExpiresAtMs, discoveryNow)) return false;
       if(discoveryChoice.intent && (p.member?.intent!==discoveryChoice.intent || (p.member?.intentExpiresAtMs ?? 0)<=discoveryNow))return false;
       if(discoveryChoice.interest && !p.member?.interests.includes(discoveryChoice.interest))return false;
       if(discoveryChoice.verifiedOnly && !p.member?.photoVerified)return false;
@@ -1647,7 +1667,7 @@ function CruiseChat({
       return a.key.localeCompare(b.key);
     });
   }, [
-    discoveryChoice,discoveryNow,
+    discoveryChoice, discoveryNow, rightNowOnly,
     session.tier, session.plusExpiresAtMs,
     baseCards,
     favorites,
@@ -2396,6 +2416,7 @@ function CruiseChat({
   function clearGridFilters(): void {
     onDiscoveryChoiceChange({intent:"",interest:"",verifiedOnly:false});
     setFavoritesOnly(false);
+    setRightNowOnly(false);
     setOnlineStatusFilter("all");
     setHasChatHistoryOnly(false);
     setHasPicturesOnly(false);
@@ -2463,7 +2484,7 @@ function CruiseChat({
     return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
   }, []);
 
-  const activeFilterCount = [Boolean(discoveryChoice.intent),Boolean(discoveryChoice.interest),discoveryChoice.verifiedOnly,favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
+  const activeFilterCount = [rightNowOnly, Boolean(discoveryChoice.intent),Boolean(discoveryChoice.interest),discoveryChoice.verifiedOnly,favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
   useEffect(() => { window.dispatchEvent(new CustomEvent("rd:filter-count", {detail:{count:activeFilterCount}})); }, [activeFilterCount]);
   useEffect(() => { window.dispatchEvent(new CustomEvent("rd:people-filter", {detail:{keys: activeFilterCount ? gridCards.map(card => card.key) : null}})); }, [activeFilterCount, gridCards]);
 
@@ -2583,6 +2604,10 @@ function CruiseChat({
       ) : null}
       {groupStatus ? <div style={{ color: "#ff7a88", fontSize: 12 }}>{groupStatus}</div> : null}
       {filtersOpen ? <Sheet title="Find your people" eyebrow="YOUR KIND OF COMPANY" onClose={() => setFiltersOpen(false)}><div className="rd-filter-fields">
+              <label className="rd-right-now-filter">
+                <input type="checkbox" checked={rightNowOnly} onChange={event => setRightNowOnly(event.target.checked)} />
+                <span className="rd-right-now-badge"><Icon name="lightning" />Right Now only</span>
+              </label>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} />
@@ -2676,7 +2701,7 @@ function CruiseChat({
                     />
                     {p.isOnline ? <span className="rd-person-online-dot" aria-hidden="true" /> : null}
                   </div>
-                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong><IntentBadge member={p.member}/><VerifiedBadge verified={p.member?.photoVerified}/><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
+                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong><RightNowBadge expiresAtMs={p.member?.rightNowExpiresAtMs} /><IntentBadge member={p.member}/><VerifiedBadge verified={p.member?.photoVerified}/><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
                 </button>
               ))
             )}
@@ -3799,10 +3824,17 @@ function PublicPostings({
 }>): React.ReactElement {
   const [ads, setAds] = useState<ReadonlyArray<PublicPosting>>([]);
   const [events, setEvents] = useState<ReadonlyArray<PublicPosting>>([]);
+  const [adAvailability, setAdAvailability] = useState<PostingAvailability | "">("");
   const [adTitle, setAdTitle] = useState<string>("");
   const [adBody, setAdBody] = useState<string>("");
   const [eventTitle, setEventTitle] = useState<string>("");
   const [eventBody, setEventBody] = useState<string>("");
+  const [eventGroupFormat, setEventGroupFormat] = useState<GroupFormat>("scheduled");
+  const [eventRepeatCount, setEventRepeatCount] = useState(1);
+  const [groupAction, setGroupAction] = useState<{ postingId: string; attendeeId?: string } | null>(null);
+  const [groupActionBusy, setGroupActionBusy] = useState(false);
+  const [groupActionError, setGroupActionError] = useState("");
+  const [eventGuestLimit, setEventGuestLimit] = useState("");
   const [eventDate, setEventDate] = useState<string>("");
   const [eventStartTime, setEventStartTime] = useState<string>("");
   const [eventEndTime, setEventEndTime] = useState<string>("");
@@ -3822,14 +3854,13 @@ function PublicPostings({
   const [publicProfilesByUserId, setPublicProfilesByUserId] = useState<Record<string, PublicProfile>>({});
   const [uploadingKind, setUploadingKind] = useState<"ad" | "event" | "spot" | null>(null);
   const [eventInvites, setEventInvites] = useState<ReadonlyArray<PublicPosting>>([]);
+  const [inviteDeadlineByEventId, setInviteDeadlineByEventId] = useState<Record<string, string>>({});
   const [inviteTargetByEventId, setInviteTargetByEventId] = useState<Record<string, string>>({});
   const [selectedAdId, setSelectedAdId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
   const [adThreadMessages, setAdThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [adThreadLoading, setAdThreadLoading] = useState<boolean>(false);
-  const [groupThreadMessages, setGroupThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
-  const [groupThreadLoading, setGroupThreadLoading] = useState<boolean>(false);
   const [spotThreadMessages, setSpotThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [spotThreadLoading, setSpotThreadLoading] = useState<boolean>(false);
   const [createPanelOpen, setCreatePanelOpen] = useState<boolean>(!compact);
@@ -3839,7 +3870,8 @@ function PublicPostings({
   const [presenceByKey, setPresenceByKey] = useState<Record<string, { lat: number; lng: number }>>({});
   const refreshSeqRef = useRef<number>(0);
 
-  const canPostAds = true;
+  const canPostAds = session.ageVerified && hasPlus(session);
+  const postingChatKind = session.mode === "cruise" || session.userType === "guest" ? "cruise" : "date";
   const canPostEvents = session.userType !== "guest";
   const canCreateSpots = true;
   const gridColumns = isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))";
@@ -3848,7 +3880,6 @@ function PublicPostings({
   const selectedGroup = useMemo(() => events.find((event) => event.postingId === selectedGroupId) ?? null, [events, selectedGroupId]);
   const selectedSpot = useMemo(() => spots.find((spot) => spot.spotId === selectedSpotId) ?? null, [selectedSpotId, spots]);
   const selectedAdThreadKey = selectedAd?.authorUserId ? `user:${selectedAd.authorUserId}` : "";
-  const selectedGroupThreadKey = selectedGroup ? `event:${selectedGroup.postingId}` : "";
   const selectedSpotThreadKey = selectedSpotId ? `spot:${selectedSpotId}` : "";
   const meKey = actorKey(session);
   const selfCoords = presenceByKey[meKey] ?? null;
@@ -3944,10 +3975,12 @@ function PublicPostings({
       setEvents(
         [...eventsRes.postings]
           .filter((row) => typeof row.eventStartAtMs !== "number" || row.eventStartAtMs > now)
-          .sort((a, b) => a.createdAtMs - b.createdAtMs)
+          .sort((a, b) => (a.groupStartsAtMs ?? a.eventStartAtMs ?? a.createdAtMs) -
+            (b.groupStartsAtMs ?? b.eventStartAtMs ?? b.createdAtMs))
       );
       setSpots(spotsRes.spots);
-      setEventInvites(invitesRes.postings);
+      setEventInvites(invitesRes.postings.filter(posting => !session.userId ||
+        (!posting.acceptedUserIds?.includes(session.userId) && !posting.joinRequestUserIds?.includes(session.userId))));
       setPublicProfilesByUserId(
         profilesRes.profiles.reduce<Record<string, PublicProfile>>((acc, profile) => {
           acc[profile.userId] = profile;
@@ -4037,6 +4070,7 @@ function PublicPostings({
 
   async function submit(type: "ad" | "event"): Promise<void> {
     setLastError(null);
+    if (type === "ad" && !canPostAds) { openPlus(); return; }
     if (type === "event" && !canPostEvents) {
       setLastError("Anonymous users cannot create groups.");
       return;
@@ -4054,6 +4088,16 @@ function PublicPostings({
     const photoMediaId = type === "ad" ? adPhotoMediaId : eventPhotoMediaId;
     const groupStartAtMs = type === "event" ? combineEventDateTimeToEpochMs(eventDate, eventStartTime) : null;
     const groupEndAtMs = type === "event" ? combineEventDateTimeToEpochMs(eventDate, eventEndTime) : null;
+    let groupSchedule: GroupOccurrence[] | undefined;
+    if (groupStartAtMs !== null && groupEndAtMs !== null) {
+      groupSchedule = Array.from({ length: eventRepeatCount }, (_, index) => {
+        const start = new Date(groupStartAtMs);
+        const end = new Date(groupEndAtMs);
+        start.setDate(start.getDate() + index * 7);
+        end.setDate(end.getDate() + index * 7);
+        return { startsAtMs: start.getTime(), endsAtMs: end.getTime() };
+      });
+    }
     if (type === "event" && groupStartAtMs === null) {
       setLastError("Group start date and time are required.");
       return;
@@ -4074,6 +4118,11 @@ function PublicPostings({
       setLastError("Current location is required to place the group.");
       return;
     }
+    const guestLimit = Number(eventGuestLimit);
+    if (type === "event" && !validGuestLimit(guestLimit)) {
+      setLastError("Enter a positive whole-number guest limit.");
+      return;
+    }
     if (type === "event" && eventLocationInstructions.trim().length === 0) {
       setLastError("Location instructions are required.");
       return;
@@ -4088,9 +4137,13 @@ function PublicPostings({
         title,
         body,
         photoMediaId: photoMediaId || undefined,
+        availability: type === "ad" ? adAvailability || undefined : undefined,
         lat: type === "event" ? selfCoords?.lat : undefined,
         lng: type === "event" ? selfCoords?.lng : undefined,
         eventStartAtMs: groupEndAtMs ?? undefined,
+        groupSchedule,
+        groupFormat: type === "event" ? eventGroupFormat : undefined,
+        guestLimit: type === "event" ? guestLimit : undefined,
         locationInstructions: type === "event" ? eventLocationInstructions.trim() : undefined,
         groupDetails: type === "event" ? eventGroupDetails.trim() : undefined
       });
@@ -4101,12 +4154,16 @@ function PublicPostings({
       }
       if (type === "ad") {
         setAdTitle("");
+        setAdAvailability("");
         setAdBody("");
         setAdPhotoFile(null);
         setAdPhotoMediaId("");
       } else {
         setEventTitle("");
         setEventBody("");
+        setEventGuestLimit("");
+        setEventRepeatCount(1);
+        setEventGroupFormat("scheduled");
         setEventDate("");
         setEventStartTime("");
         setEventEndTime("");
@@ -4132,7 +4189,11 @@ function PublicPostings({
       return;
     }
     try {
-      await api.inviteToEvent(session.sessionToken, { postingId, targetUserId });
+      const deadline = inviteDeadlineByEventId[postingId];
+      await api.inviteToEvent(session.sessionToken, {
+        postingId, targetUserId, expiresAtMs: deadline ? new Date(deadline).getTime() : undefined
+      });
+      setInviteDeadlineByEventId(prev => ({ ...prev, [postingId]: "" }));
       setInviteTargetByEventId((prev) => ({ ...prev, [postingId]: "" }));
       await refresh();
     } catch (e) {
@@ -4176,6 +4237,32 @@ function PublicPostings({
       await refresh();
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
+    }
+  }
+
+  function confirmGroupAction(postingId: string, attendeeId?: string): void {
+    setGroupActionError("");
+    setGroupAction({ postingId, attendeeId });
+  }
+
+  async function applyGroupAction(): Promise<void> {
+    if (!groupAction || groupActionBusy) return;
+    const { postingId, attendeeId } = groupAction;
+    const route = `/public-postings/event/${encodeURIComponent(postingId)}`;
+    setGroupActionBusy(true);
+    setGroupActionError("");
+    try {
+      await api.memberRequest(session.sessionToken, attendeeId ? `${route}/attendees/${encodeURIComponent(attendeeId)}` : route, undefined, "DELETE");
+      if (!attendeeId) {
+        setEvents(previous => previous.filter(posting => posting.postingId !== postingId));
+        setSelectedGroupId(null);
+      }
+      setGroupAction(null);
+      await refresh();
+    } catch (error) {
+      setGroupActionError(normalizeErrorMessage(error));
+    } finally {
+      setGroupActionBusy(false);
     }
   }
 
@@ -4275,27 +4362,29 @@ function PublicPostings({
       {
         authorUserId: string;
         latestAtMs: number;
-        bubbles: Array<{ postingId: string; text: string; atMs: number }>;
+        bubbles: PublicPosting[];
       }
     >();
     for (const row of recentAds) {
       const existing = grouped.get(row.authorUserId);
-      const bubble = { postingId: row.postingId, text: row.body, atMs: row.createdAtMs };
       if (!existing) {
         grouped.set(row.authorUserId, {
           authorUserId: row.authorUserId,
           latestAtMs: row.createdAtMs,
-          bubbles: [bubble]
+          bubbles: [row]
         });
         continue;
       }
-      existing.bubbles.push(bubble);
+      existing.bubbles.push(row);
       existing.latestAtMs = Math.max(existing.latestAtMs, row.createdAtMs);
     }
     return Array.from(grouped.values()).sort((a, b) => a.latestAtMs - b.latestAtMs);
   }, [ads]);
 
   async function submitBoardAd(): Promise<void> {
+    if (!canPostAds) { openPlus(); return; }
+    const title = adTitle.trim();
+    if (!title) { setLastError("Enter a posting headline."); return; }
     const message = boardInput.trim();
     if (!message) {
       setLastError("Ad message is required.");
@@ -4305,12 +4394,13 @@ function PublicPostings({
     try {
       await api.createPublicPosting(session.sessionToken, {
         type: "ad",
-        title: "Cruising Update",
+        title,
         body: message,
-        lat: selfCoords?.lat,
-        lng: selfCoords?.lng
+        availability: adAvailability || undefined
       });
       setBoardInput("");
+      setAdTitle("");
+      setAdAvailability("");
       await refresh();
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
@@ -4334,22 +4424,10 @@ function PublicPostings({
   async function loadAdThread(posting: PublicPosting): Promise<void> {
     const threadKey = `user:${posting.authorUserId}`;
     try {
-      const res = await api.listChat(session.sessionToken, "date", threadKey);
+      const res = await api.listChat(session.sessionToken, postingChatKind, threadKey);
       const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
       setAdThreadMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
-      if(!document.hidden) void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
-    } catch (e) {
-      setLastError(normalizeErrorMessage(e));
-    }
-  }
-
-  async function loadGroupThread(posting: PublicPosting): Promise<void> {
-    const threadKey = `event:${posting.postingId}`;
-    try {
-      const res = await api.listChat(session.sessionToken, "date", threadKey);
-      const list = Array.isArray((res as { messages?: unknown }).messages) ? ((res as { messages: ChatMessage[] }).messages ?? []) : [];
-      setGroupThreadMessages([...list].sort((a, b) => a.createdAtMs - b.createdAtMs));
-      if(!document.hidden) void api.markChatRead(session.sessionToken, "date", threadKey).catch(() => {});
+      if(!document.hidden) void api.markChatRead(session.sessionToken, postingChatKind, threadKey).catch(() => {});
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -4365,8 +4443,7 @@ function PublicPostings({
         }
         if (toKey.startsWith("spot:")) {
           setSpotThreadMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
-        } else if (toKey.startsWith("event:")) {
-          setGroupThreadMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
+
         } else {
           setAdThreadMessages((prev) => [...prev, msg].sort((a, b) => a.createdAtMs - b.createdAtMs));
         }
@@ -4419,29 +4496,6 @@ function PublicPostings({
   }, [screen, selectedAd]);
 
   useEffect(() => {
-    if (!selectedGroup || screen !== "groups") return;
-    let cancelled = false;
-    let timer: number | null = null;
-    setGroupThreadLoading(true);
-
-    const poll = async (): Promise<void> => {
-      if (cancelled) return;
-      await loadGroupThread(selectedGroup);
-      if (cancelled) return;
-      setGroupThreadLoading(false);
-      timer = window.setTimeout(() => {
-        void poll();
-      }, 1500);
-    };
-
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer !== null) window.clearTimeout(timer);
-    };
-  }, [screen, selectedGroup]);
-
-  useEffect(() => {
     if (!selectedSpotId || screen !== "cruise") return;
     let cancelled = false;
     let timer: number | null = null;
@@ -4464,8 +4518,27 @@ function PublicPostings({
     };
   }, [screen, selectedSpotId]);
 
+  const postingAvailabilityField = (
+    <label className="rd-field">
+      <span className="rd-label">Availability</span>
+      <select className="rd-input" value={adAvailability} onChange={event => {
+        const value = event.target.value;
+        setAdAvailability(isPostingAvailability(value) ? value : "");
+      }}>
+        <option value="">No indicator</option>
+        {Object.entries(POSTING_AVAILABILITY).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+    </label>
+  );
+  const postingUpgrade = (
+    <div className="rd-row">
+      <span>Publishing requires Plus.</span>
+      <button type="button" className="rd-btn" onClick={() => openPlus()}>Explore Plus</button>
+    </div>
+  );
+
   const panel = (kind: "ads" | "groups", showGrid = true): React.ReactElement => {
-    const title = kind === "ads" ? "ADS" : "GROUPS";
+    const title = kind === "ads" ? "Postings" : "Groups";
     const list = kind === "ads" ? ads : events;
     const draftTitle = kind === "ads" ? adTitle : eventTitle;
     const draftBody = kind === "ads" ? adBody : eventBody;
@@ -4486,14 +4559,15 @@ function PublicPostings({
             <div style={{ fontSize: 20, fontWeight: 700 }}>{title}</div>
             {compact ? (
               <button type="button" style={buttonSecondary(false)} onClick={() => setCreatePanelOpen((prev) => !prev)}>
-                {createPanelOpen ? "Close" : kind === "groups" ? "Add Group +" : "Add Ad +"}
+                {createPanelOpen ? "Close" : kind === "groups" ? "Add group" : "New posting"}
               </button>
             ) : null}
           </div>
-          {createPanelOpen ? (
+          {kind === "ads" && !canPostAds ? postingUpgrade : createPanelOpen ? (
             <>
               <input value={draftTitle} onChange={(e) => setTitle(e.target.value)} placeholder={`${title} title`} style={fieldStyle()} aria-label={`${title} title`} disabled={!canPostThis} />
               <textarea value={draftBody} onChange={(e) => setBody(e.target.value)} placeholder={`Write ${title.toLowerCase()} details`} style={{ ...fieldStyle(), minHeight: 86, resize: "vertical" }} aria-label={`${title} details`} disabled={!canPostThis} />
+              {kind === "ads" ? postingAvailabilityField : null}
               {kind === "groups" ? (
                 <div style={{ display: "grid", gap: 8 }}>
                   <div style={{ display: "grid", gap: 6 }}>
@@ -4531,6 +4605,30 @@ function PublicPostings({
                       />
                     </label>
                   </div>
+                  <label className="rd-field">
+                    <span className="rd-label">Group format</span>
+                    <select className="rd-input" value={eventGroupFormat} disabled={!canPostThis}
+                      onChange={event => setEventGroupFormat(event.target.value === "open-house" ? "open-house" : "scheduled")}>
+                      <option value="scheduled">Scheduled gathering</option>
+                      <option value="open-house">Open House</option>
+                    </select>
+                  </label>
+                  {eventGroupFormat === "open-house" ? <small>Approved attendees can drop in between the start and end times.</small> : null}
+                  <label className="rd-field">
+                    <span className="rd-label">Repeat</span>
+                    <select className="rd-input" value={eventRepeatCount} disabled={!canPostThis}
+                      onChange={event => setEventRepeatCount(Number(event.target.value))}>
+                      <option value={1}>One time</option>
+                      {Array.from({ length: MAX_GROUP_OCCURRENCES - 1 }, (_, index) => index + 2).map(count =>
+                        <option key={count} value={count}>Weekly · {count} gatherings</option>)}
+                    </select>
+                  </label>
+                  <label className="rd-field">
+                    <span className="rd-label">Guest limit</span>
+                    <input type="number" min="1" step="1" value={eventGuestLimit}
+                      onChange={event => setEventGuestLimit(event.target.value)} style={fieldStyle()} disabled={!canPostThis} />
+                    <small>Enter the number of guests, excluding the host.</small>
+                  </label>
                   <textarea
                     value={eventGroupDetails}
                     onChange={(e) => setEventGroupDetails(e.target.value)}
@@ -4576,7 +4674,7 @@ function PublicPostings({
                 {!photoMediaId && photoFile ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Photo selected. Upload to attach.</div> : null}
               </div>
               <button type="button" onClick={() => void submit(submitKind)} style={canPostThis ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPostThis}>
-                POST {title}
+                {kind === "ads" ? "Publish posting" : "Create group"}
               </button>
               {!canPostThis ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view groups but cannot post groups.</div> : null}
             </>
@@ -4593,7 +4691,10 @@ function PublicPostings({
                     const isInvited = !!session.userId && (p.invitedUserIds ?? []).includes(session.userId);
                     const isAttending = !!session.userId && (p.authorUserId === session.userId || (p.acceptedUserIds ?? []).includes(session.userId));
                     const hasRequested = !!session.userId && (p.joinRequestUserIds ?? []).includes(session.userId);
-                    const canRequestJoin = kind === "groups" && session.userType !== "guest" && !!session.userId && !isHost && !isAttending && !hasRequested;
+                    const deadline = session.userId ? p.inviteExpiresAtByUserId?.[session.userId] : undefined;
+                    const full = groupIsFull(p);
+                    const guestCount = p.attendeeCount ?? p.acceptedUserIds?.length ?? 0;
+                    const canRequestJoin = kind === "groups" && session.userType !== "guest" && !!session.userId && !isHost && !isInvited && !isAttending && !hasRequested;
                     return (
                       <div
                         key={p.postingId}
@@ -4616,7 +4717,10 @@ function PublicPostings({
                           <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
                           {kind === "groups" ? (
                             <div style={{ color: "#9fb6bf", fontSize: 12 }}>
-                              Ends {formatEventDate(p.eventStartAtMs)} at {formatEventTime(p.eventStartAtMs)}
+                              {p.groupStartsAtMs ? <>Starts {formatEventDate(p.groupStartsAtMs)} at {formatEventTime(p.groupStartsAtMs)}</>
+                                : <>Ends {formatEventDate(p.eventStartAtMs)} at {formatEventTime(p.eventStartAtMs)}</>}
+                              {p.groupOccurrenceCount ? ` · ${p.groupOccurrence} of ${p.groupOccurrenceCount}` : ""}
+                              {p.groupFormat === "open-house" ? " · Open House" : ""}
                             </div>
                           ) : null}
                           <div style={{ color: "#9fb6bf", fontSize: 12 }}>Host: {displayNameForUserId(p.authorUserId)}</div>
@@ -4624,7 +4728,7 @@ function PublicPostings({
                           {kind === "groups" ? (
                             <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
                               <div style={{ color: "#9fb6bf", fontSize: 12 }}>
-                                Invited: {p.invitedUserIds?.length ?? 0} | Attending: {(p.acceptedUserIds?.length ?? 0) + 1}
+                                {p.guestLimit ? `${guestCount} of ${p.guestLimit} guest spots filled` : `${guestCount} guests attending`}{full ? " · Full" : ""}
                               </div>
                               {isHost ? (
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
@@ -4632,17 +4736,26 @@ function PublicPostings({
                                     value={inviteTargetByEventId[p.postingId] ?? ""}
                                     onChange={(e) => setInviteTargetByEventId((prev) => ({ ...prev, [p.postingId]: e.target.value }))}
                                     placeholder="Invite user id"
+                                    aria-label="Invite user ID"
                                     style={fieldStyle()}
                                   />
                                   <button type="button" style={buttonSecondary(false)} onClick={() => void inviteToEvent(p.postingId)}>
                                     INVITE
                                   </button>
+                                  <label className="rd-field" style={{ gridColumn: "1 / -1" }}>
+                                    <span className="rd-label">Invitation deadline</span>
+                                    <input type="datetime-local" value={inviteDeadlineByEventId[p.postingId] ?? ""}
+                                      onChange={e => setInviteDeadlineByEventId(prev => ({ ...prev, [p.postingId]: e.target.value }))}
+                                      style={fieldStyle()} />
+                                    <small>Defaults to the group end time.</small>
+                                  </label>
                                 </div>
                               ) : null}
-                              {session.userType !== "guest" && isInvited ? (
+                              {session.userType !== "guest" && isInvited && !isAttending && !hasRequested ? (
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  {deadline ? <small style={{ width: "100%" }}>Respond by {formatEventDate(deadline)} at {formatEventTime(deadline)}</small> : null}
                                   <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(p.postingId, true)}>
-                                    ACCEPT INVITE
+                                    {full ? "JOIN WAITLIST" : "ACCEPT INVITE"}
                                   </button>
                                   <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(p.postingId, false)}>
                                     DECLINE
@@ -4651,10 +4764,14 @@ function PublicPostings({
                               ) : null}
                               {canRequestJoin ? (
                                 <button type="button" style={buttonSecondary(false)} onClick={() => void requestToJoin(p.postingId)}>
-                                  REQUEST TO JOIN
+                                  {full ? "JOIN WAITLIST" : "REQUEST TO JOIN"}
                                 </button>
                               ) : null}
-                              {hasRequested ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Join request pending host approval.</div> : null}
+                              {hasRequested ? <div style={{ color: "#b9bec9", fontSize: 12 }}>
+                                {full ? "You’re on the waitlist." : "Join request pending host approval."}
+                                <button type="button" className="rd-btn" onClick={() => void respondToInvite(p.postingId, false)}>Withdraw request</button>
+                              </div> : null}
+                              {!isHost && isAttending ? <button type="button" className="rd-btn" onClick={() => void respondToInvite(p.postingId, false)}>Leave group</button> : null}
                               <button
                                 type="button"
                                 style={selectedGroupId === p.postingId ? buttonPrimary(false) : buttonSecondary(false)}
@@ -4858,7 +4975,7 @@ function PublicPostings({
     return (
       <div style={{ display: "grid", gap: 10 }}>
         <div className="rd-board-panel">
-          <div className="rd-section-heading"><div><div className="rd-eyebrow">WHAT’S HAPPENING</div><h1>The board</h1><p>A moment, a plan, an open invitation.</p></div><Icon name="board" /></div>
+          <div className="rd-section-heading"><div><div className="rd-eyebrow">WHAT’S HAPPENING</div><h1>Postings</h1><p>A moment, a plan, an open invitation.</p></div><Icon name="board" /></div>
           <div style={{ maxHeight: "calc(100dvh - 260px)", overflowY: "auto", padding: 8, display: "grid", gap: 10 }}>
             {adBoardRows.length === 0 ? (
               <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name="board" /></span><h2>Set something in motion.</h2><p>No posts in the last 12 hours. Share what you’re up to and start a conversation.</p></div>
@@ -4870,7 +4987,7 @@ function PublicPostings({
                 const actorDistance = selfCoords && actorPresence ? formatDistanceLabel(distanceMeters(selfCoords, actorPresence)) : "-";
                 const metaStats = profile
                   ? `${profile.age}y, ${profile.stats?.heightInches ?? "-"}in, ${profile.stats?.weightLbs ?? "-"}lb, ${profile.stats?.position ?? "-"}`
-                  : row.authorUserId;
+                  : displayNameForUserId(row.authorUserId);
                 return (
                   <div key={row.authorUserId} style={{ display: "grid", gridTemplateColumns: "48px 1fr", gap: 10, alignItems: "start" }}>
                     <button
@@ -4905,7 +5022,9 @@ function PublicPostings({
                             lineHeight: 1.35
                           }}
                         >
-                          {bubble.text}
+                          <strong>{bubble.title}</strong>
+                          {bubble.availability ? <span className="rd-posting-availability">{POSTING_AVAILABILITY[bubble.availability]}</span> : null}
+                          <div>{bubble.body}</div>
                         </div>
                       ))}
                     </div>
@@ -4914,8 +5033,11 @@ function PublicPostings({
               })
             )}
           </div>
-          <div style={{ borderTop: "1px solid rgba(255,122,131,0.28)", padding: 8, display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
-            <input
+          {canPostAds ? <div style={{ borderTop: "1px solid rgba(255,122,131,0.28)", padding: 8, display: "grid", gap: 8 }}>
+            <input className="rd-input" aria-label="Posting headline" placeholder="Headline" value={adTitle}
+              maxLength={120} onChange={event => setAdTitle(event.target.value)} />
+            {postingAvailabilityField}
+            <input aria-label="Posting details"
               value={boardInput}
               onChange={(event) => setBoardInput(event.target.value)}
               placeholder="Post a cruising update..."
@@ -4923,9 +5045,9 @@ function PublicPostings({
               maxLength={220}
             />
             <button type="button" style={buttonPrimary(boardPosting)} disabled={boardPosting} onClick={() => void submitBoardAd()}>
-              {boardPosting ? "..." : "Send"}
+              {boardPosting ? "Publishing…" : "Publish posting"}
             </button>
-          </div>
+          </div> : postingUpgrade}
         </div>
         {boardProfileUserId ? (
           <div
@@ -5000,11 +5122,15 @@ function PublicPostings({
                 style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedAdId === p.postingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
               >
                 <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Ad media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "none" }} />
+                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForUserId(p.authorUserId)) : avatarForUserId(p.authorUserId)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", border: "none" }} />
                 </div>
                 <div style={{ padding: 8, display: "grid", gap: 4 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
-                  <div style={{ fontSize: 11, color: "#b9bec9" }}>Host: {displayNameForUserId(p.authorUserId)}</div>
+                  <div className="rd-posting-byline">
+                    <img src={avatarForUserId(p.authorUserId)} alt="" />
+                    <span>{displayNameForUserId(p.authorUserId)}</span>
+                  </div>
+                  {p.availability ? <span className="rd-posting-availability">{POSTING_AVAILABILITY[p.availability]}</span> : null}
                 </div>
               </button>
             ))}
@@ -5014,7 +5140,8 @@ function PublicPostings({
             {selectedAd ? (
               <div style={{ ...cardStyle(), display: "grid", gap: 10 }}>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedAd.title}</div>
-                <div style={{ color: "#9fb6bf", fontSize: 13 }}>Host: {displayNameForUserId(selectedAd.authorUserId)}</div>
+                <div className="rd-posting-byline"><img src={avatarForUserId(selectedAd.authorUserId)} alt="" />{displayNameForUserId(selectedAd.authorUserId)}</div>
+                {selectedAd.availability ? <span className="rd-posting-availability">{POSTING_AVAILABILITY[selectedAd.availability]}</span> : null}
                 <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", fontSize: 14 }}>{selectedAd.body}</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button type="button" style={buttonSecondary(false)} onClick={() => setLastError("Ad favoriting is available from profile actions.")}>FAVORITE</button>
@@ -5025,7 +5152,7 @@ function PublicPostings({
                 {adThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13 }}>Loading chat...</div> : null}
                 <ChatWindow
           readReceipts={hasPlus(session)}
-                  chatKind="date"
+                  chatKind={postingChatKind}
                   peerKey={selectedAdThreadKey}
                   currentUserKey={myActorKey}
                   messages={adThreadMessages}
@@ -5044,60 +5171,7 @@ function PublicPostings({
         </div>
       );
     }
-    if (screen === "groups") {
-      return (
-        <div style={shellStyle}>
-          <div style={gridStyle}>
-            {events.map((p) => (
-              <button
-                key={p.postingId}
-                type="button"
-                onClick={() => setSelectedGroupId(p.postingId)}
-                style={{ border: "1px solid rgba(255,58,77,0.35)", background: selectedGroupId === p.postingId ? "rgba(255,32,48,0.08)" : "rgba(0,0,0,0.5)", padding: 0, color: "#fff", cursor: "pointer", textAlign: "left" }}
-              >
-                <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                  <img src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)} alt="Group media" style={{ width: "100%", height: "100%", objectFit: "cover", border: "none" }} />
-                </div>
-                <div style={{ padding: 8, display: "grid", gap: 4 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
-                  <div style={{ fontSize: 11, color: "#b9bec9" }}>Ends {formatEventDate(p.eventStartAtMs)}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-          <div style={{ display: "grid", gap: 10 }}>
-            {panel("groups", false)}
-            {selectedGroup ? (
-              <div style={{ ...cardStyle(), display: "grid", gap: 10 }}>
-                <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedGroup.title}</div>
-                <div style={{ color: "#9fb6bf", fontSize: 13 }}>
-                  Ends {formatEventDate(selectedGroup.eventStartAtMs)} at {formatEventTime(selectedGroup.eventStartAtMs)}
-                </div>
-                <div style={{ color: "#ced3dc", whiteSpace: "pre-wrap", fontSize: 14 }}>{selectedGroup.groupDetails ?? selectedGroup.body}</div>
-                {groupThreadLoading ? <div style={{ color: "#9fb6bf", fontSize: 13 }}>Loading board...</div> : null}
-                <ChatWindow
-          readReceipts={hasPlus(session)}
-                  chatKind="date"
-                  peerKey={selectedGroupThreadKey}
-                  currentUserKey={myActorKey}
-                  messages={groupThreadMessages}
-                  client={postingChatClient}
-                  title="Group Board"
-                  presentation="board"
-                  authorLabelForKey={displayNameForActorKey}
-                  showHeader={false}
-                />
-              </div>
-            ) : (
-              <div style={cardStyle()}>
-                <div style={{ color: "#b9bec9", fontSize: 14 }}>Select a group to view details and message board.</div>
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    }
-    return (
+    if (screen === "cruise") return (
       <div style={shellStyle}>
         <div style={gridStyle}>
           {spots.map((spot) => (
@@ -5130,7 +5204,12 @@ function PublicPostings({
         <div style={{ border: "1px solid rgba(63,223,255,0.45)", background: "rgba(0,0,0,0.45)", padding: 12, display: "grid", gap: 10 }}>
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ fontSize: 20, fontWeight: 700 }}>{selectedGroup.title}</div>
+            {selectedGroup.groupFormat === "open-house" ? <p>Open House. Approved attendees can drop in during the listed hours.</p> : null}
+            {selectedGroup.authorUserId === session.userId ? (
+              <button type="button" className="rd-btn" onClick={() => confirmGroupAction(selectedGroup.postingId)}>Cancel gathering</button>
+            ) : null}
             <div style={{ color: "#9fb6bf", fontSize: 13 }}>
+              {selectedGroup.groupStartsAtMs ? <div>Starts {formatEventDate(selectedGroup.groupStartsAtMs)} at {formatEventTime(selectedGroup.groupStartsAtMs)}</div> : null}
               Ends {formatEventDate(selectedGroup.eventStartAtMs)} at {formatEventTime(selectedGroup.eventStartAtMs)}
             </div>
             <div style={{ color: "#9fb6bf", fontSize: 13 }}>Host: {displayNameForUserId(selectedGroup.authorUserId)}</div>
@@ -5156,13 +5235,17 @@ function PublicPostings({
           ) : (
             <div style={{ color: "#9fb6bf", fontSize: 12 }}>Location instructions are only visible to attendees.</div>
           )}
+          {userCanSeeLocationInstructions(selectedGroup) ? (
+            <GroupDiscussion key={`${session.userId}:${selectedGroup.postingId}`} api={api} session={session}
+              postingId={selectedGroup.postingId} displayNameForUserId={displayNameForUserId} />
+          ) : null}
           {session.userId === selectedGroup.authorUserId && (selectedGroup.joinRequestUserIds?.length ?? 0) > 0 ? (
             <div style={{ display: "grid", gap: 8 }}>
-              <div style={{ fontSize: 13, color: "#9fb6bf" }}>Pending join requests</div>
+              <div style={{ fontSize: 13, color: "#9fb6bf" }}>{groupIsFull(selectedGroup) ? "Waitlist · Group is full" : "Pending join requests"}</div>
               {(selectedGroup.joinRequestUserIds ?? []).map((userId) => (
                 <div key={userId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center" }}>
                   <div style={{ color: "#d2d8e2", fontSize: 14 }}>{displayNameForUserId(userId)}</div>
-                  <button type="button" style={buttonPrimary(false)} onClick={() => void respondToJoinRequest(selectedGroup.postingId, userId, true)}>
+                  <button type="button" disabled={groupIsFull(selectedGroup)} style={buttonPrimary(groupIsFull(selectedGroup))} onClick={() => void respondToJoinRequest(selectedGroup.postingId, userId, true)}>
                     APPROVE
                   </button>
                   <button type="button" style={buttonSecondary(false)} onClick={() => void respondToJoinRequest(selectedGroup.postingId, userId, false)}>
@@ -5192,12 +5275,29 @@ function PublicPostings({
                     {displayNameForUserId(userId)}
                     {idx === 0 ? " (Host)" : ""}
                   </div>
+                  {idx !== 0 && selectedGroup.authorUserId === session.userId ? (
+                    <button type="button" className="rd-btn" aria-label={`Remove ${displayNameForUserId(userId)}`}
+                      onClick={() => confirmGroupAction(selectedGroup.postingId, userId)}>Remove</button>
+                  ) : null}
                 </div>
               ))}
             </div>
           </div>
         </div>
       ) : null}
+      {groupAction ? <Sheet title={groupAction.attendeeId ? "Remove attendee" : "Cancel gathering"}
+        onClose={() => { if (!groupActionBusy) setGroupAction(null); }}>
+        <p>{groupAction.attendeeId
+          ? "This attendee will lose access to the private address and discussion. Their spot will open for another guest."
+          : "This date will be removed and its private discussion will close. Other dates in the series will remain available."}</p>
+        <div className="rd-row">
+          <button type="button" className="rd-btn" disabled={groupActionBusy} onClick={() => setGroupAction(null)}>Go back</button>
+          <button type="button" className="rd-btn primary" disabled={groupActionBusy} onClick={() => void applyGroupAction()}>
+            {groupAction.attendeeId ? "Confirm removal" : "Confirm cancellation"}
+          </button>
+        </div>
+        {groupActionError ? <p role="alert">{groupActionError}</p> : null}
+      </Sheet> : null}
       {screen === "cruise" ? spotsPanel : null}
       {screen === "groups" && session.userType !== "guest" && eventInvites.length > 0 ? (
         <div style={{ border: "1px solid rgba(255,58,77,0.25)", display: "grid", gap: 8, padding: 10 }}>
@@ -5205,9 +5305,12 @@ function PublicPostings({
           {eventInvites.map((event) => (
             <div key={event.postingId} style={{ display: "grid", gap: 6, border: "1px solid rgba(255,58,77,0.4)", borderRadius: 10, padding: 8 }}>
               <div style={{ fontWeight: 700 }}>{event.title}</div>
-              <div style={{ color: "#b9bec9", fontSize: 13 }}>Host: {event.authorUserId}</div>
+              <div style={{ color: "#b9bec9", fontSize: 13 }}>Host: {displayNameForUserId(event.authorUserId)}</div>
+              {session.userId && event.inviteExpiresAtByUserId?.[session.userId] ? (
+                <small>Respond by {formatEventDate(event.inviteExpiresAtByUserId[session.userId])} at {formatEventTime(event.inviteExpiresAtByUserId[session.userId])}</small>
+              ) : null}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(event.postingId, true)}>ACCEPT</button>
+                <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(event.postingId, true)}>{groupIsFull(event) ? "JOIN WAITLIST" : "ACCEPT"}</button>
                 <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(event.postingId, false)}>DECLINE</button>
               </div>
             </div>
@@ -7128,6 +7231,7 @@ export function Router({
 }>): React.ReactElement {
   const isMobile = useIsMobile();
   const [exploreThreadKey, setExploreThreadKey] = useState<string | null>(null);
+  const [groupsView, setGroupsView] = useState<"private" | "public">("private");
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
   const [rememberedThread, setRememberedThread] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState("profile");
@@ -7396,7 +7500,17 @@ export function Router({
         </div>
       ) : null}
       {activeTab === "ads" && !isMobile ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setAdsError} /> : null}
-      {activeTab === "groups" ? <CommunityPanel api={api} session={session}/> : null}
+      {activeTab === "groups" ? (
+        <section aria-label="Groups">
+          <div className="rd-row" aria-label="Group type">
+            <button type="button" className="rd-btn" aria-pressed={groupsView === "private"} onClick={() => setGroupsView("private")}>Private groups</button>
+            <button type="button" className="rd-btn" aria-pressed={groupsView === "public"} onClick={() => setGroupsView("public")}>Public plans</button>
+          </div>
+          {groupsView === "private"
+            ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setGroupsError} />
+            : <CommunityPanel api={api} session={session} />}
+        </section>
+      ) : null}
       {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setSubmissionsError} /> : null}

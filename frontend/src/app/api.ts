@@ -1,3 +1,8 @@
+import { isGroupFormat, validGroupSchedule, type GroupFormat, type GroupOccurrence } from "../../../shared/groupSchedule";
+import { isPostingAvailability, type PostingAvailability } from "../../../shared/postingStatus";
+import { hasActiveGroupInvitation, resolveGroupInvitationDeadline } from "../../../shared/groupInvitation";
+import { groupIsFull, validGuestLimit } from "../../../shared/groupCapacity";
+import { groupPostingForViewer } from "../../../shared/groupPrivacy";
 import { parseProfileDetails, type ProfileDetails } from "../../../shared/profileDetails";
 import { boundedFetch as fetch } from "./request";
 import { actorKey } from "../../../shared/identity";
@@ -182,14 +187,23 @@ export type PublicPosting = Readonly<{
   title: string;
   body: string;
   photoMediaId?: string;
+  availability?: PostingAvailability;
   lat?: number;
   lng?: number;
   eventStartAtMs?: number;
+  groupStartsAtMs?: number;
+  groupFormat?: GroupFormat;
+  groupSeriesId?: string;
+  groupOccurrence?: number;
+  groupOccurrenceCount?: number;
+  guestLimit?: number;
+  attendeeCount?: number;
   locationInstructions?: string;
   groupDetails?: string;
   authorUserId: string;
   createdAtMs: number;
   invitedUserIds?: ReadonlyArray<string>;
+  inviteExpiresAtByUserId?: Readonly<Record<string, number>>;
   acceptedUserIds?: ReadonlyArray<string>;
   joinRequestUserIds?: ReadonlyArray<string>;
   moderationStatus?: "pending" | "approved" | "rejected";
@@ -2531,6 +2545,12 @@ export async function uploadToLocalSignedUrl(uploadUrl: string, file: Blob, mime
   throw { code: "MEDIA_UPLOAD_INVALID", message: "Unknown local upload scope." } as ServiceError;
 }
 
+function localGroupBlocked(state: LocalState, hostId: string, viewerId: string): boolean {
+  const host = `user:${hostId}`;
+  const viewer = `user:${viewerId}`;
+  return Boolean(state.blockedByActorKey[host]?.includes(viewer) || state.blockedByActorKey[viewer]?.includes(host));
+}
+
 function createLocalApiClient(): Readonly<{
   memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T>;
   memberPhoto(token: string, userId: string): Promise<Blob>;
@@ -2624,17 +2644,21 @@ function createLocalApiClient(): Readonly<{
       title: string;
       body: string;
       photoMediaId?: string;
+      availability?: PostingAvailability;
       lat?: number;
       lng?: number;
       eventStartAtMs?: number;
+      groupSchedule?: GroupOccurrence[];
+      groupFormat?: GroupFormat;
+      guestLimit?: number;
       locationInstructions?: string;
       groupDetails?: string;
     }>
   ): Promise<{ posting: PublicPosting }>;
   inviteToEvent(
     sessionToken: string,
-    payload: Readonly<{ postingId: string; targetUserId: string }>
-  ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number } }>;
+    payload: Readonly<{ postingId: string; targetUserId: string; expiresAtMs?: number }>
+  ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number; expiresAtMs: number } }>;
   respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }>;
   requestToJoinEvent(sessionToken: string, payload: Readonly<{ postingId: string }>): Promise<{ posting: PublicPosting }>;
   respondToEventJoinRequest(
@@ -3372,7 +3396,7 @@ function createLocalApiClient(): Readonly<{
       if (typeof sessionToken === "string" && sessionToken.trim().length > 0) {
         try {
           const viewerSession = requireUserSession(state, sessionToken);
-          viewerUserId = viewerSession.userId as string;
+          viewerUserId = viewerSession.ageVerified ? viewerSession.userId ?? null : null;
         } catch {
           viewerUserId = null;
         }
@@ -3387,17 +3411,9 @@ function createLocalApiClient(): Readonly<{
         }
         return true;
       });
-      const normalized = postings.map((p) => {
-        if (p.type !== "event" || !p.locationInstructions) return p;
-        const canSeeLocation =
-          !!viewerUserId &&
-          (p.authorUserId === viewerUserId || (p.acceptedUserIds ?? []).includes(viewerUserId));
-        if (canSeeLocation) return p;
-        const next = { ...p };
-        delete (next as { locationInstructions?: string }).locationInstructions;
-        return next;
-      });
-      return { postings: clone(normalized) };
+      return { postings: clone(postings
+        .filter(p => p.type !== "event" || !viewerUserId || !localGroupBlocked(state, p.authorUserId, viewerUserId))
+        .map(p => groupPostingForViewer(p, viewerUserId ?? undefined))) };
     },
     async createPublicPosting(
       sessionToken: string,
@@ -3406,9 +3422,13 @@ function createLocalApiClient(): Readonly<{
         title: string;
         body: string;
         photoMediaId?: string;
+        availability?: PostingAvailability;
         lat?: number;
         lng?: number;
         eventStartAtMs?: number;
+        groupSchedule?: GroupOccurrence[];
+        groupFormat?: GroupFormat;
+        guestLimit?: number;
         locationInstructions?: string;
         groupDetails?: string;
       }>
@@ -3434,15 +3454,35 @@ function createLocalApiClient(): Readonly<{
       }
       if (!title) throw { code: "INVALID_INPUT", message: "Title is required." } as ServiceError;
       if (!body) throw { code: "INVALID_INPUT", message: "Body is required." } as ServiceError;
-      if (payload.type === "event" && session.userType === "guest") {
+      if (session.userType === "guest") {
         throw { code: "ANONYMOUS_FORBIDDEN", message: "Anonymous users cannot create public postings." } as ServiceError;
       }
-      if (payload.type === "event" && session.ageVerified !== true) {
+      if (session.ageVerified !== true) {
         throw { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Red Door.", context: { minimumAge: 18 } } as ServiceError;
       }
-      if (payload.type === "event" && !eventStartAtMs) throw { code: "INVALID_INPUT", message: "Group end date and time are required." } as ServiceError;
+      if (payload.type === "ad" && !hasPlus(session, nowMs())) {
+        throw { code: "PLUS_REQUIRED", message: "Publishing postings requires Plus." } as ServiceError;
+      }
+      if (payload.type === "ad" && payload.availability !== undefined && !isPostingAvailability(payload.availability)) {
+        throw { code: "INVALID_INPUT", message: "Choose Hosting or Travelling." } as ServiceError;
+      }
+      const schedule = payload.groupSchedule;
+      const now = nowMs();
+      if (payload.groupFormat !== undefined && (payload.type !== "event" || !isGroupFormat(payload.groupFormat) ||
+          (payload.groupFormat === "open-house" && schedule === undefined))) {
+        throw { code: "INVALID_INPUT", message: "Choose a valid group format and provide start and end times for Open House." } as ServiceError;
+      }
+      if (schedule !== undefined && (payload.type !== "event" || !validGroupSchedule(schedule, eventStartAtMs, now))) {
+        throw { code: "INVALID_INPUT", message: "Choose valid future dates for the weekly group schedule." } as ServiceError;
+      }
+      if (payload.type === "event" && (!eventStartAtMs || eventStartAtMs <= now)) {
+        throw { code: "INVALID_INPUT", message: "A future group end time is required." } as ServiceError;
+      }
       if (payload.type === "event" && (typeof lat !== "number" || typeof lng !== "number")) {
         throw { code: "INVALID_INPUT", message: "Group coordinates are required." } as ServiceError;
+      }
+      if (payload.type === "event" && payload.guestLimit !== undefined && !validGuestLimit(payload.guestLimit)) {
+        throw { code: "INVALID_INPUT", message: "Guest limit must be a positive whole number." } as ServiceError;
       }
       if (payload.type === "event" && !locationInstructions) throw { code: "INVALID_INPUT", message: "Location instructions are required for groups." } as ServiceError;
       if (payload.type === "event" && !groupDetails) throw { code: "INVALID_INPUT", message: "Group details are required." } as ServiceError;
@@ -3460,71 +3500,118 @@ function createLocalApiClient(): Readonly<{
         title,
         body,
         ...(photoMediaId ? { photoMediaId } : {}),
+        ...(payload.type === "ad" && isPostingAvailability(payload.availability) ? { availability: payload.availability } : {}),
         ...(payload.type === "event" && typeof lat === "number" ? { lat } : {}),
         ...(payload.type === "event" && typeof lng === "number" ? { lng } : {}),
         ...(payload.type === "event" && eventStartAtMs ? { eventStartAtMs } : {}),
+        ...(payload.type === "event" && isGroupFormat(payload.groupFormat) ? { groupFormat: payload.groupFormat } : {}),
+        ...(payload.type === "event" && validGuestLimit(payload.guestLimit) ? { guestLimit: payload.guestLimit } : {}),
         ...(payload.type === "event" && locationInstructions ? { locationInstructions } : {}),
         ...(payload.type === "event" && groupDetails ? { groupDetails } : {}),
-        authorUserId: payload.type === "event" ? (session.userId as string) : session.userId ?? `guest:${session.sessionToken}`,
+        authorUserId: session.userId!,
         createdAtMs: nowMs(),
         invitedUserIds: payload.type === "event" ? [] : undefined,
         acceptedUserIds: payload.type === "event" ? [] : undefined,
         joinRequestUserIds: payload.type === "event" ? [] : undefined
       };
-      writeState({
-        ...state,
-        publicPostings: [...state.publicPostings, posting]
-      });
-      return { posting: clone(posting) };
+      const occurrences = schedule?.map((date, index): PublicPosting => ({
+        ...posting,
+        postingId: index === 0 ? posting.postingId : randomId("posting"),
+        groupStartsAtMs: date.startsAtMs,
+        eventStartAtMs: date.endsAtMs,
+        ...(schedule.length > 1 ? {
+          groupSeriesId: posting.postingId,
+          groupOccurrence: index + 1,
+          groupOccurrenceCount: schedule.length
+        } : {})
+      })) ?? [posting];
+      writeState({ ...state, publicPostings: [...state.publicPostings, ...occurrences] });
+      return { posting: clone(occurrences[0]) };
     },
     async inviteToEvent(
       sessionToken: string,
-      payload: Readonly<{ postingId: string; targetUserId: string }>
-    ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number } }> {
+      payload: Readonly<{ postingId: string; targetUserId: string; expiresAtMs?: number }>
+    ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number; expiresAtMs: number } }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
+      if (!session.ageVerified) throw { code: "AGE_GATE_REQUIRED", message: "Verify your age to use groups." } as ServiceError;
       const hostUserId = session.userId as string;
-      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event");
+      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event" && (p.eventStartAtMs ?? Infinity) > nowMs());
       if (idx < 0) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
       const posting = state.publicPostings[idx];
       if (posting.authorUserId !== hostUserId) {
         throw { code: "UNAUTHORIZED_ACTION", message: "Only the event host can invite users." } as ServiceError;
       }
+      if (localGroupBlocked(state, hostUserId, payload.targetUserId)) throw { code: "UNAUTHORIZED_ACTION", message: "This invitation is unavailable." } as ServiceError;
+      const now = nowMs();
+      const deadline = resolveGroupInvitationDeadline(posting, payload.expiresAtMs, now);
+      if (deadline === undefined) throw { code: "INVALID_INPUT", message: "Choose an invitation deadline in the future, before or at the group end." } as ServiceError;
       const invited = new Set(posting.invitedUserIds ?? []);
       invited.add(payload.targetUserId);
-      const updated: PublicPosting = { ...posting, invitedUserIds: [...invited].sort() };
+      const updated: PublicPosting = {
+        ...posting, invitedUserIds: [...invited].sort(),
+        inviteExpiresAtByUserId: { ...posting.inviteExpiresAtByUserId, [payload.targetUserId]: deadline }
+      };
       const next = [...state.publicPostings];
       next[idx] = updated;
       writeState({ ...state, publicPostings: next });
-      return { invite: { postingId: payload.postingId, invitedUserId: payload.targetUserId, invitedByUserId: hostUserId, createdAtMs: nowMs() } };
+      return { invite: { postingId: payload.postingId, invitedUserId: payload.targetUserId, invitedByUserId: hostUserId, createdAtMs: now, expiresAtMs: deadline } };
     },
     async respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
+      if (!session.ageVerified) throw { code: "AGE_GATE_REQUIRED", message: "Verify your age to use groups." } as ServiceError;
       const userId = session.userId as string;
-      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event");
+      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event" && (p.eventStartAtMs ?? Infinity) > nowMs());
       if (idx < 0) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
       const posting = state.publicPostings[idx];
+      if (localGroupBlocked(state, posting.authorUserId, userId)) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
       const invited = new Set(posting.invitedUserIds ?? []);
-      if (!invited.has(userId)) throw { code: "UNAUTHORIZED_ACTION", message: "You are not invited to this event." } as ServiceError;
       const accepted = new Set(posting.acceptedUserIds ?? []);
-      if (payload.accept) accepted.add(userId);
-      else accepted.delete(userId);
-      const updated: PublicPosting = { ...posting, acceptedUserIds: [...accepted].sort() };
+      const requests = new Set(posting.joinRequestUserIds ?? []);
+      if (payload.accept && !accepted.has(userId) && !hasActiveGroupInvitation(posting, userId, nowMs())) {
+        throw { code: "UNAUTHORIZED_ACTION", message: "This invitation is unavailable or has expired." } as ServiceError;
+      }
+      if (!payload.accept && !invited.has(userId) && !accepted.has(userId) && !requests.has(userId)) {
+        throw { code: "UNAUTHORIZED_ACTION", message: "You are not invited to this event." } as ServiceError;
+      }
+      const deadlines = { ...posting.inviteExpiresAtByUserId };
+      if (!payload.accept) {
+        delete deadlines[userId];
+        accepted.delete(userId);
+        invited.delete(userId);
+        requests.delete(userId);
+      } else if (!accepted.has(userId) && (groupIsFull(posting) || requests.has(userId))) {
+        requests.add(userId);
+      } else {
+        accepted.add(userId);
+      }
+      const updated: PublicPosting = {
+        ...posting, acceptedUserIds: [...accepted].sort(), invitedUserIds: [...invited].sort(), inviteExpiresAtByUserId: deadlines, joinRequestUserIds: [...requests]
+      };
       const next = [...state.publicPostings];
       next[idx] = updated;
       writeState({ ...state, publicPostings: next });
-      return { posting: clone(updated) };
+      return { posting: clone(groupPostingForViewer(updated, session.ageVerified ? session.userId : undefined)) };
     },
     async requestToJoinEvent(sessionToken: string, payload: Readonly<{ postingId: string }>): Promise<{ posting: PublicPosting }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
+      if (!session.ageVerified) throw { code: "AGE_GATE_REQUIRED", message: "Verify your age to use groups." } as ServiceError;
       const userId = session.userId as string;
-      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event");
+      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event" && (p.eventStartAtMs ?? Infinity) > nowMs());
       if (idx < 0) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
       const posting = state.publicPostings[idx];
+      if (localGroupBlocked(state, posting.authorUserId, userId)) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
       if (posting.authorUserId === userId) throw { code: "INVALID_INPUT", message: "Host is already attending." } as ServiceError;
       if ((posting.acceptedUserIds ?? []).includes(userId)) throw { code: "INVALID_INPUT", message: "You are already marked attending." } as ServiceError;
+      const hostKey = `user:${posting.authorUserId}`;
+      const viewerKey = `user:${userId}`;
+      const hasHistory = state.messages.some(message =>
+        !message.text.startsWith("GROUP_INVITE_") &&
+        (message.fromKey === hostKey && message.toKey === viewerKey || message.fromKey === viewerKey && message.toKey === hostKey) &&
+        nowMs() - message.createdAtMs < (message.chatKind === "cruise" ? 3 : 365) * 86400000);
+      if (!hasHistory) throw { code: "UNAUTHORIZED_ACTION", message: "Chat with the host before requesting to join." } as ServiceError;
       const requests = new Set(posting.joinRequestUserIds ?? []);
       if (requests.has(userId)) throw { code: "INVALID_INPUT", message: "Join request already sent." } as ServiceError;
       requests.add(userId);
@@ -3532,7 +3619,7 @@ function createLocalApiClient(): Readonly<{
       const next = [...state.publicPostings];
       next[idx] = updated;
       writeState({ ...state, publicPostings: next });
-      return { posting: clone(updated) };
+      return { posting: clone(groupPostingForViewer(updated, session.ageVerified ? session.userId : undefined)) };
     },
     async respondToEventJoinRequest(
       sessionToken: string,
@@ -3540,16 +3627,21 @@ function createLocalApiClient(): Readonly<{
     ): Promise<{ posting: PublicPosting }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
+      if (!session.ageVerified) throw { code: "AGE_GATE_REQUIRED", message: "Verify your age to use groups." } as ServiceError;
       const hostUserId = session.userId as string;
-      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event");
+      const idx = state.publicPostings.findIndex((p) => p.postingId === payload.postingId && p.type === "event" && (p.eventStartAtMs ?? Infinity) > nowMs());
       if (idx < 0) throw { code: "EVENT_NOT_FOUND", message: "Event not found." } as ServiceError;
       const posting = state.publicPostings[idx];
       if (posting.authorUserId !== hostUserId) {
         throw { code: "UNAUTHORIZED_ACTION", message: "Only the event host can respond to join requests." } as ServiceError;
       }
+      if (payload.accept && localGroupBlocked(state, hostUserId, payload.targetUserId)) throw { code: "UNAUTHORIZED_ACTION", message: "This request is unavailable." } as ServiceError;
       const requests = new Set(posting.joinRequestUserIds ?? []);
       if (!requests.has(payload.targetUserId)) {
         throw { code: "INVALID_INPUT", message: "No pending join request for this user." } as ServiceError;
+      }
+      if (payload.accept && groupIsFull(posting)) {
+        throw { code: "INVALID_INPUT", message: "This group is full. The request will stay on the waitlist." } as ServiceError;
       }
       requests.delete(payload.targetUserId);
       const invited = new Set(posting.invitedUserIds ?? []);
@@ -3570,14 +3662,15 @@ function createLocalApiClient(): Readonly<{
       const next = [...state.publicPostings];
       next[idx] = updated;
       writeState({ ...state, publicPostings: next });
-      return { posting: clone(updated) };
+      return { posting: clone(groupPostingForViewer(updated, session.ageVerified ? session.userId : undefined)) };
     },
     async listEventInvites(sessionToken: string): Promise<{ postings: ReadonlyArray<PublicPosting> }> {
       const state = readState();
       const session = requireUserSession(state, sessionToken);
+      if (!session.ageVerified) throw { code: "AGE_GATE_REQUIRED", message: "Verify your age to use groups." } as ServiceError;
       const userId = session.userId as string;
-      const postings = state.publicPostings.filter((p) => p.type === "event" && (p.invitedUserIds ?? []).includes(userId));
-      return { postings: clone(postings) };
+      const postings = state.publicPostings.filter((p) => p.type === "event" && (p.eventStartAtMs ?? Infinity) > nowMs() && hasActiveGroupInvitation(p, userId, nowMs()) && !localGroupBlocked(state, p.authorUserId, userId));
+      return { postings: clone(postings.map(p => groupPostingForViewer(p, session.ageVerified ? userId : undefined))) };
     },
     async listCruisingSpots(_sessionToken?: string): Promise<{ spots: ReadonlyArray<CruisingSpot> }> {
       const state = readState();
@@ -4091,17 +4184,21 @@ export function apiClient(basePath = "/api"): Readonly<{
       title: string;
       body: string;
       photoMediaId?: string;
+      availability?: PostingAvailability;
       lat?: number;
       lng?: number;
       eventStartAtMs?: number;
+      groupSchedule?: GroupOccurrence[];
+      groupFormat?: GroupFormat;
+      guestLimit?: number;
       locationInstructions?: string;
       groupDetails?: string;
     }>
   ): Promise<{ posting: PublicPosting }>;
   inviteToEvent(
     sessionToken: string,
-    payload: Readonly<{ postingId: string; targetUserId: string }>
-  ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number } }>;
+    payload: Readonly<{ postingId: string; targetUserId: string; expiresAtMs?: number }>
+  ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number; expiresAtMs: number } }>;
   respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }>;
   requestToJoinEvent(sessionToken: string, payload: Readonly<{ postingId: string }>): Promise<{ posting: PublicPosting }>;
   respondToEventJoinRequest(
@@ -4491,9 +4588,13 @@ export function apiClient(basePath = "/api"): Readonly<{
         title: string;
         body: string;
         photoMediaId?: string;
+        availability?: PostingAvailability;
         lat?: number;
         lng?: number;
         eventStartAtMs?: number;
+        groupSchedule?: GroupOccurrence[];
+        groupFormat?: GroupFormat;
+        guestLimit?: number;
         locationInstructions?: string;
         groupDetails?: string;
       }>
@@ -4507,15 +4608,15 @@ export function apiClient(basePath = "/api"): Readonly<{
     },
     async inviteToEvent(
       sessionToken: string,
-      payload: Readonly<{ postingId: string; targetUserId: string }>
-    ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number } }> {
+      payload: Readonly<{ postingId: string; targetUserId: string; expiresAtMs?: number }>
+    ): Promise<{ invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number; expiresAtMs: number } }> {
       const res = await fetch(`${basePath}/public-postings/event/invite`, {
         method: "POST",
         headers: headers(sessionToken),
         body: JSON.stringify(payload)
       });
       return (await readJsonOrThrow(res)) as {
-        invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number };
+        invite: { postingId: string; invitedUserId: string; invitedByUserId: string; createdAtMs: number; expiresAtMs: number };
       };
     },
     async respondToEventInvite(sessionToken: string, payload: Readonly<{ postingId: string; accept: boolean }>): Promise<{ posting: PublicPosting }> {

@@ -1053,7 +1053,7 @@ export function App(): React.ReactElement {
       ) : null}
 
       {showBottomNav ? <nav className="rd-desktop-nav" aria-label="Main navigation">{([
-        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Board"], ["groups", "groups", "Community"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
+        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Postings"], ["groups", "groups", "Groups"], ["settings", "settings", "Settings"]] as const).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}</nav> : null}
       <div className="rd-inbox-live-status" role="status" hidden={activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
@@ -1460,12 +1460,12 @@ export function App(): React.ReactElement {
               }
               setTabAndRoute("ads");
             }}
-            aria-label="Public ads board"
+            aria-label="Postings"
             aria-current={activeTab === "ads" ? "page" : undefined}
           >
-            <Icon name="board" className="rd-ui-icon rd-mobile-nav-image" /><span>Board</span>
+            <Icon name="board" className="rd-ui-icon rd-mobile-nav-image" /><span>Postings</span>
           </button>
-          <button className={`rd-mobile-nav-btn ${activeTab === "groups" ? "is-active" : ""}`} aria-label="Community plans" aria-current={activeTab === "groups" ? "page" : undefined} onClick={()=>setTabAndRoute("groups")}><Icon name="groups" className="rd-ui-icon"/><span>Community</span></button>
+          <button className={`rd-mobile-nav-btn ${activeTab === "groups" ? "is-active" : ""}`} aria-label="Groups" aria-current={activeTab === "groups" ? "page" : undefined} onClick={()=>setTabAndRoute("groups")}><Icon name="groups" className="rd-ui-icon"/><span>Groups</span></button>
         </nav>
       ) : null}
     </div>

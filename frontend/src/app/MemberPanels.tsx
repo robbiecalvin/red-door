@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, type MemberSettings, type MemberPreferences, type PublicMember, type PhotoVerification } from "../../../shared/member";
+import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, isRightNow, type MemberSettings, type MemberPreferences, type PublicMember, type PhotoVerification } from "../../../shared/member";
 import { apiClient, uploadToLocalSignedUrl, type Session, type UserProfile } from "./api";
 import { openPlus } from "./PlusPanel";
 import { Icon } from "./Icon";
@@ -13,12 +13,88 @@ export function useMember({api,session}:Props){
 }
 export function IntentBadge({member}:{member?:PublicMember}){if(!member?.intent || (member.intentExpiresAtMs ?? 0)<=Date.now())return null;return <span className={`rd-intent-badge intent-${member.intent}`}>{INTENTS[member.intent]}</span>;}
 export function VerifiedBadge({verified}:{verified?:boolean}){return verified?<span className="rd-verified-badge" title="A reviewer compared a submitted selfie with this profile photo. This is not an identity or safety guarantee."><Icon name="shield" />Photo reviewed</span>:null;}
+function useRightNow(expiresAtMs?: number): boolean {
+  const [, refresh] = useState(0);
+  useEffect(() => {
+    if (!isRightNow(expiresAtMs)) return;
+    const timer = window.setTimeout(() => refresh(value => value + 1), expiresAtMs! - Date.now());
+    return () => window.clearTimeout(timer);
+  }, [expiresAtMs]);
+  return isRightNow(expiresAtMs);
+}
+
+export function RightNowBadge({ expiresAtMs }: { expiresAtMs?: number }) {
+  return useRightNow(expiresAtMs)
+    ? <span className="rd-right-now-badge"><Icon name="lightning" />Right Now</span>
+    : null;
+}
+
 export function IntentControl(props:Props){
   const {data,error,busy,save}=useMember(props),[open,setOpen]=useState(false),[intent,setIntent]=useState("chatting"),[hours,setHours]=useState("2"),[now,setNow]=useState(Date.now());
   useEffect(()=>{const id=window.setInterval(()=>setNow(Date.now()),30000);const show=()=>setOpen(true);window.addEventListener("rd:open-intent",show);return()=>{clearInterval(id);window.removeEventListener("rd:open-intent",show);};},[]);
-  if(!props.session.userId)return null;
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduledTime, setScheduledTime] = useState("");
+  const [scheduleError, setScheduleError] = useState("");
+  const rightNowStartsAtMs = data?.preferences.rightNowStartsAtMs;
+  const rightNowExpiresAtMs = data?.preferences.rightNowExpiresAtMs;
+  const scheduled = typeof rightNowStartsAtMs === "number" && rightNowStartsAtMs > now;
+  const rightNow = useRightNow(scheduled ? undefined : rightNowExpiresAtMs);
+  useEffect(() => {
+    if (!scheduled || rightNowStartsAtMs === undefined) return;
+    const delay = Math.max(0, rightNowStartsAtMs - Date.now());
+    if (delay > 30000) return;
+    const timer = window.setTimeout(() => setNow(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [scheduled, rightNowStartsAtMs, now]);
+
+  async function saveSchedule(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    const startsAtMs = new Date(scheduledTime).getTime();
+    if (!Number.isFinite(startsAtMs) || startsAtMs <= Date.now()) {
+      setScheduleError("Choose a future start time.");
+      return;
+    }
+    setScheduleError("");
+    if (await save({ rightNowStartsAtMs: startsAtMs })) {
+      setScheduledTime("");
+      setScheduleOpen(false);
+    }
+  }
+
+  if (!props.session.userId) return null;
   const current=data?.preferences,active=current?.intent && (current.intentExpiresAtMs ?? 0)>now;
-  return <section className="rd-intent-control"><div><span className="rd-eyebrow">RIGHT NOW</span><strong>{active?INTENTS[current.intent!]:"What are you open to?"}</strong>{active?<small>Clears at {new Date(current.intentExpiresAtMs!).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}</small>:<small>Set a temporary status. Let people know your vibe.</small>}</div><button className="rd-btn" aria-expanded={open} onClick={()=>setOpen(!open)}>{active?"Change":"Set status"}</button>{open?<div className="rd-intent-form"><label className="rd-field"><span>Status</span><select className="rd-input" aria-label="Status" value={intent} onChange={e=>setIntent(e.target.value)}>{Object.entries(INTENTS).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label className="rd-field"><span>Automatically clear after</span><select className="rd-input" aria-label="Automatically clear after" value={hours} onChange={e=>setHours(e.target.value)}>{[1,2,4,8].map(n=><option key={n} value={n}>{n} {n===1?"hour":"hours"}</option>)}</select></label><div className="rd-row"><button className="rd-btn primary" disabled={busy||!data} onClick={()=>void save({intent,intentHours:Number(hours)}).then(ok=>ok&&setOpen(false))}>Save status</button>{active?<button className="rd-btn" disabled={busy} onClick={()=>void save({intent:""}).then(ok=>ok&&setOpen(false))}>Clear now</button>:null}</div></div>:null}{error?<p role="alert" className="rd-error">{error}</p>:null}</section>;
+  return <section className="rd-intent-control">
+    <div className="rd-right-now-control">
+      <div><span className="rd-right-now-badge"><Icon name="lightning" />Right Now</span>
+        <small>{scheduled
+          ? `Starts ${new Date(rightNowStartsAtMs!).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · 60 minutes`
+          : rightNow
+            ? `Available until ${new Date(rightNowExpiresAtMs!).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+            : "Show that you’re available for 60 minutes."}</small>
+      </div>
+      <button type="button" className="rd-btn" aria-label="Available right now" aria-pressed={rightNow}
+        disabled={busy || !data} onClick={() => void save({ rightNow: !rightNow })}>{rightNow ? "Turn off" : "Turn on"}</button>
+    </div>
+    {!rightNow ? <div className="rd-right-now-schedule">
+      <div className="rd-row">
+        <button type="button" className="rd-btn" disabled={busy || !data} aria-expanded={scheduleOpen}
+          onClick={() => { setScheduleError(""); setScheduleOpen(!scheduleOpen); }}>
+          {scheduleOpen ? "Close schedule" : scheduled ? "Change schedule" : "Schedule for later"}
+        </button>
+        {scheduled ? <button type="button" className="rd-btn" disabled={busy || !data}
+          onClick={() => void save({ rightNow: false }).then(ok => { if (ok) { setScheduleOpen(false); setScheduledTime(""); setScheduleError(""); } })}>Cancel schedule</button> : null}
+      </div>
+      {scheduled ? <small>Turning on now replaces this schedule.</small> : null}
+      {scheduleOpen ? <form onSubmit={event => void saveSchedule(event)}>
+        <label className="rd-field"><span>Start time (local)</span>
+          <input className="rd-input" type="datetime-local" value={scheduledTime} required
+            onChange={event => setScheduledTime(event.target.value)} />
+        </label>
+        <button className="rd-btn primary" type="submit" disabled={busy || !data}>Save schedule</button>
+        {scheduleError ? <small role="alert">{scheduleError}</small> : null}
+      </form> : null}
+    </div> : null}
+    <div><span className="rd-eyebrow">INTENTION</span><strong>{active?INTENTS[current.intent!]:"What are you open to?"}</strong>{active?<small>Clears at {new Date(current.intentExpiresAtMs!).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}</small>:<small>Set a temporary status. Let people know your vibe.</small>}</div><button className="rd-btn" aria-expanded={open} onClick={()=>setOpen(!open)}>{active?"Change":"Set status"}</button>{open?<div className="rd-intent-form"><label className="rd-field"><span>Status</span><select className="rd-input" aria-label="Status" value={intent} onChange={e=>setIntent(e.target.value)}>{Object.entries(INTENTS).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label className="rd-field"><span>Automatically clear after</span><select className="rd-input" aria-label="Automatically clear after" value={hours} onChange={e=>setHours(e.target.value)}>{[1,2,4,8].map(n=><option key={n} value={n}>{n} {n===1?"hour":"hours"}</option>)}</select></label><div className="rd-row"><button className="rd-btn primary" disabled={busy||!data} onClick={()=>void save({intent,intentHours:Number(hours)}).then(ok=>ok&&setOpen(false))}>Save status</button>{active?<button className="rd-btn" disabled={busy} onClick={()=>void save({intent:""}).then(ok=>ok&&setOpen(false))}>Clear now</button>:null}</div></div>:null}{error?<p role="alert" className="rd-error">{error}</p>:null}</section>;
 }
 export function MemberEditor(props:Props){
   const {data,error,busy,save}=useMember(props),[interests,setInterests]=useState<string[]>([]),[prompts,setPrompts]=useState([{prompt:PROFILE_PROMPTS[0] as string,answer:""}]),[message,setMessage]=useState("");
@@ -69,10 +145,10 @@ export function ReportMemberButton({api,session,peerKey}:Props&{peerKey:string})
   return <><button className="rd-btn" onClick={()=>setOpen(true)}>Report profile</button>{open?<div className="rd-report-inline" role="group" aria-label="Report profile"><label className="rd-field"><span>Reason</span><select className="rd-input" value={reason} onChange={e=>setReason(e.target.value)}>{["Harassment or unwanted contact","Impersonation or misleading photos","Spam or scam","Underage concern","Other safety concern"].map(r=><option key={r}>{r}</option>)}</select></label><div className="rd-row"><button className="rd-btn primary" disabled={busy} onClick={()=>{setBusy(true);void api.reportUser(session.sessionToken,peerKey,reason).then(()=>{setMessage("Report sent for review. You can also block this member.");setOpen(false);}).catch(e=>setMessage(e.message)).finally(()=>setBusy(false));}}>Send report</button><button className="rd-btn" onClick={()=>setOpen(false)}>Cancel</button></div></div>:null}{message?<p role="status" className="rd-caption">{message}</p>:null}</>;
 }
 export function SafetyReportQueue(props:Props){
-  type Report={reportId:string;reason:string;createdAtMs:number;target:{kind:string;targetKey?:string;messageId?:string}};
+  type Report={reportId:string;reason:string;createdAtMs:number;target:{kind:string;targetKey?:string;messageId?:string;postingId?:string;text?:string}};
   const [reports,setReports]=useState<Report[]>([]),[error,setError]=useState(""),[message,setMessage]=useState("");
   async function refresh(){try{const r=await props.api.memberRequest<{reports:Report[]}>(props.session.sessionToken,"/admin/safety-reports");setReports(r.reports);}catch(e){setError((e as Error).message);}}
   useEffect(()=>{if(props.session.role==="admin")void refresh();},[props.api,props.session.sessionToken]);if(props.session.role!=="admin")return null;
-  return <section className="rd-card rd-settings-body"><h2>Safety reports</h2><p className="rd-caption">Latest 200 reports. Review the evidence before taking action. Community plans can be canceled from Community.</p><button className="rd-btn" onClick={()=>void refresh()}>Refresh safety reports</button>{!reports.length?<p>No reports.</p>:null}{reports.map(r=><article className="rd-review-request" key={r.reportId}><strong>{r.target.kind==="message"?"Message report":"Member or plan report"}</strong><p>{r.reason}</p><small>{new Date(r.createdAtMs).toLocaleString()}</small>{r.target.targetKey?.startsWith("user:")?<button className="rd-btn" disabled={r.target.targetKey===`user:${props.session.userId}`} onClick={()=>void props.api.adminBanUser(props.session.sessionToken,r.target.targetKey!.slice(5),`Safety review: ${r.reason}`).then(()=>setMessage("Member banned. Existing moderation controls can reverse this action.")).catch(e=>setError(e.message))}>Ban reported member</button>:null}<small>Reference: {r.reportId}</small></article>)}{error?<p role="alert" className="rd-error">{error}</p>:null}{message?<p role="status">{message}</p>:null}</section>;
+  return <section className="rd-card rd-settings-body"><h2>Safety reports</h2><p className="rd-caption">Latest 200 reports. Review the evidence before taking action. Community plans can be canceled from Community.</p><button className="rd-btn" onClick={()=>void refresh()}>Refresh safety reports</button>{!reports.length?<p>No reports.</p>:null}{reports.map(r=><article className="rd-review-request" key={r.reportId}><strong>{r.target.kind === "group-message" ? "Group discussion report" : r.target.kind === "message" ? "Message report" : "Member or plan report"}</strong><p>{r.reason}</p>{r.target.kind === "group-message" ? <><blockquote>{r.target.text}</blockquote><small>Gathering: {r.target.postingId}</small></> : null}<small>{new Date(r.createdAtMs).toLocaleString()}</small>{r.target.targetKey?.startsWith("user:")?<button className="rd-btn" disabled={r.target.targetKey===`user:${props.session.userId}`} onClick={()=>void props.api.adminBanUser(props.session.sessionToken,r.target.targetKey!.slice(5),`Safety review: ${r.reason}`).then(()=>setMessage("Member banned. Existing moderation controls can reverse this action.")).catch(e=>setError(e.message))}>Ban reported member</button>:null}<small>Reference: {r.reportId}</small></article>)}{error?<p role="alert" className="rd-error">{error}</p>:null}{message?<p role="status">{message}</p>:null}</section>;
 }
 export function PrivacyBlockList(props:Props){const [blocked,setBlocked]=useState<string[]>([]),[error,setError]=useState("");async function refresh(){try{setBlocked([...(await props.api.listBlocked(props.session.sessionToken)).blocked]);}catch(e){setError((e as Error).message);}}useEffect(()=>{void refresh();},[props.api,props.session.sessionToken]);return <section className="rd-card rd-settings-body"><h2>Blocked members</h2><p className="rd-caption">Blocking stops messages and map interactions in both directions. This control is free for members and guests.</p>{!blocked.length?<p>No blocked members.</p>:blocked.map((key,index)=><div className="rd-row" key={key}><span>{key.startsWith("session:") || key.startsWith("guest:")?"Anon":`Blocked member ${index+1}`}</span><button className="rd-btn" onClick={()=>void props.api.unblock(props.session.sessionToken,key).then(()=>{window.dispatchEvent(new Event("rd:member-updated"));void refresh();}).catch(e=>setError(e.message))}>Unblock</button></div>)}{error?<p role="alert">{error}</p>:null}</section>;}

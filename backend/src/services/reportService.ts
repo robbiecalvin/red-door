@@ -26,6 +26,7 @@ export type Session = Readonly<{
 export type ReportTarget = Readonly<
   | { kind: "user"; targetKey: string }
   | { kind: "message"; messageId: string; targetKey?: string }
+  | { kind: "group-message"; messageId: string; targetKey: string; postingId: string; text: string }
 >;
 
 export type ReportRecord = Readonly<{
@@ -45,6 +46,7 @@ export type ReportServiceDeps = Readonly<{
 export type ReportService = Readonly<{
   reportUser(session: Session, targetKey: string, reason: string): Result<ReportRecord>;
   reportMessage(session: Session, messageId: string, reason: string, targetKey?: string): Result<ReportRecord>;
+  reportGroupMessage(session: Session, target: Extract<ReportTarget, { kind: "group-message" }>, reason: unknown): Result<ReportRecord>;
   listReports(): ReadonlyArray<ReportRecord>;
 }>;
 
@@ -91,6 +93,19 @@ export function createReportService(deps: ReportServiceDeps = {}): ReportService
   const nowMs = deps.nowMs ?? (() => Date.now());
   const reports: ReportRecord[] = [...(deps.initialReports ?? [])];
 
+  function record(session: Session, target: ReportTarget, reason: string): Result<ReportRecord> {
+    const report: ReportRecord = {
+      reportId: crypto.randomUUID(),
+      fromKey: deriveFromKey(session),
+      target,
+      reason: sanitizeReason(reason),
+      createdAtMs: nowMs()
+    };
+    reports.push(report);
+    deps.onStateChanged?.([...reports]);
+    return ok(report);
+  }
+
   return {
     reportUser(session: Session, targetKey: string, reason: string): Result<ReportRecord> {
       const valid = validateSession(session);
@@ -103,16 +118,7 @@ export function createReportService(deps: ReportServiceDeps = {}): ReportService
         return err("UNAUTHORIZED_ACTION", "Invalid report reason.");
       }
 
-      const record: ReportRecord = {
-        reportId: crypto.randomUUID(),
-        fromKey: deriveFromKey(session),
-        target: { kind: "user", targetKey: targetKey.trim() },
-        reason: sanitizeReason(reason),
-        createdAtMs: nowMs()
-      };
-      reports.push(record);
-      deps.onStateChanged?.([...reports]);
-      return ok(record);
+      return record(session, { kind: "user", targetKey: targetKey.trim() }, reason);
     },
 
     reportMessage(session: Session, messageId: string, reason: string, targetKey?: string): Result<ReportRecord> {
@@ -126,20 +132,18 @@ export function createReportService(deps: ReportServiceDeps = {}): ReportService
         return err("UNAUTHORIZED_ACTION", "Invalid report reason.");
       }
 
-      const record: ReportRecord = {
-        reportId: crypto.randomUUID(),
-        fromKey: deriveFromKey(session),
-        target: {
-          kind: "message",
-          messageId: messageId.trim(),
-          targetKey: isNonEmptyString(targetKey) ? targetKey.trim() : undefined
-        },
-        reason: sanitizeReason(reason),
-        createdAtMs: nowMs()
-      };
-      reports.push(record);
-      deps.onStateChanged?.([...reports]);
-      return ok(record);
+      return record(session, {
+        kind: "message",
+        messageId: messageId.trim(),
+        targetKey: isNonEmptyString(targetKey) ? targetKey.trim() : undefined
+      }, reason);
+    },
+
+    reportGroupMessage(session, target, reason) {
+      const valid = validateSession(session);
+      if (!valid.ok) return valid;
+      if (!isNonEmptyString(reason)) return err("UNAUTHORIZED_ACTION", "Invalid report reason.");
+      return record(session, target, reason);
     },
 
     listReports(): ReadonlyArray<ReportRecord> {
