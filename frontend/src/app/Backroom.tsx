@@ -1,4 +1,7 @@
 import { backroomLaunch } from "../../../shared/backroomLaunch";
+
+declare const __BACKROOM_EDITORIAL__: { slug: string; title: string; synopsis: string; alt: string }[];
+const editorialArticles = typeof __BACKROOM_EDITORIAL__ === "undefined" ? [] : __BACKROOM_EDITORIAL__;
 import React, { useEffect, useState } from "react";
 import type { Article } from "../../../shared/backroom";
 import type { apiClient, Session } from "./api";
@@ -55,9 +58,9 @@ export function Backroom({ api, session }: Props) {
   return <main className="rd-settings-body" style={{ maxWidth: 760, margin: "auto", padding: "clamp(18px, 5vw, 64px)" }}>
     <header><a href="../">Badehaus X{session?.userId ? "" : " · Sign in"}</a><h1>The Backroom</h1></header>
     {!article ? <section aria-label="Launch articles">
-      {backroomLaunch.map(entry => <article className="rd-card rd-settings-body" key={entry.slug}>
+      {[...editorialArticles.slice().reverse(), ...backroomLaunch].map(entry => <article className="rd-card rd-settings-body" key={entry.slug}>
         <a href={`./${entry.slug}/`}>
-          <img style={{ width: "100%", height: "auto" }} width={1200} height={600} loading="lazy" src={`./covers/${entry.slug}.png`} alt="" />
+          <img style={{ width: "100%", height: "auto" }} width={"alt" in entry ? 382 : 1200} height={"alt" in entry ? 510 : 600} loading="lazy" src={`./covers/${entry.slug}.${"alt" in entry ? "jpg" : "png"}`} alt={"alt" in entry ? entry.alt : ""} />
           <h2>{entry.title}</h2>
         </a><p>{entry.synopsis}</p>
       </article>)}
