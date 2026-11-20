@@ -7,3 +7,7 @@ Each row includes a ready-to-copy caption with hashtags, a relative image path, 
 The [launch ad index](launch-ads/ad-index.csv) lists 30 square flyers and their QR destinations. The [contact sheet](launch-ads-preview.jpg) shows all 30 at a glance. The flyers use the Badehaus X launch artwork and the public signup offer code **BADEHAUSXONLINE**. Review the offer before reusing these flyers after the campaign window.
 
 The original [posting calendar](posting-calendar.csv) is included for reference. Use the expanded calendar for scheduling.
+
+## Metricool bulk import
+
+The [Metricool folder](metricool/) has two 28-post files per platform. Connect Instagram, Facebook and X, then set the planner timezone to America/Vancouver. In Planning → calendar options → Import CSV, use YYYY-MM-DD and 24-hour time with seconds. Import each file once. The files import as drafts and link directly to the campaign images hosted in this public GitHub repository. Check one draft per platform for its image, caption and local time before scheduling the batches. If the launch date moves, update the dates before import.
