@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Shop Badehaus X essentials and compare Badehaus X+ memberships.">
+<title>Badehaus X Shop</title>
+<link rel="icon" href="./door.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./store.css">
+</head>
+<body>
+<header><a class="brand" href="./" aria-label="Badehaus X Shop"><img src="./door.svg" width="28" height="34" alt="">BADEHAUS X</a><nav aria-label="Main navigation"><a href="#shop">Shop</a><a href="#plus">Membership</a><a href="#cart">Bag</a></nav></header>
+<main>
+<div class="hero"><h1>Badehaus <span>X</span> Shop</h1><p>Shop essentials or explore Badehaus X+. Flat-rate shipping within Canada is CAD $9.99 per physical order.</p><a class="hero-link" href="#shop">Browse the shop</a></div>
+<section id="shop"><h2>Shop essentials</h2><div id="products" class="grid"></div></section>
+<section id="cart"><h2>Your bag</h2><p id="empty">Your bag is empty.</p><ul id="cart-items"></ul><p id="subtotal" aria-live="polite"></p><p class="note">Online ordering is coming soon. All prices are in Canadian dollars.</p></section>
+<section id="plus"><h2>Badehaus X+</h2><div class="grid">
+<article class="card"><h3>Monthly</h3><strong class="price">CAD $9.99 / month</strong></article>
+<article class="card accent"><h3>Annual</h3><strong class="price">CAD $59.99 / year</strong><p>Save $59.89 compared with 12 monthly payments.</p></article>
+</div><p><a href="https://badehausx.com/">Visit the Badehaus X app</a></p></section>
+</main>
+<footer><span>Badehaus X</span><a href="https://badehausx.com/">Badehaus X app</a></footer>
+<script type="module">
+import { products, money, subtotal, shipping } from './shop.mjs';
+const bag = new Map();
+const productGrid = document.querySelector('#products');
+const items = document.querySelector('#cart-items');
+const empty = document.querySelector('#empty');
+const total = document.querySelector('#subtotal');
+
+function makeButton(text, label, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = text;
+  button.setAttribute('aria-label', label);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function update(product, delta, focusIndex) {
+  const quantity = (bag.get(product.id) ?? 0) + delta;
+  if (quantity > 0) bag.set(product.id, quantity);
+  else bag.delete(product.id);
+  render();
+  if (focusIndex !== undefined) {
+    const row = [...items.children].find(item => item.dataset.id === product.id);
+    (row?.querySelectorAll('button')[focusIndex] ?? document.querySelector('#cart h2')).focus();
+  }
+}
+
+function render() {
+  items.replaceChildren();
+  empty.hidden = bag.size > 0;
+  const merchandise = subtotal(bag);
+  const delivery = shipping(bag);
+  total.replaceChildren();
+  if (bag.size) {
+    const amounts = [
+      ['Merchandise', merchandise],
+      ['Canada shipping', delivery],
+      ['Total before applicable tax', merchandise + delivery]
+    ];
+    amounts.forEach(([label, cents], index) => {
+      if (index > 0) total.append(document.createElement('br'));
+      total.append(`${label} ${money(cents)}`);
+    });
+  }
+  for (const product of products) {
+    const quantity = bag.get(product.id);
+    if (!quantity) continue;
+    const row = document.createElement('li');
+    row.dataset.id = product.id;
+    const name = document.createElement('span');
+    name.textContent = product.name;
+    const controls = document.createElement('div');
+    controls.className = 'controls';
+    const count = document.createElement('span');
+    count.textContent = quantity;
+    controls.append(
+      makeButton('−', `Remove one ${product.name}`, () => update(product, -1, 0)),
+      count,
+      makeButton('+', `Add one ${product.name}`, () => update(product, 1, 1))
+    );
+    row.append(name, controls);
+    items.append(row);
+  }
+}
+
+document.querySelector('#cart h2').tabIndex = -1;
+for (const product of products) {
+  const card = document.createElement('article');
+  card.className = 'card';
+  const title = document.createElement('h3');
+  title.textContent = product.name;
+  const detail = document.createElement('p');
+  detail.textContent = product.unit;
+  const price = document.createElement('strong');
+  price.className = 'price';
+  price.textContent = money(product.cents);
+  card.append(title, detail, price, makeButton('Add to bag', `Add ${product.name} to bag`, () => update(product, 1)));
+  productGrid.append(card);
+}
+</script>
+</body>
+</html>
