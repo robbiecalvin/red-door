@@ -15,8 +15,8 @@ export function createCustomerAutoReplies(auth: AuthService, chat: ChatService, 
         message.text.startsWith("GROUP_INVITE_")) return;
     const recipient = auth.getUser(message.toKey.slice(5));
     const sender = auth.getUser(message.fromKey.slice(5));
-    if (!recipient?.emailVerified || recipient.bannedAtMs || !sender?.emailVerified || sender.bannedAtMs ||
-        !recipient.plusData?.customerImport?.autoReplies) return;
+    if (!recipient || recipient.bannedAtMs || !sender?.emailVerified || sender.bannedAtMs ||
+        (!recipient.plusData?.customerImport?.completed || !recipient.plusData.customerImport.autoReplies)) return;
 
     const key = `${message.chatId}:${recipient.id}`;
     const step = await repository.update(state => {

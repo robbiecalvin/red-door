@@ -23,9 +23,7 @@ test("imported customers disclose automatic replies once and finish after receiv
       chatKind: "cruise", fromKey, toKey, text: "Hello", createdAtMs: 1, media,
     });
     const initial = createCustomerAutoReplies(auth, chat, await createCommunityRepository(null, storage));
-    expect(await initial(incoming())).toBeUndefined();
-    const reset = auth.requestPasswordReset(imported.value.email);
-    expect(auth.resetPassword(reset!.token, "Claimed-test123!").ok).toBe(true);
+    expect(imported.value.emailVerified).toBe(false);
     expect((await initial(incoming()))?.text).toContain("Automatic replies are on");
     const resumed = createCustomerAutoReplies(auth, chat, await createCommunityRepository(null, storage));
     expect((await resumed(incoming()))?.text).toMatch(/^(Yeah|Yep)$/);

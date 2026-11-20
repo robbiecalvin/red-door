@@ -37,7 +37,7 @@ export function CustomerImport({ api, session }: Props): React.ReactElement {
   const count = (status: ImportRow["status"]) => rows.filter(row => row.status === status).length;
   return <details className="rd-card rd-settings-body">
     <summary>Import customers from CSV</summary>
-    <p>Preview the file before creating accounts. Existing accounts are skipped. New customers claim their accounts through password reset.</p>
+    <p>Preview the file before creating accounts. Existing accounts are skipped. Customers can set a password through email recovery when they want to sign in.</p>
     <label className="rd-field">
       <span>Customer CSV</span>
       <input type="file" accept=".csv,text/csv" disabled={busy} onChange={event => {
@@ -53,7 +53,7 @@ export function CustomerImport({ api, session }: Props): React.ReactElement {
     {previewed && count("ready") > 0 && <>
       <label className="rd-row">
         <input type="checkbox" checked={autoReplies} disabled={busy} onChange={event => setAutoReplies(event.target.checked)} />
-        Enable automatic replies for these customers after account claim
+        Enable automatic replies for these customers immediately after import
       </label>
       <button type="button" className="rd-btn primary" disabled={busy} onClick={() => void run("apply")}>Import {count("ready")} customers</button>
     </>}
