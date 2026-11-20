@@ -4,9 +4,9 @@ import { useCruisePresence } from "./CruisePresence";
 import type { CruisePresenceUpdate } from "./cruise.types";
 import { MapView } from "../map/MapView";
 import type { LngLat, MapMarker, MapViewOptions } from "../map/map.types";
-import placeholderA from "../../assets/reddoor-placeholder-1.svg";
-import placeholderB from "../../assets/reddoor-placeholder-2.svg";
-import placeholderC from "../../assets/reddoor-placeholder-3.svg";
+import placeholderA from "../../assets/reddoor-placeholder-1.webp";
+import placeholderB from "../../assets/reddoor-placeholder-2.webp";
+import placeholderC from "../../assets/reddoor-placeholder-3.webp";
 
 type GeoStatus =
   | { kind: "pending" }

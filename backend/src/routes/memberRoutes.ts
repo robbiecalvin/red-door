@@ -1,22 +1,20 @@
 import type { Express, Request, Response } from "express";
-import { randomBytes, randomUUID } from "node:crypto";
-import { type PublicPlan } from "../../../shared/member";
+import { randomBytes } from "node:crypto";
 import { hasPlus } from "../../../shared/plus";
 import type { AuthService, Session, StoredUser } from "../services/authService";
 import type { ProfileRepository } from "../services/profileService";
 import type { MediaRecord, MediaRepository, ObjectStorage } from "../services/mediaService";
-import type { CommunityRepository } from "../repositories/communityRepository";
-import { currentMember, makePlan, MemberError, text, updateMember } from "../services/memberService";
+import { currentMember, MemberError, text, updateMember } from "../services/memberService";
 import { validPushSubscription } from "../services/pushService";
 export function installMemberRoutes(app:Express,deps:{
   auth:AuthService; profiles:ProfileRepository; media:MediaRepository; storage:ObjectStorage; bucket:string;
-  repository:CommunityRepository; member(req:Request,res:Response):{user:StoredUser;session:Session}|null;
-  admin(req:Request,res:Response):Session|null; blocked(a:string,b:string):boolean;
+  member(req:Request,res:Response):{user:StoredUser;session:Session}|null;
+  admin(req:Request,res:Response):Session|null;
   persist():Promise<void>; privatePhoto(media:MediaRecord):Promise<{data:Buffer;mimeType:string}|null>;
   push:{publicKey:string;configured:boolean};
   privacyChanged?(key:string,hideProfile:boolean):void;
 }) {
-  const {auth,profiles,media,repository,member}=deps;
+  const {auth,profiles,media,member}=deps;
   const wrap=(fn:(req:Request,res:Response)=>Promise<unknown>)=>(req:Request,res:Response)=>{res.setHeader("Cache-Control","no-store");void fn(req,res).catch(e=>{if(!res.headersSent)res.status(e instanceof MemberError?e.status:503).json({code:e instanceof MemberError?e.code:"SERVICE_UNAVAILABLE",message:e instanceof MemberError?e.message:"Unable to save this change. Please retry."});});};
   async function save(userId:string, data:Partial<NonNullable<StoredUser["plusData"]>>) {const user=auth.getUser(userId);if(!user)throw new MemberError("NOT_FOUND","Member not found.",404);const r=auth.updatePlus(userId,{plusData:{...user.plusData,...data}});if(!r.ok)throw new MemberError(r.error.code,r.error.message);await deps.persist();}
   async function removeProof(userId:string) {const v=auth.getUser(userId)?.plusData?.photoVerification;if(v?.proofMediaId){const m=await media.getById(v.proofMediaId);if(m?.kind==="photo_verification" && m.userId===userId)await deps.storage.deleteObject?.({bucket:deps.bucket,key:m.objectKey});}}
@@ -78,15 +76,8 @@ export function installMemberRoutes(app:Express,deps:{
   app.get("/notifications/push",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;res.json({publicKey:deps.push.publicKey,configured:deps.push.configured});}));
   app.post("/notifications/push",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;if(!deps.push.configured)throw new MemberError("NOT_CONFIGURED","Push notifications are not configured.",503);if(!validPushSubscription(req.body))throw new MemberError("INVALID_INPUT","Invalid browser push subscription.");const current=auth.getUser(a.user.id)?.plusData?.pushSubscriptions ?? [];if(current.length>=5 && !current.some(s=>s.endpoint===req.body.endpoint))throw new MemberError("LIMIT_REACHED","You can enable push on up to five browsers.");await save(a.user.id,{pushSubscriptions:[...current.filter(s=>s.endpoint!==req.body.endpoint),{endpoint:req.body.endpoint,keys:{p256dh:req.body.keys.p256dh,auth:req.body.keys.auth}}]});res.json({ok:true});}));
   app.delete("/notifications/push",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;await save(a.user.id,{pushSubscriptions:a.user.plusData?.pushSubscriptions?.filter(s=>s.endpoint!==req.body.endpoint) ?? []});res.json({ok:true});}));
-  function visible(hostId:string,userId:string){const host=auth.getUser(hostId);return Boolean(host && !host.bannedAtMs && !deps.blocked(`user:${hostId}`,`user:${userId}`));}
-  app.get("/community/plans",wrap(async(req,res)=>{
-    const a=member(req,res);if(!a)return;const now=Date.now(),all=await repository.plans();const city=typeof req.query.city==="string"?req.query.city.trim().toLowerCase():"";const category=req.query.category;
-    const plans:PublicPlan[]=[];
-    for(const p of all.filter(p=>!p.canceled && p.endsAtMs>now && visible(p.hostId,a.user.id) && (!city || p.city.toLowerCase().includes(city)) && (!category || p.category===category)).sort((a,b)=>a.startsAtMs-b.startsAtMs).slice(0,100)){
-      const {attendees,...rest}=p;const profile=await profiles.getByUserId(p.hostId);plans.push({...rest,attendeeCount:attendees.length,joined:attendees.includes(a.user.id),hostName:profile?.displayName ?? "Member"});}
-    res.json({plans});
-  }));
-  app.post("/community/plans",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;const p=makePlan(req.body,a.user.id,randomUUID());await repository.update(s=>{s.plans=s.plans.filter(p=>p.endsAtMs>Date.now()-7*86400000);if(s.plans.filter(p=>p.hostId===a.user.id&&!p.canceled&&p.endsAtMs>Date.now()).length>=5)throw new MemberError("LIMIT_REACHED","You can host up to five upcoming plans.");s.plans.push(p);});res.json({id:p.id});}));
-  app.post("/community/plans/:id/rsvp",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;if(typeof req.body.join!=="boolean")throw new MemberError("INVALID_INPUT","Choose join or leave.");await repository.update(s=>{const p=s.plans.find(p=>p.id===req.params.id&&!p.canceled&&p.endsAtMs>Date.now());if(!p || !visible(p.hostId,a.user.id))throw new MemberError("NOT_FOUND","Plan not found.",404);if(p.hostId===a.user.id)throw new MemberError("HOST","Hosts can cancel their plan.");if(req.body.join && p.attendees.length>=100 && !p.attendees.includes(a.user.id))throw new MemberError("FULL","This plan has reached its RSVP limit.");p.attendees=[...new Set([...p.attendees.filter(id=>id!==a.user.id),...(req.body.join?[a.user.id]:[])])];});res.json({ok:true});}));
-  app.delete("/community/plans/:id",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;await repository.update(s=>{const p=s.plans.find(p=>p.id===req.params.id);if(!p)throw new MemberError("NOT_FOUND","Plan not found.",404);if(p.hostId!==a.user.id && a.session.role!=="admin")throw new MemberError("FORBIDDEN","Only the host or an administrator can cancel this plan.",403);p.canceled=true;});res.json({ok:true});}));
+  app.all(["/community/plans", "/community/plans/:id", "/community/plans/:id/rsvp"], (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(410).json({ code: "FEATURE_RETIRED", message: "Public plans are no longer available. Use private groups instead." });
+  });
 }

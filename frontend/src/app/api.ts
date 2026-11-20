@@ -1,3 +1,4 @@
+import { isPostingBoard, type PostingBoard } from "../../../shared/postingBoard";
 import type { PolicyAcceptance, RegistrationPolicy } from "../../../shared/registrationPolicy";
 import { isGroupFormat, validGroupSchedule, type GroupFormat, type GroupOccurrence } from "../../../shared/groupSchedule";
 import { isPostingAvailability, type PostingAvailability } from "../../../shared/postingStatus";
@@ -193,6 +194,7 @@ export type PublicPosting = Readonly<{
   body: string;
   photoMediaId?: string;
   availability?: PostingAvailability;
+  board?: PostingBoard;
   lat?: number;
   lng?: number;
   eventStartAtMs?: number;
@@ -2651,6 +2653,7 @@ function createLocalApiClient(): Readonly<{
       body: string;
       photoMediaId?: string;
       availability?: PostingAvailability;
+      board?: PostingBoard;
       lat?: number;
       lng?: number;
       eventStartAtMs?: number;
@@ -3430,6 +3433,7 @@ function createLocalApiClient(): Readonly<{
         body: string;
         photoMediaId?: string;
         availability?: PostingAvailability;
+        board?: PostingBoard;
         lat?: number;
         lng?: number;
         eventStartAtMs?: number;
@@ -3460,7 +3464,10 @@ function createLocalApiClient(): Readonly<{
         throw { code: "POSTING_TYPE_NOT_ALLOWED", message: "Invalid posting type." } as ServiceError;
       }
       if (!title) throw { code: "INVALID_INPUT", message: "Title is required." } as ServiceError;
-      if (!body) throw { code: "INVALID_INPUT", message: "Body is required." } as ServiceError;
+      if (payload.board !== undefined && (payload.type !== "ad" || !isPostingBoard(payload.board))) {
+        throw { code: "INVALID_INPUT", message: "Choose a valid message board." } as ServiceError;
+      }
+      if (!body && payload.board === undefined) throw { code: "INVALID_INPUT", message: "Body is required." } as ServiceError;
       if (session.userType === "guest") {
         throw { code: "ANONYMOUS_FORBIDDEN", message: "Anonymous users cannot create public postings." } as ServiceError;
       }
@@ -3507,6 +3514,7 @@ function createLocalApiClient(): Readonly<{
         title,
         body,
         ...(photoMediaId ? { photoMediaId } : {}),
+        ...(isPostingBoard(payload.board) ? { board: payload.board } : {}),
         ...(payload.type === "ad" && isPostingAvailability(payload.availability) ? { availability: payload.availability } : {}),
         ...(payload.type === "event" && typeof lat === "number" ? { lat } : {}),
         ...(payload.type === "event" && typeof lng === "number" ? { lng } : {}),
@@ -4193,6 +4201,7 @@ export function apiClient(basePath = "/api"): Readonly<{
       body: string;
       photoMediaId?: string;
       availability?: PostingAvailability;
+      board?: PostingBoard;
       lat?: number;
       lng?: number;
       eventStartAtMs?: number;
@@ -4603,6 +4612,7 @@ export function apiClient(basePath = "/api"): Readonly<{
         body: string;
         photoMediaId?: string;
         availability?: PostingAvailability;
+        board?: PostingBoard;
         lat?: number;
         lng?: number;
         eventStartAtMs?: number;

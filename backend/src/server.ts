@@ -1699,6 +1699,7 @@ async function main(): Promise<void> {
       body: (req.body as any)?.body,
       photoMediaId: (req.body as any)?.photoMediaId,
       availability: req.body?.availability,
+      board: req.body?.board,
       lat: (req.body as any)?.lat,
       lng: (req.body as any)?.lng,
       eventStartAtMs: (req.body as any)?.eventStartAtMs,
@@ -2225,12 +2226,12 @@ async function main(): Promise<void> {
   });
 
   installMemberRoutes(app,{
-    auth:authService,profiles:profileRepo,media:mediaRepo,storage:mediaStorage,bucket:s3Bucket || "local-dev-bucket",repository:communityRepository,
+    auth:authService,profiles:profileRepo,media:mediaRepo,storage:mediaStorage,bucket:s3Bucket || "local-dev-bucket",
     privacyChanged: (key, hideProfile) => {
       recentPriority.delete(key);
       safeBroadcast(gateway.broadcast, "presence_removed", { key, hideProfile });
     },
-    member:plusUser,admin:requireAdminSession,blocked:(a,b)=>blockService.isBlocked(a,b),
+    member:plusUser,admin:requireAdminSession,
     persist:async()=>{await authPersistQueue;if(authPersistenceError)throw new Error("Persistence unavailable");},push:pushService,
     privatePhoto:async(media)=>{if(mediaStorageMode==="s3"){const url=await mediaStorage.presignGetObject({bucket:s3Bucket,key:media.objectKey,expiresInSeconds:30});const response=await fetch(url);if(!response.ok)return null;return {data:Buffer.from(await response.arrayBuffer()),mimeType:media.mimeType};}return mediaStorageMode==="local"?(mediaStorage as LocalObjectStorage).getObject(media.objectKey):await (mediaStorage as PostgresObjectStorage).getObject(media.objectKey);}
   });

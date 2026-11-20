@@ -15,6 +15,14 @@ describe("Member discovery, privacy, and plans",()=>{
     expect(publicMember(changed,undefined,undefined,now+7200000).intent).toBeUndefined();
   });
   it.each([0,0.5,24,-1])("rejects an unsupported intent duration %s",intentHours=>expect(()=>updateMember(undefined,{intent:"tonight",intentHours},free,now)).toThrow());
+  it("uses the selected Right Now duration for immediate and scheduled availability", () => {
+    const available = updateMember(undefined, { rightNow: true, rightNowDurationMinutes: 15 }, free, now);
+    expect(available.rightNowExpiresAtMs).toBe(now + 15 * 60_000);
+    const start = now + 5 * 60_000;
+    const scheduled = updateMember(undefined, { rightNowStartsAtMs: start, rightNowDurationMinutes: 120 }, free, now);
+    expect(scheduled.rightNowExpiresAtMs).toBe(start + 120 * 60_000);
+    expect(() => updateMember(undefined, { rightNow: true, rightNowDurationMinutes: 1440 }, free, now)).toThrow(/duration/);
+  });
   it("expires Right Now at the same time for public discovery and member settings", () => {
     const available = updateMember(undefined, { rightNow: true, rightNowExpiresAtMs: now + 86400000 }, free, now);
     const expiry = now + RIGHT_NOW_DURATION_MS;
@@ -62,6 +70,18 @@ describe("Member discovery, privacy, and plans",()=>{
       expect(() => updateMember(saved, { profileLinks: { instagram: { url, visible: true } } }, free, now)).toThrow(/HTTPS Instagram/);
     }
   });
+  it("supports LeoList and RentMen profile links with opt-in visibility", () => {
+    const saved = updateMember(undefined, { profileLinks: {
+      leolist: { url: "https://www.leolist.cc/personals/example-listing-123/?ref=tracking" },
+      rentmen: { url: "https://rentmen.com/example-name", visible: true }
+    } }, free, now);
+    expect(saved.profileLinks?.leolist).toEqual({ url: "https://leolist.cc/personals/example-listing-123", visible: false });
+    expect(publicMember(saved, undefined, undefined, now, true).profileLinks).toEqual({ rentmen: "https://rentmen.com/example-name" });
+    expect(() => updateMember(saved, { profileLinks: {
+      rentmen: { url: "https://rentmen.com.example.com/example-name", visible: true }
+    } }, free, now)).toThrow(/HTTPS RentMen/);
+  });
+
   it("clears intent immediately",()=>{const p=updateMember(undefined,{intent:"chatting",intentHours:1},free,now);expect(updateMember(p,{intent:""},free,now).intentExpiresAtMs).toBeUndefined();});
   it("validates interests and prompts and strips client claims of verification",()=>{
     const p=updateMember(undefined,{interests:["Coffee","Coffee"],prompts:[{prompt:PROFILE_PROMPTS[0],answer:"Ask about my dog."}],photoVerified:true},free,now);

@@ -1,5 +1,6 @@
 export const INTENTS = { chatting: "Chatting", tonight: "Meeting tonight", browsing: "Just browsing", friends: "Making friends" } as const;
 export type Intent = keyof typeof INTENTS;
+export const RIGHT_NOW_DURATIONS_MINUTES = [15, 30, 60, 120] as const;
 export const RIGHT_NOW_DURATION_MS = 60 * 60 * 1000;
 
 export function isRightNow(expiresAtMs: number | undefined, now = Date.now()): boolean {
@@ -8,7 +9,7 @@ export function isRightNow(expiresAtMs: number | undefined, now = Date.now()): b
 export const INTERESTS = ["Coffee", "Food", "Fitness", "Hiking", "Music", "Nightlife", "Gaming", "Art", "Travel", "Movies", "Books", "Dogs", "Sports", "Dancing", "Community", "Outdoors"] as const;
 export const PROFILE_PROMPTS = ["A great first hello is…", "My ideal first meet…", "Ask me about…", "We’ll get along if…", "A perfect weekend includes…"] as const;
 export type PromptAnswer = { prompt: string; answer: string };
-export const PROFILE_LINK_LABELS = { instagram: "Instagram", onlyfans: "OnlyFans" } as const;
+export const PROFILE_LINK_LABELS = { instagram: "Instagram", onlyfans: "OnlyFans", leolist: "LeoList", rentmen: "RentMen" } as const;
 export type ProfileLinkPlatform = keyof typeof PROFILE_LINK_LABELS;
 export type ProfileLinks = Partial<Record<ProfileLinkPlatform, { url: string; visible: boolean }>>;
 

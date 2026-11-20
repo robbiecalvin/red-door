@@ -106,10 +106,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .rd-empty-icon { display: grid; place-items: center; width: 60px; height: 60px; background: #e52d4010; color: var(--accent); border: 1px solid #e52d4025; border-radius: 20px; margin-bottom: 20px; }
 .rd-empty-state h2 { font-size: 18px; line-height: 1.4; letter-spacing: -.5px; margin: 0 0 8px; font-weight: 600; }
 .rd-empty-state p { color: var(--muted); font-size: 12px; line-height: 1.8; max-width: 280px; margin: 0 0 20px; }
-.rd-inbox-tabs { display: flex; overflow-x: auto; gap: 4px; padding: 0 12px 12px; }
-.rd-inbox-tab { flex: 1 0 58px !important; gap: 7px; border-radius: 12px !important; font-size: 10px; color: var(--muted); filter: none !important; padding: 12px 4px !important; }
-.rd-inbox-tab span { max-width: 64px; line-height: 1.3; }
-.rd-inbox-tab[aria-pressed="true"] { color: var(--accent); background: #e52d4012 !important; }
 @media (max-width: 759px) {
   .rd-home-art { height: 170px; margin: 12px 0 20px; }
   .rd-door-frame { width: 74px; height: 112px; }
@@ -119,7 +115,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent-deep); }
 .rd-board-panel { border: 1px solid var(--line); background: var(--surface); border-radius: 20px; overflow: hidden; }
-.rd-board-panel .rd-empty-state { min-height: 240px; }
 /* Comfortable touch targets with the light basemap's default control colors. */
 .rd-maplibre .maplibregl-ctrl-group { border-radius: 12px; overflow: hidden; }
 .rd-maplibre .maplibregl-ctrl-group button { width: 44px; height: 44px; }

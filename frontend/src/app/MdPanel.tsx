@@ -5,7 +5,7 @@ import { ChatWindow, type ChatApiClient } from "../features/chat/ChatWindow";
 import type { ChatMessage } from "../features/chat/chat.types";
 import { openPlus } from "./PlusPanel";
 import { Icon } from "./Icon";
-import placeholder from "../assets/reddoor-placeholder-1.svg";
+import placeholder from "../assets/reddoor-placeholder-1.webp";
 type Props={api:ReturnType<typeof apiClient>;session:Session};
 export function MdAccountSettings({api,session}:Props){const [account,setAccount]=useState<MdAccount|null>(null),[key,setKey]=useState(""),[ack,setAck]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState("");async function refresh(){if(!session.userId)return;try{setAccount(await api.memberRequest<MdAccount>(session.sessionToken,"/md/account"));}catch(e){setMessage((e as Error).message);}}
   useEffect(()=>{void refresh();const timer=window.setInterval(()=>void refresh(),30000);return()=>{clearInterval(timer);setKey("");};},[api,session.sessionToken,session.tier,session.plusExpiresAtMs]);if(!session.userId)return null;

@@ -1,4 +1,4 @@
-import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, PROFILE_LINK_LABELS, type ProfileLinkPlatform, RIGHT_NOW_DURATION_MS, isRightNow, type MemberPreferences, type PublicMember, type PhotoVerification, type CommunityPlan } from "../../../shared/member";
+import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, PROFILE_LINK_LABELS, type ProfileLinkPlatform, RIGHT_NOW_DURATIONS_MINUTES, RIGHT_NOW_DURATION_MS, isRightNow, type MemberPreferences, type PublicMember, type PhotoVerification, type CommunityPlan } from "../../../shared/member";
 import { hasPlus, type PlusIdentity } from "../../../shared/plus";
 import { containsDisallowedKidVariation } from "./contentPolicy";
 export class MemberError extends Error { constructor(public code: string, message: string, public status = 400) { super(message); } }
@@ -6,14 +6,24 @@ export function text(value: unknown, max: number, label: string): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > max || containsDisallowedKidVariation(value)) throw new MemberError("INVALID_INPUT", `${label} is required (maximum ${max} characters).`);
   return value.trim();
 }
+const profileLinkHosts: Record<ProfileLinkPlatform, string> = {
+  instagram: "instagram.com",
+  onlyfans: "onlyfans.com",
+  leolist: "leolist.cc",
+  rentmen: "rentmen.com"
+};
+
 function normalizeProfileLink(platform: ProfileLinkPlatform, value: unknown): string {
-  const host = platform === "instagram" ? "instagram.com" : "onlyfans.com";
+  const host = profileLinkHosts[platform];
   const label = PROFILE_LINK_LABELS[platform];
   if (typeof value === "string" && value.length <= 500) {
     try {
       const url = new URL(value.trim());
+      const profilePath = platform === "leolist"
+        ? /^\/[a-z0-9_.-]+(?:\/[a-z0-9_.-]+)*\/?$/i
+        : /^\/[a-z0-9_.-]{1,40}\/?$/i;
       if (url.protocol === "https:" && !url.username && !url.password && !url.port &&
-          [host, `www.${host}`].includes(url.hostname) && /^\/[a-z0-9_.]{1,40}\/?$/i.test(url.pathname)) {
+          [host, `www.${host}`].includes(url.hostname) && profilePath.test(url.pathname)) {
         return `https://${host}${url.pathname.replace(/\/$/, "")}`;
       }
     } catch {
@@ -36,17 +46,25 @@ export function updateMember(current: MemberPreferences | undefined, input: unkn
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new MemberError("INVALID_INPUT", "Invalid member preferences.");
   const p = input as Record<string, unknown>, next = currentMember(current, now);
   const scheduled = (next.rightNowStartsAtMs ?? 0) > now;
+  const minutes = p.rightNowDurationMinutes;
+  let durationMs = RIGHT_NOW_DURATION_MS;
+  if (minutes !== undefined) {
+    if (!RIGHT_NOW_DURATIONS_MINUTES.some(option => option === minutes) || (p.rightNow !== true && p.rightNowStartsAtMs === undefined)) {
+      throw new MemberError("INVALID_INPUT", "Choose a Right Now duration of 15, 30, 60, or 120 minutes.");
+    }
+    durationMs = Number(minutes) * 60_000;
+  }
   if (p.rightNowStartsAtMs !== undefined) {
     const start = p.rightNowStartsAtMs;
     if (p.rightNow !== undefined || typeof start !== "number" || !Number.isSafeInteger(start) ||
-        start <= now || !Number.isFinite(new Date(start + RIGHT_NOW_DURATION_MS).getTime())) {
+        start <= now || !Number.isFinite(new Date(start + durationMs).getTime())) {
       throw new MemberError("INVALID_INPUT", "Choose a future start time for Right Now.");
     }
     if (next.rightNowExpiresAtMs !== undefined && !scheduled) {
       throw new MemberError("RIGHT_NOW_ACTIVE", "Turn off your active Right Now window before scheduling another.", 409);
     }
     next.rightNowStartsAtMs = start;
-    next.rightNowExpiresAtMs = start + RIGHT_NOW_DURATION_MS;
+    next.rightNowExpiresAtMs = start + durationMs;
   } else if (p.rightNow !== undefined) {
     if (typeof p.rightNow !== "boolean") throw new MemberError("INVALID_INPUT", "Choose whether you are available right now.");
     if (!p.rightNow) {
@@ -54,7 +72,7 @@ export function updateMember(current: MemberPreferences | undefined, input: unkn
       delete next.rightNowExpiresAtMs;
     } else if (scheduled || next.rightNowExpiresAtMs === undefined) {
       delete next.rightNowStartsAtMs;
-      next.rightNowExpiresAtMs = now + RIGHT_NOW_DURATION_MS;
+      next.rightNowExpiresAtMs = now + durationMs;
     }
   }
   if (p.intent !== undefined) {
