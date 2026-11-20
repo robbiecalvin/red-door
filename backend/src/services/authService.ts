@@ -112,7 +112,7 @@ export type AuthService = Readonly<{
   listUsers(): ReadonlyArray<Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role" | "ageVerified" | "emailVerified" | "bannedAtMs" | "bannedReason" | "createdAtMs">>;
   banUser(userId: unknown, reason: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">>;
   unbanUser(userId: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">>;
-  adminCreateUser(email: string, password: string, phoneE164: string | null, userType: UserType, tier: SubscriptionTier, role: UserRole): Result<StoredUser>;
+  adminCreateUser(email: string, password: string, phoneE164: string | null, userType: UserType, tier: SubscriptionTier, role: UserRole, imported?: { createdAtMs?: number; data: PlusData }): Result<StoredUser>;
   getUser(userId: string): StoredUser | undefined;
   updatePlus(userId: string, update: { tier?: SubscriptionTier; plusExpiresAtMs?: number; plusData?: PlusData }): Result<StoredUser>;
   snapshotState(): AuthStateSnapshot;
@@ -541,7 +541,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       const user = [...usersById.values()].find(candidate => candidate.passwordResetTokenHash === digest);
       if (!user || !user.passwordResetExpiresAtMs || nowMs() >= user.passwordResetExpiresAtMs || typeof user.bannedAtMs === "number") return err("UNAUTHORIZED_ACTION", "Invalid or expired reset link.");
       const salt = crypto.randomBytes(PASSWORD_SALT_BYTES);
-      const next: StoredUser = { ...user, passwordSaltB64: salt.toString("base64"), passwordHashB64: hashPassword(password, salt).toString("base64"), passwordResetTokenHash: undefined, passwordResetExpiresAtMs: undefined };
+      const next: StoredUser = { ...user, ...(user.plusData?.customerImport?.completed ? { emailVerified: true, emailOwnershipVerifiedAtMs: nowMs() } : {}), passwordSaltB64: salt.toString("base64"), passwordHashB64: hashPassword(password, salt).toString("base64"), passwordResetTokenHash: undefined, passwordResetExpiresAtMs: undefined };
       usersByEmail.set(next.email, next); usersById.set(next.id, next);
       for (const [key, session] of sessionsByToken) if (session.userId === user.id) sessionsByToken.delete(key);
       persistUsers(); notifyStateChanged(); return ok(undefined);
@@ -945,7 +945,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       });
     },
 
-    adminCreateUser(email: string, password: string, phoneE164: string | null, userType: UserType, tier: SubscriptionTier, role: UserRole): Result<StoredUser> {
+    adminCreateUser(email: string, password: string, phoneE164: string | null, userType: UserType, tier: SubscriptionTier, role: UserRole, imported?: { createdAtMs?: number; data: PlusData }): Result<StoredUser> {
       if (userType !== "registered" && userType !== "subscriber") return err("UNAUTHORIZED_ACTION", "A stored account must be registered or subscribed.");
       if (typeof email !== "string" || !isLikelyValidEmail(email)) {
         return err("UNAUTHORIZED_ACTION", "Invalid email.");
@@ -976,7 +976,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         tier,
         role,
         ageVerified: true, // Admin-created users are auto age-verified
-        emailVerified: true, // Admin-created users are auto email-verified
+        emailVerified: !imported,
+        plusData: imported?.data,
         bannedAtMs: null,
         bannedReason: null,
         verificationCodeSaltB64: null,
@@ -984,7 +985,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         verificationCodeExpiresAtMs: null,
         passwordSaltB64: salt.toString("base64"),
         passwordHashB64: hash.toString("base64"),
-        createdAtMs: now
+        createdAtMs: imported?.createdAtMs ?? now
       };
 
       usersByEmail.set(normalizedEmail, user);

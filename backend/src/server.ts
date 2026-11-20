@@ -1,3 +1,5 @@
+import { installCustomerImportRoutes } from "./routes/customerImportRoutes";
+import { createCustomerAutoReplies } from "./services/customerAutoReplies";
 import { installBackroomRoutes } from "./routes/backroomRoutes";
 import { brandedEmail } from "./services/brandedEmail";
 import { createResendEmail, ResendDeliveryError } from "./services/resendEmail";
@@ -553,6 +555,8 @@ async function main(): Promise<void> {
     }
   });
 
+  const customerAutoReply = createCustomerAutoReplies(authService, chatService, communityRepository);
+
   const metricsRepo = postgresPool ? analyticsRepository(postgresPool) : null;
   let metricsQueue: Promise<void> = Promise.resolve();
   let metricsWriteError: unknown = null;
@@ -711,6 +715,7 @@ async function main(): Promise<void> {
       return res.json({ received: true });
     } catch { return res.status(502).json({ message: "Unable to synchronize subscription. Retry webhook delivery." }); }
   });
+  app.use("/admin/customer-import", express.json({ limit: "512kb" }));
   app.use("/backroom/editor", express.json({ limit: "100kb" }));
   app.use(express.json({ limit: "8kb", verify:(req,_res,buffer)=>{(req as Request & {rawBody?:Buffer}).rawBody=Buffer.from(buffer);} }));
   app.use((req, _res, next) => {
@@ -1865,6 +1870,14 @@ async function main(): Promise<void> {
     return res.status(200).json({ user: result.value });
   });
 
+  installCustomerImportRoutes(app, {
+    auth: authService, profiles: profileService, admin: requireAdminSession,
+    async persist() {
+      await authPersistQueue;
+      if (authPersistenceError) throw new Error("Account persistence unavailable.");
+    },
+  });
+
   app.post("/admin/users/create", (req, res) => {
     if (!requireAdminSession(req, res)) return;
     const email = (req.body as any)?.email;
@@ -2274,6 +2287,9 @@ async function main(): Promise<void> {
     if (!result.ok) return sendError(res, result.error);
     if (sessionResult.value.userId && typeof toKey === "string" && toKey.startsWith("user:") && authService.getUser(sessionResult.value.userId)?.plusData?.analyticsConsent === true && authService.getUser(toKey.slice(5))?.plusData?.analyticsConsent === true && !/^GROUP_INVITE_/.test(text ?? "")) recordMetric(() => metrics.message(sessionResult.value.userId!, toKey.slice(5)));
     safeBroadcast(gateway.broadcast, "chat_message", { message: result.value });
+    void customerAutoReply(result.value).then(reply => {
+      if (reply) safeBroadcast(gateway.broadcast, "chat_message", { message: reply });
+    }).catch(() => console.error("[Badehaus X] Could not process an automatic chat reply."));
     if(typeof toKey==="string" && toKey.startsWith("user:") && !/^GROUP_INVITE_/.test(text ?? ""))void pushService.notify(toKey.slice(5)).catch(()=>{});
     return res.status(200).json({ message: result.value });
   });
