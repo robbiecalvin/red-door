@@ -14,8 +14,6 @@
   .rd-topbar .rd-install-app { font-size: 11px; padding-inline: 7px; }
   .rd-install-full { display: none; }
   .rd-install-short { display: inline; }
-}
-@media (max-width: 420px) {
   .rd-topbar-session { grid-template-columns: 1fr auto; }
   .rd-topbar-session .rd-brand { grid-column: 1 / -1; }
   .rd-topbar-session .rd-top-actions { justify-self: end; }

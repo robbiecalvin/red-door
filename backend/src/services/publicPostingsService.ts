@@ -1,3 +1,4 @@
+import { isPostingBoard, type PostingBoard } from "../../../shared/postingBoard";
 import { randomUUID } from "node:crypto";
 import { GROUP_MESSAGE_MAX_LENGTH, type GroupDiscussionMessage } from "../../../shared/groupDiscussion";
 import { isGroupFormat, validGroupSchedule, type GroupFormat } from "../../../shared/groupSchedule";
@@ -52,6 +53,7 @@ export type Posting = Readonly<{
   body: string;
   photoMediaId?: string;
   availability?: PostingAvailability;
+  board?: PostingBoard;
   lat?: number;
   lng?: number;
   eventStartAtMs?: number;
@@ -82,6 +84,7 @@ export type PostingInput = Readonly<{
   body: unknown;
   photoMediaId?: unknown;
   availability?: unknown;
+  board?: unknown;
   lat?: unknown;
   lng?: unknown;
   eventStartAtMs?: unknown;
@@ -371,8 +374,12 @@ export function createPublicPostingsService(
         return err("INVALID_INPUT", "Title contains disallowed language.");
       }
 
-      const body = asText(input.body);
-      if (!body) return err("INVALID_INPUT", "Body is required.");
+      const board = input.board;
+      if (board !== undefined && (type !== "ad" || !isPostingBoard(board))) {
+        return err("INVALID_INPUT", "Choose a valid message board.");
+      }
+      const body = asText(input.body) ?? "";
+      if (!body && board === undefined) return err("INVALID_INPUT", "Body is required.");
       if (body.length > 4000) return err("INVALID_INPUT", "Body is too long.", { max: 4000 });
       if (containsDisallowedKidVariation(body)) {
         return err("INVALID_INPUT", "Body contains disallowed language.");
@@ -416,6 +423,7 @@ export function createPublicPostingsService(
         type,
         title,
         body,
+        ...(isPostingBoard(board) ? { board } : {}),
         ...(photoMediaId ? { photoMediaId } : {}),
         ...(type === "ad" && isPostingAvailability(availability) ? { availability } : {}),
         ...(type === "event" && typeof lat === "number" ? { lat } : {}),

@@ -2,9 +2,9 @@ import React, { useMemo, useState } from "react";
 
 import type { DatingProfile, ServiceError } from "./dating.types";
 import type { MatchEngine } from "./MatchEngine";
-import placeholder1 from "../../assets/reddoor-placeholder-1.svg";
-import placeholder2 from "../../assets/reddoor-placeholder-2.svg";
-import placeholder3 from "../../assets/reddoor-placeholder-3.svg";
+import placeholder1 from "../../assets/reddoor-placeholder-1.webp";
+import placeholder2 from "../../assets/reddoor-placeholder-2.webp";
+import placeholder3 from "../../assets/reddoor-placeholder-3.webp";
 
 type UiState =
   | { kind: "idle" }

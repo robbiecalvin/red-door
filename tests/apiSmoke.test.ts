@@ -407,13 +407,11 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect((await fetch(base+`/admin/photo-verifications/${alice.id}/photo`,{headers:{"x-session-token":admin.token}})).status).toBe(404);
     await upload("photo_main");expect((await request(`/profile/public/${alice.id}`)).profile.member.photoVerified).toBe(false);
   });
-  it("Given local plans When members RSVP or cancel Then protects attendees and enforces ownership and blocks",async()=>{
-    const plan=await request("/community/plans",{title:"Coffee and conversation",description:"A relaxed public meetup",city:"Vancouver",venue:"Public café",category:"Coffee",startsAtMs:Date.now()+3600000,endsAtMs:Date.now()+7200000},alice.token);
-    await request(`/community/plans/${plan.id}/rsvp`,{join:true},bob.token);await request(`/community/plans/${plan.id}/rsvp`,{join:true},bob.token);
-    const list=await request("/community/plans?city=Vancouver&category=Coffee",undefined,bob.token);const row=list.plans.find((p:any)=>p.id===plan.id);expect(row.attendeeCount).toBe(2);expect(row.joined).toBe(true);expect(row.attendees).toBeUndefined();
-    await request(`/community/plans/${plan.id}`,undefined,bob.token,"DELETE",403);
-    await request("/block",{targetKey:`user:${alice.id}`},bob.token);expect((await request("/community/plans",undefined,bob.token)).plans.some((p:any)=>p.id===plan.id)).toBe(false);await request(`/community/plans/${plan.id}/rsvp`,{join:true},bob.token,undefined,404);await request("/unblock",{targetKey:`user:${alice.id}`},bob.token);
-    await request(`/community/plans/${plan.id}/rsvp`,{join:false},bob.token);await request(`/community/plans/${plan.id}`,undefined,alice.token,"DELETE");expect((await request("/community/plans",undefined,bob.token)).plans.some((p:any)=>p.id===plan.id)).toBe(false);
+  it("retires public plans for legacy clients", async () => {
+    await request("/community/plans", undefined, alice.token, "GET", 410);
+    await request("/community/plans", {}, alice.token, "POST", 410);
+    await request("/community/plans/old/rsvp", { join: true }, alice.token, "POST", 410);
+    await request("/community/plans/old", undefined, alice.token, "DELETE", 410);
   });
   it("Given push and safety endpoints When called Then validates subscription destinations and restricts moderator access",async()=>{
     await request("/notifications/push",{endpoint:"https://127.0.0.1/private",keys:{}},alice.token,undefined,400);
@@ -486,7 +484,6 @@ describe("Core API and payment lifecycle smoke checks", () => {
     await request("/members/me",{hideProfile:true,interests:["Coffee"]},member.token,"PUT");
     await request("/favorites/toggle",{targetUserId:peer.id},member.token);
     const sent=await request("/chat/send",{chatKind:"cruise",toKey:`user:${peer.id}`,text:"Persistent private conversation"},member.token);
-    const plan=await request("/community/plans",{title:"Restore drill meetup",description:"A public coffee meetup",city:"Vancouver",venue:"Public café",category:"Coffee",startsAtMs:Date.now()+3600000,endsAtMs:Date.now()+7200000},member.token);await request(`/community/plans/${plan.id}/rsvp`,{join:true},peer.token);
 
     await request("/report/user",{targetKey:`user:${peer.id}`,reason:"Restore drill safety report"},member.token);
     await request("/block",{targetKey:`user:${peer.id}`},member.token);
@@ -501,7 +498,6 @@ describe("Core API and payment lifecycle smoke checks", () => {
       expect((await request("/profile/me",undefined,member.token)).profile.displayName).toBe("Restore Member");
       expect((await request("/members/me",undefined,member.token)).preferences.hideProfile).toBe(true);
       expect((await request("/favorites",undefined,member.token)).favorites).toContain(peer.id);
-      const plans=await request("/community/plans?city=Vancouver",undefined,member.token);expect(plans.plans.find((p:any)=>p.id===plan.id).attendeeCount).toBe(2);
       const renewal=await request("/auth/login",{email:"renewal-enrollment@example.com",password:"Smoke-test123!"}),billing=await request("/plus",undefined,renewal.session.sessionToken);expect(billing.hasPaymentMethod).toBe(true);expect(billing.autoRenew).toBe(false);
       expect((await customWebhook("checkout.session.completed",setupCheckout,"evt_restore_setup_replay")).status).toBe(200);expect((await request("/plus",undefined,renewal.session.sessionToken)).autoRenew).toBe(false);expect(scheduleCreates).toBe(1);
 

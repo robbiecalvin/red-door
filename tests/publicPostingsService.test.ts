@@ -39,6 +39,16 @@ describe("publicPostingsService", () => {
     expect(service.list("ad", member)).toMatchObject({ ok: true, value: [{ title: draft.title, availability: "travelling" }] });
   });
 
+  it("publishes a headline on a selected board and rejects unknown boards", () => {
+    const service = createPublicPostingsService({ nowMs: () => 1000 });
+    const member = { userType: "registered", userId: "member", ageVerified: true, tier: "premium" } as const;
+    const draft = { type: "ad", title: "Coffee after work", body: "" };
+    expect(service.create(member, { ...draft, board: "unknown" })).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+    expect(service.create(member, draft)).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+    expect(service.create(member, { ...draft, board: "meetups" })).toMatchObject({ ok: true, value: { ...draft, board: "meetups" } });
+    expect(service.list("ad")).toMatchObject({ ok: true, value: [{ ...draft, board: "meetups" }] });
+  });
+
   it("Given a registered session When create is called Then posting is created", () => {
     const svc = createPublicPostingsService({ nowMs: () => 1000, idFactory: () => "p1" });
     const res = svc.create(

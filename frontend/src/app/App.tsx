@@ -19,10 +19,11 @@ import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } fr
 
 import { apiClient, type ServiceError, type Session } from "./api";
 import { isVerificationRequiredError } from "./authUi";
-import placeholderA from "../assets/reddoor-placeholder-1.svg";
-import placeholderB from "../assets/reddoor-placeholder-2.svg";
-import placeholderC from "../assets/reddoor-placeholder-3.svg";
+import placeholderA from "../assets/reddoor-placeholder-1.webp";
+import placeholderB from "../assets/reddoor-placeholder-2.webp";
+import placeholderC from "../assets/reddoor-placeholder-3.webp";
 import { Icon } from "./Icon";
+import { RightNowControl } from "./MemberPanels";
 
 type AuthView = "guest" | "register" | "login";
 type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
@@ -1046,15 +1047,28 @@ export function App(): React.ReactElement {
                   <InstallApp />
                   <a className="rd-btn rd-backroom-link" href="./thebackroom/">The Backroom</a>
                 </div>
-                <button
-                  type="button"
-                  className="rd-top-avatar"
-                  aria-label="Open my profile preview"
-                  onClick={openSelfProfilePreview}
-                >
-                  <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
-                  <span className="rd-mobile-avatar-dot" />
-                </button>
+                <div className="rd-explore-shortcuts">
+                  <button
+                    type="button"
+                    className="rd-top-avatar"
+                    aria-label="Open my profile preview"
+                    onClick={openSelfProfilePreview}
+                  >
+                    <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
+                    <span className="rd-mobile-avatar-dot" />
+                  </button>
+                  {showBottomNav && activeTab === "discover" ? <>
+                    <RightNowControl key={session.userId} api={api} session={session} />
+                    <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label="Map" title="Map"
+                      aria-pressed={discoverScreen === "map"} onClick={() => setDiscoverScreenAndRoute("map")}>
+                      <Icon name="map" className="rd-ui-icon" />
+                    </button>
+                    <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label="People" title="People"
+                      aria-pressed={discoverScreen === "chat"} onClick={() => setDiscoverScreenAndRoute("chat")}>
+                      <Icon name="groups" className="rd-ui-icon" />
+                    </button>
+                  </> : null}
+                </div>
                 <div className="rd-top-actions">
                   <button type="button" className="rd-btn rd-icon-only-btn" onClick={toggleTopFilterPanel} aria-label="Open filter controls">
                     <Icon name="filter" className="rd-ui-icon" />
@@ -1094,7 +1108,7 @@ export function App(): React.ReactElement {
         setTabAndRoute("settings");
         window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "membership" }));
       }}><span aria-hidden="true" style={{ fontSize: 23 }}>+</span><span>Membership</span></button> : null}</nav> : null}
-      <div className="rd-inbox-live-status" role="status" hidden={activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
+      <div className="rd-inbox-live-status" role="status" hidden={isMobile || activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
       >
@@ -1462,12 +1476,12 @@ export function App(): React.ReactElement {
                 activeTab={activeTab}
                 setActiveTab={setTabAndRoute}
                 discoverScreen={discoverScreen}
-                onDiscoverScreenChange={setDiscoverScreenAndRoute}
                 discoverFilter={discoverFilter}
                 busy={busy}
                 setBusy={setBusy}
                 setLastError={setLastError}
                 onUnreadCountChange={() => {}}
+                liveInboxStatus={liveInboxStatus}
                 onLogout={onLogout}
               /></LiveContext.Provider>
             </Suspense>

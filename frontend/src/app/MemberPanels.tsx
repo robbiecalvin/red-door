@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
-import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, PROFILE_LINK_LABELS, isRightNow, type ProfileLinkPlatform, type ProfileLinks, type MemberSettings, type MemberPreferences, type PublicMember, type PhotoVerification } from "../../../shared/member";
+import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, PROFILE_LINK_LABELS, RIGHT_NOW_DURATIONS_MINUTES, isRightNow, type ProfileLinkPlatform, type ProfileLinks, type MemberSettings, type MemberPreferences, type PublicMember, type PhotoVerification } from "../../../shared/member";
 import { apiClient, uploadToLocalSignedUrl, type Session, type UserProfile } from "./api";
-import { openPlus } from "./PlusPanel";
 import { Icon } from "./Icon";
+import { Sheet } from "./Sheet";
 type Props={api:ReturnType<typeof apiClient>;session:Session};
 export function useMember({api,session}:Props){
   const [data,setData]=useState<MemberSettings|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
@@ -29,25 +29,34 @@ export function RightNowBadge({ expiresAtMs }: { expiresAtMs?: number }) {
     : null;
 }
 
-export function IntentControl(props:Props){
-  const {data,error,busy,save}=useMember(props),[open,setOpen]=useState(false),[intent,setIntent]=useState("chatting"),[hours,setHours]=useState("2"),[now,setNow]=useState(Date.now());
-  useEffect(()=>{const id=window.setInterval(()=>setNow(Date.now()),30000);const show=()=>setOpen(true);window.addEventListener("rd:open-intent",show);return()=>{clearInterval(id);window.removeEventListener("rd:open-intent",show);};},[]);
+export function RightNowControl(props: Props) {
+  const { data, error, busy, save } = useMember(props);
+  const [open, setOpen] = useState(false);
+  const [duration, setDuration] = useState(60);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduledTime, setScheduledTime] = useState("");
   const [scheduleError, setScheduleError] = useState("");
-  const rightNowStartsAtMs = data?.preferences.rightNowStartsAtMs;
-  const rightNowExpiresAtMs = data?.preferences.rightNowExpiresAtMs;
-  const scheduled = typeof rightNowStartsAtMs === "number" && rightNowStartsAtMs > now;
-  const rightNow = useRightNow(scheduled ? undefined : rightNowExpiresAtMs);
-  useEffect(() => {
-    if (!scheduled || rightNowStartsAtMs === undefined) return;
-    const delay = Math.max(0, rightNowStartsAtMs - Date.now());
-    if (delay > 30000) return;
-    const timer = window.setTimeout(() => setNow(Date.now()), delay);
-    return () => window.clearTimeout(timer);
-  }, [scheduled, rightNowStartsAtMs, now]);
+  const [, refresh] = useState(0);
+  const startsAt = data?.preferences.rightNowStartsAtMs;
+  const expiresAt = data?.preferences.rightNowExpiresAtMs;
+  const scheduled = startsAt !== undefined && startsAt > Date.now();
+  const active = useRightNow(scheduled ? undefined : expiresAt);
 
-  async function saveSchedule(event: React.FormEvent): Promise<void> {
+  useEffect(() => {
+    if (!scheduled || startsAt === undefined) return;
+    const timer = window.setTimeout(() => refresh(value => value + 1),
+      Math.min(2_147_483_647, Math.max(0, startsAt - Date.now())));
+    return () => window.clearTimeout(timer);
+  });
+
+  function close() {
+    setOpen(false);
+    setScheduleOpen(false);
+    setScheduledTime("");
+    setScheduleError("");
+  }
+
+  async function saveSchedule(event: React.FormEvent) {
     event.preventDefault();
     const startsAtMs = new Date(scheduledTime).getTime();
     if (!Number.isFinite(startsAtMs) || startsAtMs <= Date.now()) {
@@ -55,46 +64,50 @@ export function IntentControl(props:Props){
       return;
     }
     setScheduleError("");
-    if (await save({ rightNowStartsAtMs: startsAtMs })) {
-      setScheduledTime("");
-      setScheduleOpen(false);
-    }
+    if (await save({ rightNowStartsAtMs: startsAtMs, rightNowDurationMinutes: duration })) close();
   }
 
-  if (!props.session.userId) return null;
-  const current=data?.preferences,active=current?.intent && (current.intentExpiresAtMs ?? 0)>now;
-  return <section className="rd-intent-control">
-    <div className="rd-right-now-control">
-      <div><span className="rd-right-now-badge"><Icon name="lightning" />Right Now</span>
-        <small>{scheduled
-          ? `Starts ${new Date(rightNowStartsAtMs!).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · 60 minutes`
-          : rightNow
-            ? `Available until ${new Date(rightNowExpiresAtMs!).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-            : "Show that you’re available for 60 minutes."}</small>
+  return <>
+    <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label={active ? "Right Now is active" : "Right Now"}
+      title="Right Now" aria-haspopup="dialog" aria-expanded={open} data-active={active} onClick={() => setOpen(true)}>
+      <Icon name="lightning" className="rd-ui-icon" />
+    </button>
+    {open ? <Sheet title="Right Now" onClose={close}>
+      <div className="rd-right-now-menu">
+        {active && expiresAt !== undefined ? <p>Available until {new Date(expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p> : null}
+        {scheduled && startsAt !== undefined && expiresAt !== undefined ? <p>
+          Starts {new Date(startsAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · {(expiresAt - startsAt) / 60_000} minutes
+        </p> : null}
+        {!active ? <label className="rd-field">
+          <span>How long are you available?</span>
+          <select className="rd-input" value={duration} disabled={busy} onChange={event => setDuration(Number(event.target.value))}>
+            {RIGHT_NOW_DURATIONS_MINUTES.map(minutes => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+          </select>
+        </label> : null}
+        <div className="rd-row">
+          <button type="button" className="rd-btn primary" disabled={busy || !data}
+            onClick={() => void save(active ? { rightNow: false } : { rightNow: true, rightNowDurationMinutes: duration }).then(ok => { if (ok) close(); })}>
+            {active ? "Turn off" : "Turn on now"}
+          </button>
+          {!active ? <button type="button" className="rd-btn" disabled={busy || !data} aria-expanded={scheduleOpen}
+            onClick={() => { setScheduleError(""); setScheduleOpen(!scheduleOpen); }}>
+            {scheduleOpen ? "Close schedule" : scheduled ? "Change schedule" : "Schedule for later"}
+          </button> : null}
+          {scheduled ? <button type="button" className="rd-btn" disabled={busy || !data}
+            onClick={() => void save({ rightNow: false }).then(ok => { if (ok) close(); })}>Cancel schedule</button> : null}
+        </div>
+        {scheduleOpen && !active ? <form onSubmit={event => void saveSchedule(event)}>
+          <label className="rd-field"><span>Start time (local)</span>
+            <input className="rd-input" type="datetime-local" value={scheduledTime} required
+              onChange={event => setScheduledTime(event.target.value)} />
+          </label>
+          <button className="rd-btn primary" type="submit" disabled={busy || !data}>Save schedule</button>
+          {scheduleError ? <p role="alert" className="rd-error">{scheduleError}</p> : null}
+        </form> : null}
+        {error ? <p role="alert" className="rd-error">{error}</p> : null}
       </div>
-      <button type="button" className="rd-btn" aria-label="Available right now" aria-pressed={rightNow}
-        disabled={busy || !data} onClick={() => void save({ rightNow: !rightNow })}>{rightNow ? "Turn off" : "Turn on"}</button>
-    </div>
-    {!rightNow ? <div className="rd-right-now-schedule">
-      <div className="rd-row">
-        <button type="button" className="rd-btn" disabled={busy || !data} aria-expanded={scheduleOpen}
-          onClick={() => { setScheduleError(""); setScheduleOpen(!scheduleOpen); }}>
-          {scheduleOpen ? "Close schedule" : scheduled ? "Change schedule" : "Schedule for later"}
-        </button>
-        {scheduled ? <button type="button" className="rd-btn" disabled={busy || !data}
-          onClick={() => void save({ rightNow: false }).then(ok => { if (ok) { setScheduleOpen(false); setScheduledTime(""); setScheduleError(""); } })}>Cancel schedule</button> : null}
-      </div>
-      {scheduled ? <small>Turning on now replaces this schedule.</small> : null}
-      {scheduleOpen ? <form onSubmit={event => void saveSchedule(event)}>
-        <label className="rd-field"><span>Start time (local)</span>
-          <input className="rd-input" type="datetime-local" value={scheduledTime} required
-            onChange={event => setScheduledTime(event.target.value)} />
-        </label>
-        <button className="rd-btn primary" type="submit" disabled={busy || !data}>Save schedule</button>
-        {scheduleError ? <small role="alert">{scheduleError}</small> : null}
-      </form> : null}
-    </div> : null}
-    <div className="rd-intent-summary"><span className="rd-eyebrow">INTENTION</span><strong>{active?INTENTS[current.intent!]:"What are you open to?"}</strong>{active?<small>Clears at {new Date(current.intentExpiresAtMs!).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}</small>:<small>Set a temporary status. Let people know your vibe.</small>}</div><button className="rd-btn" aria-expanded={open} onClick={()=>setOpen(!open)}>{active?"Change":"Set status"}</button>{open?<div className="rd-intent-form"><label className="rd-field"><span>Status</span><select className="rd-input" aria-label="Status" value={intent} onChange={e=>setIntent(e.target.value)}>{Object.entries(INTENTS).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label className="rd-field"><span>Automatically clear after</span><select className="rd-input" aria-label="Automatically clear after" value={hours} onChange={e=>setHours(e.target.value)}>{[1,2,4,8].map(n=><option key={n} value={n}>{n} {n===1?"hour":"hours"}</option>)}</select></label><div className="rd-row"><button className="rd-btn primary" disabled={busy||!data} onClick={()=>void save({intent,intentHours:Number(hours)}).then(ok=>ok&&setOpen(false))}>Save status</button>{active?<button className="rd-btn" disabled={busy} onClick={()=>void save({intent:""}).then(ok=>ok&&setOpen(false))}>Clear now</button>:null}</div></div>:null}{error?<p role="alert" className="rd-error">{error}</p>:null}</section>;
+    </Sheet> : null}
+  </>;
 }
 export function MemberEditor(props:Props){
   const {data,error,busy,save}=useMember(props),[interests,setInterests]=useState<string[]>([]),[prompts,setPrompts]=useState([{prompt:PROFILE_PROMPTS[0] as string,answer:""}]),[message,setMessage]=useState("");
@@ -161,7 +174,7 @@ export function ProfileExternalLinks({ member }: { member?: PublicMember }): Rea
 
 export function MemberPrivacy(props:Props){
   const {data,error,busy,save}=useMember(props);if(!props.session.userId)return null;
-  return <section className="rd-card rd-settings-body"><h2>Your location. Your choice.</h2><p className="rd-muted">Map coordinates are randomized and distance is shown in broad bands. Location sharing is optional.</p><label className="rd-setting-toggle"><span><strong>Hide my location</strong><small>Remove your map presence and distance from discovery. Your profile can still appear in People.</small></span><input type="checkbox" checked={data?.preferences.hideLocation ?? false} disabled={busy||!data} onChange={e=>void save({hideLocation:e.target.checked})} /></label><label className="rd-setting-toggle"><span><strong>Hide my profile</strong><small>Remove your personal profile from the People grid and map. Existing chats remain available. Public plans stay visible.</small></span><input type="checkbox" checked={Boolean(data?.preferences.hideProfile || data?.preferences.incognito)} disabled={busy||!data} onChange={e=>{void save({hideProfile:e.target.checked,incognito:false});}} /></label><p className="rd-caption">These settings stop future discovery and location updates; they cannot erase information someone already saw. Blocking and reporting remain free.</p>{error?<p role="alert" className="rd-error">{error}</p>:null}</section>;
+  return <section className="rd-card rd-settings-body"><h2>Your location. Your choice.</h2><p className="rd-muted">Map coordinates are randomized and distance is shown in broad bands. Location sharing is optional.</p><label className="rd-setting-toggle"><span><strong>Hide my location</strong><small>Remove your map presence and distance from discovery. Your profile can still appear in People.</small></span><input type="checkbox" checked={data?.preferences.hideLocation ?? false} disabled={busy||!data} onChange={e=>void save({hideLocation:e.target.checked})} /></label><label className="rd-setting-toggle"><span><strong>Hide my profile</strong><small>Remove your personal profile from the People grid and map. Existing chats remain available.</small></span><input type="checkbox" checked={Boolean(data?.preferences.hideProfile || data?.preferences.incognito)} disabled={busy||!data} onChange={e=>{void save({hideProfile:e.target.checked,incognito:false});}} /></label><p className="rd-caption">These settings stop future discovery and location updates; they cannot erase information someone already saw. Blocking and reporting remain free.</p>{error?<p role="alert" className="rd-error">{error}</p>:null}</section>;
 }
 export function ProfileConversation({member,onReply}:{member?:PublicMember;onReply(excerpt:string):void}){if(!member)return null;return <section className="rd-profile-conversation"><ProfileExternalLinks member={member} /><VerifiedBadge verified={member.photoVerified}/><IntentBadge member={member}/>{member.interests.length?<div className="rd-interest-picker">{member.interests.map(i=><span className="rd-interest-chip" key={i}>{i}</span>)}</div>:null}{member.prompts.map(p=><div className="rd-profile-prompt" key={p.prompt}><span>{p.prompt}</span><p>{p.answer}</p><button className="rd-btn" onClick={()=>onReply(`${p.prompt} ${p.answer}`)}>Reply to this answer</button></div>)}</section>;}
 export function PhotoVerificationPanel(props:Props){
@@ -188,14 +201,6 @@ export function FirstConnections(props:Props){
   if(completed===tasks.length)return null;
   return <section className="rd-first-connections"><div><span className="rd-eyebrow">YOUR FIRST CONNECTION STARTS HERE</span><h2>A little more you.</h2><p>{completed} of {tasks.length} profile steps complete. Give someone a reason to say hello.</p></div><div className="rd-onboarding-progress" role="progressbar" aria-label="Profile setup" aria-valuenow={completed} aria-valuemin={0} aria-valuemax={tasks.length}><span style={{width:`${completed/tasks.length*100}%`}}/></div><ul>{tasks.map(t=><li key={t.label}><span aria-hidden="true">{t.done?"✓":"○"}</span>{t.label}</li>)}</ul><div className="rd-row"><button className="rd-btn primary" onClick={()=>{window.dispatchEvent(new CustomEvent("rd:settings-section",{detail:"profile"}));window.location.hash="#/settings";}}>Make my profile stand out</button><button className="rd-btn" onClick={()=>{setDismissed(true);try{localStorage.setItem(`rd:onboarding:${props.session.userId}`,"done");}catch{}}}>Not now</button></div></section>;
 }
-export type DiscoveryChoice={intent:string;interest:string;verifiedOnly:boolean};
-export function DiscoveryChoices({api,session,value,onChange}:{api:Props["api"];session:Session;value:DiscoveryChoice;onChange(value:DiscoveryChoice):void}){
-  const {data,error,busy,save}=useMember({api,session}),[message,setMessage]=useState("");
-  const applied=useRef(false);
-  useEffect(()=>{if(!applied.current && data?.plus && data.preferences.discovery){applied.current=true;onChange(data.preferences.discovery);}},[data?.plus,data?.preferences.discovery]);
-  return <section className="rd-discovery-choices"><div className="rd-quick-filter-row"><label><span>Open to</span><select className="rd-input" aria-label="Open to" value={value.intent} onChange={e=>onChange({...value,intent:e.target.value})}><option value="">Any intention</option>{Object.entries(INTENTS).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label><span>Shared interest</span><select className="rd-input" aria-label="Shared interest" value={value.interest} onChange={e=>onChange({...value,interest:e.target.value})}><option value="">Any interest</option>{INTERESTS.map(i=><option key={i}>{i}</option>)}</select></label></div><label className="rd-verified-filter"><input type="checkbox" checked={value.verifiedOnly} onChange={e=>onChange({...value,verifiedOnly:e.target.checked})}/>Photo-reviewed profiles only</label>{session.userId?<button className="rd-save-discovery" disabled={busy} onClick={()=>{if(!data?.plus){openPlus("filters");return;}void save({discovery:value}).then(ok=>setMessage(ok?"Discovery preferences remembered.":""));}}>Remember these preferences <span className="rd-plus-badge">PLUS</span></button>:null}{message||error?<p role="status" className="rd-caption">{message||error}</p>:null}</section>;
-}
-
 export function ReportMemberButton({api,session,peerKey}:Props&{peerKey:string}){
   const [open,setOpen]=useState(false),[reason,setReason]=useState("Harassment or unwanted contact"),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
   return <><button className="rd-btn" onClick={()=>setOpen(true)}>Report profile</button>{open?<div className="rd-report-inline" role="group" aria-label="Report profile"><label className="rd-field"><span>Reason</span><select className="rd-input" value={reason} onChange={e=>setReason(e.target.value)}>{["Harassment or unwanted contact","Impersonation or misleading photos","Spam or scam","Underage concern","Other safety concern"].map(r=><option key={r}>{r}</option>)}</select></label><div className="rd-row"><button className="rd-btn primary" disabled={busy} onClick={()=>{setBusy(true);void api.reportUser(session.sessionToken,peerKey,reason).then(()=>{setMessage("Report sent for review. You can also block this member.");setOpen(false);}).catch(e=>setMessage(e.message)).finally(()=>setBusy(false));}}>Send report</button><button className="rd-btn" onClick={()=>setOpen(false)}>Cancel</button></div></div>:null}{message?<p role="status" className="rd-caption">{message}</p>:null}</>;
