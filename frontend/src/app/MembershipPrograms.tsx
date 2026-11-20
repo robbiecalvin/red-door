@@ -1,3 +1,4 @@
+import { PayoutContact } from "./PayoutContact";
 import { referralCurrency, type ReferralSummary } from "../../../shared/referralSummary";
 import { PRIORITY_INVITATION_CODE } from "../../../shared/membership";
 import React, { useEffect, useState } from "react";
@@ -62,12 +63,18 @@ export function MembershipPrograms({ api, session }: Props) {
     {status?.priority ? <>
       <p>Priority Member · Complimentary Plus</p>
       {status.priorityReferralCode ? <p>Your personal referral code is <code>{status.priorityReferralCode}</code>.</p> : null}
+      <PayoutContact api={api} token={token} />
       {referrals ? <dl className="rd-billing-summary">
         <div><dt>Referrals this month</dt><dd>{referrals.monthlyReferrals}</dd></div>
         <div><dt>Lifetime referrals</dt><dd>{referrals.lifetimeReferrals}</dd></div>
         <div><dt>Earnings this month</dt><dd>{referralCurrency.format(referrals.monthlyEarningsCents / 100)}</dd></div>
         <div><dt>Unpaid balance</dt><dd>{referralCurrency.format(referrals.unpaidCents / 100)}</dd></div>
-        <div><dt>Total paid</dt><dd>{referralCurrency.format(referrals.paidCents / 100)}</dd></div>
+        <div><dt>Net paid</dt><dd>{referralCurrency.format(referrals.paidCents / 100)}</dd></div>
+        {referrals.pendingAdjustmentCents ? <div><dt>Pending chargeback adjustment</dt><dd>{referralCurrency.format(referrals.pendingAdjustmentCents / 100)}</dd></div> : null}
+        {referrals.payoutAdjustments?.map(({ atMs, cents }, index) => <div key={index}>
+          <dt>Chargeback adjustment · {new Date(atMs).toLocaleDateString("en-CA", { timeZone: "America/Vancouver" })}</dt>
+          <dd>{referralCurrency.format(-cents / 100)}</dd>
+        </div>)}
       </dl> : null}
       <button className="rd-btn" disabled={busy} onClick={() => void run(() => api.memberRequest(token, "/membership/priority/resign", {}), "Priority membership ended.")}>Resign from Priority</button>
     </> : <form onSubmit={event => {

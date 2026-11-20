@@ -1,5 +1,6 @@
 import { installCustomerImportRoutes } from "./routes/customerImportRoutes";
 import { createCustomerAutoReplies } from "./services/customerAutoReplies";
+import { installBackroomRoutes } from "./routes/backroomRoutes";
 import { brandedEmail } from "./services/brandedEmail";
 import { createResendEmail, ResendDeliveryError } from "./services/resendEmail";
 import { registrationPolicy } from "./services/registrationPolicy";
@@ -715,6 +716,7 @@ async function main(): Promise<void> {
     } catch { return res.status(502).json({ message: "Unable to synchronize subscription. Retry webhook delivery." }); }
   });
   app.use("/admin/customer-import", express.json({ limit: "512kb" }));
+  app.use("/backroom/editor", express.json({ limit: "100kb" }));
   app.use(express.json({ limit: "8kb", verify:(req,_res,buffer)=>{(req as Request & {rawBody?:Buffer}).rawBody=Buffer.from(buffer);} }));
   app.use((req, _res, next) => {
     const token = getSessionToken(req);
@@ -880,8 +882,14 @@ async function main(): Promise<void> {
     const user = authService.getUser(session.value.userId);
     return user ? { user, session: session.value } : null;
   }
+  installBackroomRoutes(app, { repository: communityRepository, member: plusUser, admin: requireAdminSession });
   const stopGrowth = installGrowthRoutes(app, {
     auth: authService, repository: communityRepository, ledger: referralLedger, member: plusUser, admin: requireAdminSession,
+    analytics: () => metrics.summary(),
+    async displayName(userId) {
+      const profile = await profileService.adminGetProfile(userId);
+      return profile.ok ? profile.value.displayName : undefined;
+    },
     async persist() { await authPersistQueue; if (authPersistenceError) throw new Error("Consent persistence failed."); },
     send: emailSender ? async message => {
       const result = await emailSender.sendMail({ ...message, ...brandedEmail(message.subject, message.text), from: process.env.MARKETING_FROM?.trim() });

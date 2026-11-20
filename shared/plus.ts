@@ -1,3 +1,4 @@
+import type { PayoutContact } from "./payoutContact";
 import type { PolicyAcceptanceRecord } from "./registrationPolicy";
 import type { MarketingConsent } from "./marketing";
 import type { MemberPreferences, PhotoVerification } from "./member";
@@ -39,6 +40,7 @@ export function limits(identity: PlusIdentity, now = Date.now()) {
 export type SavedSearch = { name: string; filters: Record<string, string | boolean> };
 export type PlusData = {
   customerImport?: { sourceId: string; completed: boolean; autoReplies: boolean; city?: string; neighbourhood?: string };
+  payoutContact?: PayoutContact;
   registrationPolicy?: PolicyAcceptanceRecord;
   marketing?: MarketingConsent;
   founderAtMs?: number;

@@ -1,5 +1,14 @@
 .rd-map-status{position:absolute;z-index:4;left:12px;right:12px;bottom:18px;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px;border:1px solid #692630;border-radius:12px;background:#17151aee;color:#f6e8ea;font-size:14px}
 .rd-maplibre .maplibregl-ctrl-group{background:#25252b}
 .rd-maplibre .maplibregl-ctrl-icon{filter:invert(1)}
-.rd-maplibre .maplibregl-ctrl-attrib{background:#17151ae6;color:#ddd}
-.rd-maplibre .maplibregl-ctrl-attrib a{color:#eee}
+.rd-maplibre .maplibregl-ctrl.maplibregl-ctrl-attrib {
+  padding: 2px 6px;
+  background: #17151a;
+  color: #d0c9d1;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.rd-maplibre .maplibregl-ctrl-attrib a {
+  color: #eee;
+  text-decoration: underline;
+}
