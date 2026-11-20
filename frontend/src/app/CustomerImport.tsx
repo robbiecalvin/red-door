@@ -10,23 +10,23 @@ export function CustomerImport({ api, session }: Props): React.ReactElement {
   const [csv, setCsv] = useState("");
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [busy, setBusy] = useState(false);
-  const [previewed, setPreviewed] = useState(false);
+  const [previewed, setPreviewed] = useState<"preview" | "update-preview">();
   const [autoReplies, setAutoReplies] = useState(false);
   const [error, setError] = useState("");
 
-  async function run(action: "preview" | "apply" | "photos") {
+  async function run(action: "preview" | "apply" | "photos" | "update-preview" | "update") {
     if (!file) return;
     setBusy(true);
     setError("");
     try {
       if (file.size > 300_000) throw new Error("Choose a CSV under 300 KB.");
-      const content = action === "apply" ? csv : await file.text();
+      const content = action === "apply" || action === "update" ? csv : await file.text();
       const result = await api.memberRequest<{ results: ImportRow[] }>(
         session.sessionToken, `/admin/customer-import/${action}`, { csv: content, autoReplies },
       );
       setCsv(content);
       setRows(result.results);
-      setPreviewed(action === "preview");
+      setPreviewed(action === "preview" || action === "update-preview" ? action : undefined);
     } catch (cause) {
       setError((cause as { message?: string }).message ?? "Unable to complete the import request.");
     } finally {
@@ -41,18 +41,21 @@ export function CustomerImport({ api, session }: Props): React.ReactElement {
     <label className="rd-field">
       <span>Customer CSV</span>
       <input type="file" accept=".csv,text/csv" disabled={busy} onChange={event => {
-        setFile(event.target.files?.[0]); setCsv(""); setRows([]); setPreviewed(false); setError("");
+        setFile(event.target.files?.[0]); setCsv(""); setRows([]); setPreviewed(undefined); setError("");
       }} />
     </label>
     <button type="button" className="rd-btn" disabled={!file || busy} onClick={() => void run("preview")}>Preview import</button>
+    <button type="button" className="rd-btn" disabled={!file || busy} onClick={() => void run("update-preview")}>Preview customer updates</button>
+    <p className="rd-muted">Match existing imports by email or source_customer_id. Filled cells replace values. Blank cells keep existing data.</p>
     <button type="button" className="rd-btn" disabled={!file || busy} onClick={() => void run("photos")}>Update automatic reply photo links</button>
     <p className="rd-muted">For photo links, upload a CSV with email and auto_reply_photo_url columns.</p>
     {error && <p role="alert">{error}</p>}
     {rows.length > 0 && <div>
-      <p role="status">{count("ready")} ready · {count("imported")} imported · {count("skipped")} skipped · {count("updated")} photo links updated · {count("error")} need attention</p>
+      <p role="status">{count("ready")} ready · {count("imported")} imported · {count("skipped")} skipped · {count("updated")} updated · {count("error")} need attention</p>
       <ul>{rows.filter(row => row.message).map(row => <li key={row.row}>Row {row.row}. {row.message}</li>)}</ul>
     </div>}
-    {previewed && count("ready") > 0 && <>
+    {previewed === "update-preview" && count("ready") > 0 && <button type="button" className="rd-btn primary" disabled={busy} onClick={() => void run("update")}>Update {count("ready")} customers</button>}
+    {previewed === "preview" && count("ready") > 0 && <>
       <label className="rd-row">
         <input type="checkbox" checked={autoReplies} disabled={busy} onChange={event => setAutoReplies(event.target.checked)} />
         Enable automatic replies for these customers immediately after import

@@ -114,7 +114,7 @@ export type AuthService = Readonly<{
   unbanUser(userId: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">>;
   adminCreateUser(email: string, password: string, phoneE164: string | null, userType: UserType, tier: SubscriptionTier, role: UserRole, imported?: { createdAtMs?: number; data: PlusData }): Result<StoredUser>;
   getUser(userId: string): StoredUser | undefined;
-  updatePlus(userId: string, update: { tier?: SubscriptionTier; plusExpiresAtMs?: number; plusData?: PlusData }): Result<StoredUser>;
+  updatePlus(userId: string, update: { phoneE164?: string; tier?: SubscriptionTier; plusExpiresAtMs?: number; plusData?: PlusData }): Result<StoredUser>;
   snapshotState(): AuthStateSnapshot;
 }>;
 
