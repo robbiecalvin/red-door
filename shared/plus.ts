@@ -39,7 +39,7 @@ export function limits(identity: PlusIdentity, now = Date.now()) {
 }
 export type SavedSearch = { name: string; filters: Record<string, string | boolean> };
 export type PlusData = {
-  customerImport?: { sourceId: string; completed: boolean; autoReplies: boolean; city?: string; neighbourhood?: string };
+  customerImport?: { sourceId: string; completed: boolean; autoReplies: boolean; city?: string; neighbourhood?: string; photoUrl?: string };
   payoutContact?: PayoutContact;
   registrationPolicy?: PolicyAcceptanceRecord;
   marketing?: MarketingConsent;

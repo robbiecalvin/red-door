@@ -3,7 +3,7 @@ import type { Session } from "./api";
 import { apiClient } from "./api";
 
 type Props = { api: ReturnType<typeof apiClient>; session: Session };
-type ImportRow = { row: number; status: "ready" | "imported" | "skipped" | "error"; message?: string };
+type ImportRow = { row: number; status: "ready" | "imported" | "skipped" | "updated" | "error"; message?: string };
 
 export function CustomerImport({ api, session }: Props): React.ReactElement {
   const [file, setFile] = useState<File>();
@@ -14,13 +14,13 @@ export function CustomerImport({ api, session }: Props): React.ReactElement {
   const [autoReplies, setAutoReplies] = useState(false);
   const [error, setError] = useState("");
 
-  async function run(action: "preview" | "apply") {
+  async function run(action: "preview" | "apply" | "photos") {
     if (!file) return;
     setBusy(true);
     setError("");
     try {
       if (file.size > 300_000) throw new Error("Choose a CSV under 300 KB.");
-      const content = action === "preview" ? await file.text() : csv;
+      const content = action === "apply" ? csv : await file.text();
       const result = await api.memberRequest<{ results: ImportRow[] }>(
         session.sessionToken, `/admin/customer-import/${action}`, { csv: content, autoReplies },
       );
@@ -45,9 +45,11 @@ export function CustomerImport({ api, session }: Props): React.ReactElement {
       }} />
     </label>
     <button type="button" className="rd-btn" disabled={!file || busy} onClick={() => void run("preview")}>Preview import</button>
+    <button type="button" className="rd-btn" disabled={!file || busy} onClick={() => void run("photos")}>Update automatic reply photo links</button>
+    <p className="rd-muted">For photo links, upload a CSV with email and auto_reply_photo_url columns.</p>
     {error && <p role="alert">{error}</p>}
     {rows.length > 0 && <div>
-      <p role="status">{count("ready")} ready · {count("imported")} imported · {count("skipped")} skipped · {count("error")} need attention</p>
+      <p role="status">{count("ready")} ready · {count("imported")} imported · {count("skipped")} skipped · {count("updated")} photo links updated · {count("error")} need attention</p>
       <ul>{rows.filter(row => row.message).map(row => <li key={row.row}>Row {row.row}. {row.message}</li>)}</ul>
     </div>}
     {previewed && count("ready") > 0 && <>

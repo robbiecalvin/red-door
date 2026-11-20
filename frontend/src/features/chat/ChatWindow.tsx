@@ -32,6 +32,18 @@ function displayMessageText(text: string): string {
   return text.trim() === FIRE_SIGNAL_TEXT ? "🔥 I'm into you" : text;
 }
 
+function renderMessageText(text: string): React.ReactNode {
+  const match = /^(?:(Automatic replies are on for this conversation\.)\n\n)?Photo: (https:\/\/\S+)$/.exec(text);
+  if (!match) return displayMessageText(text);
+  try {
+    const url = new URL(match[2]);
+    if (url.protocol !== "https:" || url.username || url.password) return displayMessageText(text);
+    return <>{match[1] && <p>{match[1]}</p>}Photo: <a href={url.href} target="_blank" rel="noopener noreferrer">{url.hostname}</a></>;
+  } catch {
+    return displayMessageText(text);
+  }
+}
+
 function fallbackAuthorLabel(actorKey: string): string {
   const trimmed = actorKey.trim();
   if (isAnonymousIdentity(trimmed)) return "Anon";
@@ -498,7 +510,7 @@ export function ChatWindow({
                     wordBreak: "break-word"
                   }}
                 >
-                  {m.text && !location ? <div style={{ marginBottom: m.media ? 8 : 0 }}>{displayMessageText(m.text)}</div> : null}
+                  {m.text && !location ? <div style={{ marginBottom: m.media ? 8 : 0 }}>{renderMessageText(m.text)}</div> : null}
                   {m.media ? (
                     <div>
                       {m.media.kind === "image" ? (
