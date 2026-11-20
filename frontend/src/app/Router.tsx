@@ -17,7 +17,7 @@ import { AdminLaunchChecks } from "./AdminLaunchChecks";
 import { BillingSettings, PromoCodeForm } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { POSTING_BOARDS, isPostingBoard, type PostingBoard } from "../../../shared/postingBoard";
-import { MemberEditor, MemberProfileLinks, ProfileExternalLinks, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, FirstConnections, useMember } from "./MemberPanels";
+import { MemberEditor, MemberProfileLinks, ProfileExternalLinks, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, useMember } from "./MemberPanels";
 import type { PublicMember } from "../../../shared/member";
 import { queueReply } from "./replyDraft";
 import { PlusMembershipCard } from "./PlusShowcase";
@@ -2475,7 +2475,6 @@ function CruiseChat({
               </div>
       </div></Sheet> : null}
       <div className="rd-discover-grid">
-          <FirstConnections api={api} session={session} />
           <div className="rd-people-grid" aria-label="People to discover">
             {loading ? Array.from({length:6}, (_,i) => <div key={i} className="rd-profile-skeleton" aria-label="Loading profile" />) : gridCards.length === 0 ? (
               <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name="user" /></span><h2>A little quiet here.</h2><p>No one matches your filters right now.<br />Try opening things up to find more connections.</p><div className="rd-row"><button type="button" className="rd-btn" onClick={clearGridFilters}>Clear filters</button><a className="rd-btn" href="#/groups">Browse private groups</a></div></div>
