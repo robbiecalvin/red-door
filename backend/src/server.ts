@@ -2120,6 +2120,14 @@ async function main(): Promise<void> {
     }
   });
 
+  const autoReplyTimer = setInterval(() => {
+    void customerAutoReply.drain((reply, markedRead) => {
+      safeBroadcast(gateway.broadcast, "chat_message", { message: reply });
+      if (markedRead) safeBroadcast(gateway.broadcast, "chat_read", { actorKey: reply.fromKey, otherKey: reply.toKey, chatKind: reply.chatKind });
+    }).catch(() => console.error("[Badehaus X] Could not deliver queued automatic chat replies."));
+  }, 2_000);
+  autoReplyTimer.unref();
+
   const presenceService = createPresenceService({
     broadcaster: {
       broadcast(type: string, payload: unknown): void {
@@ -2306,9 +2314,7 @@ async function main(): Promise<void> {
     if (!result.ok) return sendError(res, result.error);
     if (sessionResult.value.userId && typeof toKey === "string" && toKey.startsWith("user:") && authService.getUser(sessionResult.value.userId)?.plusData?.analyticsConsent === true && authService.getUser(toKey.slice(5))?.plusData?.analyticsConsent === true && !/^GROUP_INVITE_/.test(text ?? "")) recordMetric(() => metrics.message(sessionResult.value.userId!, toKey.slice(5)));
     safeBroadcast(gateway.broadcast, "chat_message", { message: result.value });
-    void customerAutoReply(result.value).then(reply => {
-      if (reply) safeBroadcast(gateway.broadcast, "chat_message", { message: reply });
-    }).catch(() => console.error("[Badehaus X] Could not process an automatic chat reply."));
+    void customerAutoReply.schedule(result.value).catch(() => console.error("[Badehaus X] Could not queue an automatic chat reply."));
     if(typeof toKey==="string" && toKey.startsWith("user:") && !/^GROUP_INVITE_/.test(text ?? ""))void pushService.notify(toKey.slice(5)).catch(()=>{});
     return res.status(200).json({ message: result.value });
   });
@@ -2573,6 +2579,7 @@ async function main(): Promise<void> {
     clearInterval(chatCleanupTimer);
     clearInterval(priorityCleanup);
     stopGrowth();
+    clearInterval(autoReplyTimer);
     await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue, guestPersistQueue, safetyPersistence, favoritesPersistence, communityRepository.flush(), shutdownLive()]);
     if (postgresPool) {
       await postgresPool.end();
