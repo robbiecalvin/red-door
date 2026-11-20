@@ -1,4 +1,4 @@
-import { customerScheduleWindow, isCustomerScheduledOnline } from "./services/customerSchedule";
+import { customerScheduledLocation, customerScheduleWindow, isCustomerScheduledOnline } from "./services/customerSchedule";
 import { installCustomerImportRoutes } from "./routes/customerImportRoutes";
 import { createCustomerAutoReplies } from "./services/customerAutoReplies";
 import { installBackroomRoutes } from "./routes/backroomRoutes";
@@ -532,7 +532,9 @@ async function main(): Promise<void> {
     if (!key.startsWith("user:")) return false;
     const userId = key.slice(5);
     const user = authService.getUser(userId);
-    return Boolean(user && (user.bannedAtMs || hidesPresence(user.plusData?.member, user) || !visibleOnSchedule(userId)));
+    const windows = user?.plusData?.customerImport?.scheduledLocations;
+    return Boolean(user && (user.bannedAtMs || hidesPresence(user.plusData?.member, user) ||
+      !visibleOnSchedule(userId) || (windows?.length && !customerScheduledLocation(windows))));
   };
   const matchingService = createMatchingService({
     blockChecker: {
@@ -2118,6 +2120,14 @@ async function main(): Promise<void> {
     }
   });
 
+  const autoReplyTimer = setInterval(() => {
+    void customerAutoReply.drain(
+      reply => safeBroadcast(gateway.broadcast, "chat_message", { message: reply }),
+      (actorKey, otherKey) => safeBroadcast(gateway.broadcast, "chat_read", { actorKey, otherKey, chatKind: "cruise" }),
+    ).catch(() => console.error("[Badehaus X] Could not deliver queued automatic chat replies."));
+  }, 2_000);
+  autoReplyTimer.unref();
+
   const presenceService = createPresenceService({
     broadcaster: {
       broadcast(type: string, payload: unknown): void {
@@ -2210,20 +2220,19 @@ async function main(): Promise<void> {
     
     // Get users with travel mode enabled
     const allProfiles = await profileRepo.listAll();
-    const travelModeUsers = allProfiles.filter((profile) => {
-      return profile.travelMode?.enabled === true && 
-             profile.travelMode.lat !== undefined && 
-             profile.travelMode.lng !== undefined &&
-             !banned.has(profile.userId) && !hiddenPresence(`user:${profile.userId}`) && !blockService.isBlocked(viewerKey,`user:${profile.userId}`);
-    }).map((profile) => ({
-      key: `user:${profile.userId}`,
-      userType: "registered" as const,
-      userId: profile.userId,
-      lat: profile.travelMode!.lat!,
-      lng: profile.travelMode!.lng!,
-      status: "Travel mode",
-      updatedAtMs: profile.updatedAtMs
-    }));
+    const travelModeUsers = allProfiles.flatMap(profile => {
+      const key = `user:${profile.userId}`;
+      if (banned.has(profile.userId) || hiddenPresence(key) || blockService.isBlocked(viewerKey, key)) return [];
+      const schedule = authService.getUser(profile.userId)?.plusData?.customerImport?.scheduledLocations;
+      const scheduled = customerScheduledLocation(schedule);
+      const point = schedule?.length ? scheduled : profile.travelMode?.enabled ? profile.travelMode : undefined;
+      if (!point || point.lat === undefined || point.lng === undefined) return [];
+      return [{
+        key, userType: "registered" as const, userId: profile.userId, lat: point.lat, lng: point.lng,
+        status: scheduled ? `Around ${scheduled.area}` : "Travel mode",
+        updatedAtMs: scheduled ? Date.now() : profile.updatedAtMs,
+      }];
+    });
     
     // Combine and deduplicate (active presence takes precedence)
     const presenceMap = new Map<string, typeof activePresence[0]>();
@@ -2305,9 +2314,7 @@ async function main(): Promise<void> {
     if (!result.ok) return sendError(res, result.error);
     if (sessionResult.value.userId && typeof toKey === "string" && toKey.startsWith("user:") && authService.getUser(sessionResult.value.userId)?.plusData?.analyticsConsent === true && authService.getUser(toKey.slice(5))?.plusData?.analyticsConsent === true && !/^GROUP_INVITE_/.test(text ?? "")) recordMetric(() => metrics.message(sessionResult.value.userId!, toKey.slice(5)));
     safeBroadcast(gateway.broadcast, "chat_message", { message: result.value });
-    void customerAutoReply(result.value).then(reply => {
-      if (reply) safeBroadcast(gateway.broadcast, "chat_message", { message: reply });
-    }).catch(() => console.error("[Badehaus X] Could not process an automatic chat reply."));
+    void customerAutoReply.schedule(result.value).catch(() => console.error("[Badehaus X] Could not queue an automatic chat reply."));
     if(typeof toKey==="string" && toKey.startsWith("user:") && !/^GROUP_INVITE_/.test(text ?? ""))void pushService.notify(toKey.slice(5)).catch(()=>{});
     return res.status(200).json({ message: result.value });
   });
@@ -2572,6 +2579,7 @@ async function main(): Promise<void> {
     clearInterval(chatCleanupTimer);
     clearInterval(priorityCleanup);
     stopGrowth();
+    clearInterval(autoReplyTimer);
     await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue, guestPersistQueue, safetyPersistence, favoritesPersistence, communityRepository.flush(), shutdownLive()]);
     if (postgresPool) {
       await postgresPool.end();

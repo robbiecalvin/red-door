@@ -3,7 +3,7 @@ import type { Express, Request, Response } from "express";
 import type { AuthService, Session, StoredUser } from "../services/authService";
 import { createProfileService, validateAdminProfile, type Profile, type ProfileUpdate } from "../services/profileService";
 import { MemberError, updateMember } from "../services/memberService";
-import type { CustomerImportSettings, FacilitatedReplyRule } from "../../../shared/plus";
+import type { CustomerImportSettings, FacilitatedReplyRule, ScheduledCustomerLocation } from "../../../shared/plus";
 import { DEFAULT_MEMBER } from "../../../shared/member";
 
 const profileFields = {
@@ -50,6 +50,46 @@ function photoLink(value?: string): string | undefined {
   return url.href;
 }
 
+const namedAreas = new Map<string, { lat: number; lng: number }>([
+  ["downtown vancouver", { lat: 49.282, lng: -123.120 }],
+  ["mount pleasant", { lat: 49.262, lng: -123.101 }],
+  ["west end", { lat: 49.286, lng: -123.134 }],
+]);
+
+function timeInMinutes(value: unknown, allowEndOfDay = false): number {
+  if (allowEndOfDay && value === "24:00") return 1440;
+  if (typeof value !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+    throw invalid("Scheduled locations use 24-hour HH:MM times.");
+  }
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function parseScheduledLocations(json: string): ScheduledCustomerLocation[] {
+  const value: unknown = JSON.parse(json);
+  if (!Array.isArray(value) || value.length > 12) throw invalid("Provide a JSON array of up to 12 scheduled locations.");
+  const windows = value.map(entry => {
+    if (!entry || typeof entry.area !== "string" || !entry.area.trim() || entry.area.trim().length > 80) {
+      throw invalid("Each scheduled location needs an area name of up to 80 characters.");
+    }
+    const area = entry.area.trim();
+    const startMinute = timeInMinutes(entry.start);
+    const endMinute = timeInMinutes(entry.end, true);
+    if (startMinute >= endMinute) throw invalid("End time must be later than start time. Split windows that cross midnight.");
+    const point = entry.approx_latitude === undefined && entry.approx_longitude === undefined
+      ? namedAreas.get(area.toLowerCase()) : { lat: entry.approx_latitude, lng: entry.approx_longitude };
+    if (!point || typeof point.lat !== "number" || typeof point.lng !== "number" ||
+        !Number.isFinite(point.lat) || !Number.isFinite(point.lng) || Math.abs(point.lat) > 90 || Math.abs(point.lng) > 180) {
+      throw invalid("Supply valid approximate coordinates for each area without a built-in point.");
+    }
+    return { area, startMinute, endMinute, lat: point.lat, lng: point.lng };
+  }).sort((left, right) => left.startMinute - right.startMinute);
+  if (windows.some((window, index) => index > 0 && window.startMinute < windows[index - 1].endMinute)) {
+    throw invalid("Scheduled location windows cannot overlap.");
+  }
+  return windows;
+}
+
 function spreadsheetSettings(row: Record<string, string>, current?: CustomerImportSettings) {
   let facilitatedReplies = current?.facilitatedReplies;
   if (row.facilitated_replies_json) {
@@ -69,7 +109,13 @@ function spreadsheetSettings(row: Record<string, string>, current?: CustomerImpo
     if (!Number.isFinite(hours) || hours < 0 || hours > 24) throw invalid("Online hours per day must be between 0 and 24.");
     onlineMinutesPerDay = Math.round(hours * 60);
   }
-  return { facilitatedReplies, onlineMinutesPerDay,
+  const scheduledLocations = row.scheduled_locations_json
+    ? parseScheduledLocations(row.scheduled_locations_json) : current?.scheduledLocations;
+  const locationConsentAtMs = row.location_consent_at ? Date.parse(row.location_consent_at) : current?.locationConsentAtMs;
+  if (scheduledLocations?.length && (onlineMinutesPerDay === undefined || !Number.isFinite(locationConsentAtMs))) {
+    throw invalid("Scheduled locations require online_hours_per_day and a valid location_consent_at.");
+  }
+  return { facilitatedReplies, onlineMinutesPerDay, scheduledLocations, locationConsentAtMs: Number.isFinite(locationConsentAtMs) ? locationConsentAtMs : undefined,
     rightNowTrigger: flag(row.right_now_trigger, current?.rightNowTrigger ?? false),
   };
 }

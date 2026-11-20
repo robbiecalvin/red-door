@@ -2,7 +2,7 @@ import type { CommunityRepository } from "../repositories/communityRepository";
 import type { AuthService, StoredUser } from "./authService";
 import type { ChatMessage, ChatService } from "./chatService";
 import { hidesPresence } from "./memberService";
-import { customerScheduleWindow } from "./customerSchedule";
+import { customerScheduledLocation, customerScheduleWindow } from "./customerSchedule";
 
 const intents = {
   rightNow: /^(?:right now|r u free rn|can you meet right now|meet right now)[.!? ]*$/i,
@@ -73,16 +73,36 @@ function answer(intent: ReplyIntent, user: StoredUser, question: string): string
     }
     case "location": {
       if (hidesPresence(user.plusData?.member, user)) return;
-      const location = [record?.neighbourhood, record?.city].filter(Boolean).join(", ");
+      const scheduled = customerScheduledLocation(record?.scheduledLocations);
+      if (record?.scheduledLocations?.length && (!scheduled || !customerScheduleWindow(user.id, record.onlineMinutesPerDay ?? 0, Date.now()))) return;
+      const location = scheduled?.area ?? [record?.neighbourhood, record?.city].filter(Boolean).join(", ");
       return location ? `${location}. What area are you in?` : undefined;
     }
     case "photo": return record?.photoUrl ? `Photo: ${record.photoUrl}` : undefined;
   }
 }
 
-export function createCustomerAutoReplies(auth: AuthService, chat: ChatService, repository: CommunityRepository) {
-  return async (message: ChatMessage): Promise<ChatMessage | undefined> => {
-    if (!message.fromKey.startsWith("user:") || !message.toKey.startsWith("user:") || message.chatKind !== "cruise") return;
+type PendingReply = {
+  key: string; fromKey: string; recipientId: string; intent: ReplyIntent; question: string; dueAt: number; expiresAt: number;
+  readGapMs?: number; readAtMs?: number; sequence?: number;
+};
+const queueKey = "customerAutoReplyQueue";
+
+function recipientSession(recipient: StoredUser) {
+  return {
+    sessionToken: recipient.id, userId: recipient.id, userType: recipient.userType, ageVerified: recipient.ageVerified,
+    mode: "cruise" as const, tier: recipient.tier, plusExpiresAtMs: recipient.plusExpiresAtMs,
+  };
+}
+
+export function createCustomerAutoReplies(
+  auth: AuthService, chat: ChatService, repository: CommunityRepository,
+  { now = Date.now, random = Math.random }: { now?: () => number; random?: () => number } = {},
+) {
+  let draining = false;
+  async function schedule(message: ChatMessage): Promise<void> {
+    if (!message.fromKey.startsWith("user:") || !message.toKey.startsWith("user:") || message.chatKind !== "cruise" ||
+        message.text.startsWith("GROUP_INVITE_")) return;
     const text = message.text.trim().replace(/[’']/g, "").replace(/\s+/g, " ");
     const question = text.replace(/^(?:hey|hi|hello)[,!.] +/i, "");
     const matched = (Object.keys(intents) as Intent[]).find(key => intents[key].test(question));
@@ -91,49 +111,103 @@ export function createCustomerAutoReplies(auth: AuthService, chat: ChatService, 
     if (!recipient || recipient.bannedAtMs || !sender?.emailVerified || sender.bannedAtMs ||
         !recipient.plusData?.customerImport?.completed || !recipient.plusData.customerImport.autoReplies) return;
 
-    if (message.text.startsWith("GROUP_INVITE_")) return;
-    const session = {
-      sessionToken: recipient.id, userId: recipient.id, userType: recipient.userType, ageVerified: recipient.ageVerified,
-      mode: "cruise" as const, tier: recipient.tier, plusExpiresAtMs: recipient.plusExpiresAtMs,
-    };
-    const history = chat.listMessages(session, "cruise", message.fromKey);
+    const history = chat.listMessages(recipientSession(recipient), "cruise", message.fromKey);
     const priorIncoming = history.ok ? history.value.filter(row =>
       row.fromKey === message.fromKey && row.messageId !== message.messageId && !row.text.startsWith("GROUP_INVITE_"),
     ).length : 0;
     const protectedIntent = matched === "photo" || matched === "location" || matched === "rightNow";
     const configured = !protectedIntent && customRule(recipient, question) ? "custom" : matched;
     const key = `${message.chatId}:${recipient.id}`;
-    const intent = await repository.update(state => {
+    await repository.update(state => {
       const progress = (state.settings.customerAutoReplyWindow ??= {}) as Record<string, ReplyProgress>;
+      const pending = (state.settings[queueKey] ??= []) as PendingReply[];
       const legacy = (state.settings.customerAutoReplyIntents as Record<string, Intent[]> | undefined)?.[key] ?? [];
       const window = progress[key] ?? { received: Math.max(priorIncoming, legacy.length), messageIds: [], photoSent: legacy.includes("photo") };
+      if (endConversation.test(question)) {
+        progress[key] = { ...window, stopped: true };
+        state.settings[queueKey] = pending.filter(job => job.key !== key);
+        return;
+      }
       if (window.stopped || window.received >= MESSAGE_LIMIT || window.messageIds.includes(message.messageId)) return;
-      const stopped = endConversation.test(question);
       const previous = window.lastIntent;
-      const intent: ReplyIntent | undefined = stopped ? undefined : configured ??
+      const intent: ReplyIntent | undefined = configured ??
         (briefAgreement.test(question) && (previous === "plans" || previous === "availability") ? "followUp" : undefined);
       const sendPhoto = intent === "photo" && !window.photoSent && Boolean(recipient.plusData?.customerImport?.photoUrl);
+      const enqueue = intent && (intent !== "photo" || sendPhoto) && answer(intent, recipient, question);
       progress[key] = { ...window, received: window.received + 1, messageIds: [...window.messageIds, message.messageId],
-        stopped, photoSent: window.photoSent || sendPhoto,
+        photoSent: window.photoSent || sendPhoto, lastIntent: enqueue ? intent : previous,
       };
-      return intent !== "photo" || sendPhoto ? intent : undefined;
+      if (!enqueue || !intent) return;
+      const time = now();
+      const previousDue = pending.filter(job => job.key === key).reduce((latest, job) => Math.max(latest, job.dueAt), 0);
+      const dueAt = Math.max(previousDue, time + 20_000 + Math.floor(random() * 3_560_000));
+      pending.push({ key, fromKey: message.fromKey, recipientId: recipient.id, intent, question, dueAt, expiresAt: time + 3_600_000,
+        readGapMs: 5_000 + Math.floor(random() * 10_001), sequence: window.received + 1 });
     });
-    if (!intent) return;
+  }
 
-    const current = auth.getUser(recipient.id);
-    const reply = current && !current.bannedAtMs && current.plusData?.customerImport?.autoReplies
-      ? answer(intent, current, question) : undefined;
-    const sent = reply && chat.sendMessage(session, { chatKind: "cruise", toKey: message.fromKey, text: reply });
-    if (sent && sent.ok) {
-      await repository.update(state => {
-        const progress = state.settings.customerAutoReplyWindow as Record<string, ReplyProgress>;
-        progress[key].lastIntent = intent;
+  function nextActionAt(job: PendingReply): number {
+    const gap = job.readGapMs ?? 5_000;
+    return job.readAtMs === undefined ? job.dueAt - gap : Math.max(job.dueAt, job.readAtMs + gap);
+  }
+
+  async function drain(deliver: (reply: ChatMessage) => void, notifyRead: (actorKey: string, otherKey: string) => void) {
+    if (draining) return;
+    draining = true;
+    try {
+      const time = now();
+      const waiting = await repository.readSetting<PendingReply[]>(queueKey);
+      if (!waiting?.some(job => nextActionAt(job) <= time || job.expiresAt < time)) return;
+      const due = await repository.update(state => {
+        const pending = (state.settings[queueKey] ?? []) as PendingReply[];
+        const blockedBy = new Map<string, number>();
+        for (const job of pending) {
+          if (job.expiresAt < time || (job.readAtMs !== undefined && nextActionAt(job) <= time)) continue;
+          blockedBy.set(job.key, Math.min(blockedBy.get(job.key) ?? Infinity, job.sequence ?? 0));
+        }
+        const ready = new Set(pending.filter(job => job.expiresAt < time || (nextActionAt(job) <= time &&
+          (job.readAtMs === undefined || (job.sequence ?? 0) <= (blockedBy.get(job.key) ?? Infinity)))));
+        state.settings[queueKey] = pending.filter(job => !ready.has(job));
+        return [...ready].sort((a, b) => a.dueAt - b.dueAt || (a.sequence ?? 0) - (b.sequence ?? 0));
       });
-      return sent.value;
+      for (const job of due) {
+        const recipient = auth.getUser(job.recipientId);
+        const sender = auth.getUser(job.fromKey.slice(5));
+        const progress = await repository.readSetting<Record<string, ReplyProgress>>("customerAutoReplyWindow");
+        const reply = now() <= job.expiresAt && recipient && !recipient.bannedAtMs && sender?.emailVerified && !sender.bannedAtMs &&
+          !progress?.[job.key]?.stopped && recipient.plusData?.customerImport?.autoReplies
+          ? answer(job.intent, recipient, job.question) : undefined;
+        if (reply && recipient) {
+          const session = recipientSession(recipient);
+          if (job.readAtMs === undefined) {
+            const readAtMs = now();
+            if (readAtMs + (job.readGapMs ?? 5_000) <= job.expiresAt &&
+                chat.markRead(session, "cruise", job.fromKey).ok) {
+              await repository.update(state => {
+                const byThread = state.settings.customerAutoReplyWindow as Record<string, ReplyProgress>;
+                if (byThread[job.key]?.stopped) return;
+                (state.settings[queueKey] as PendingReply[]).push({ ...job, readAtMs });
+              });
+              notifyRead(`user:${recipient.id}`, job.fromKey);
+              continue;
+            }
+          } else {
+            const sent = chat.sendMessage(session, { chatKind: "cruise", toKey: job.fromKey, text: reply });
+            if (sent.ok) {
+              deliver(sent.value);
+              continue;
+            }
+          }
+        }
+        if (job.intent === "photo") await repository.update(state => {
+          const progress = state.settings.customerAutoReplyWindow as Record<string, ReplyProgress>;
+          if (progress[job.key]) progress[job.key].photoSent = false;
+        });
+      }
+    } finally {
+      draining = false;
     }
-    if (intent === "photo") await repository.update(state => {
-      const progress = state.settings.customerAutoReplyWindow as Record<string, ReplyProgress>;
-      progress[key].photoSent = false;
-    });
-  };
+  }
+
+  return { schedule, drain };
 }

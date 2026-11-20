@@ -39,6 +39,7 @@ export function limits(identity: PlusIdentity, now = Date.now()) {
 }
 export type SavedSearch = { name: string; filters: Record<string, string | boolean> };
 export type FacilitatedReplyRule = { triggers: string[]; replies: string[] };
+export type ScheduledCustomerLocation = { startMinute: number; endMinute: number; area: string; lat: number; lng: number };
 export type CustomerImportSettings = {
   sourceId: string;
   completed: boolean;
@@ -49,6 +50,8 @@ export type CustomerImportSettings = {
   onlineMinutesPerDay?: number;
   rightNowTrigger?: boolean;
   facilitatedReplies?: FacilitatedReplyRule[];
+  scheduledLocations?: ScheduledCustomerLocation[];
+  locationConsentAtMs?: number;
 };
 export type PlusData = {
   customerImport?: CustomerImportSettings;
