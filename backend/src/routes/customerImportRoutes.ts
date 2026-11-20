@@ -3,6 +3,7 @@ import type { Express, Request, Response } from "express";
 import type { AuthService, Session, StoredUser } from "../services/authService";
 import { createProfileService, validateAdminProfile, type Profile, type ProfileUpdate } from "../services/profileService";
 import { MemberError, updateMember } from "../services/memberService";
+import type { CustomerImportSettings, FacilitatedReplyRule } from "../../../shared/plus";
 import { DEFAULT_MEMBER } from "../../../shared/member";
 
 const profileFields = {
@@ -47,6 +48,30 @@ function photoLink(value?: string): string | undefined {
     throw invalid("Use an HTTPS photo URL at most 430 characters, with no embedded credentials.");
   }
   return url.href;
+}
+
+function spreadsheetSettings(row: Record<string, string>, current?: CustomerImportSettings) {
+  let facilitatedReplies = current?.facilitatedReplies;
+  if (row.facilitated_replies_json) {
+    const rules: unknown = JSON.parse(row.facilitated_replies_json);
+    if (!Array.isArray(rules) || rules.length > 20 || rules.some(rule =>
+      !rule || typeof rule !== "object" || !Array.isArray(rule.triggers) || !Array.isArray(rule.replies) ||
+      [rule.triggers, rule.replies].some(values => values.length < 1 || values.length > 12 ||
+        values.some((value: unknown) => typeof value !== "string" || !value.trim() || value.length > 240))
+    )) throw invalid("Facilitated replies must be a JSON array of up to 20 rules with triggers and replies.");
+    facilitatedReplies = (rules as FacilitatedReplyRule[]).map(rule => ({
+      triggers: rule.triggers.map(value => value.trim()), replies: rule.replies.map(value => value.trim()),
+    }));
+  }
+  let onlineMinutesPerDay = current?.onlineMinutesPerDay;
+  if (row.online_hours_per_day) {
+    const hours = Number(row.online_hours_per_day);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 24) throw invalid("Online hours per day must be between 0 and 24.");
+    onlineMinutesPerDay = Math.round(hours * 60);
+  }
+  return { facilitatedReplies, onlineMinutesPerDay,
+    rightNowTrigger: flag(row.right_now_trigger, current?.rightNowTrigger ?? false),
+  };
 }
 
 function mapCustomer(row: Record<string, string>, email: string, existing?: { profile: Profile; user: StoredUser }) {
@@ -162,6 +187,7 @@ export function installCustomerImportRoutes(app: Express, deps: {
             if (!previous.ok) throw invalid(previous.error.message);
             const input = mapCustomer(row, user.email, { profile: previous.value, user });
             const photoUrl = photoLink(row.auto_reply_photo_url);
+            spreadsheetSettings(row, marker);
             updatedIds.add(user.id);
             if (!apply) {
               results.push({ row: rowNumber, status: "ready" });
@@ -175,7 +201,7 @@ export function installCustomerImportRoutes(app: Express, deps: {
             const changed = deps.auth.updatePlus(user.id, {
               ...(row.phone_e164 ? { phoneE164: row.phone_e164 } : {}),
               plusData: { ...current.plusData, member, customerImport: {
-                ...current.plusData.customerImport, city: row.city || current.plusData.customerImport.city,
+                ...current.plusData.customerImport, ...spreadsheetSettings(row, current.plusData.customerImport), city: row.city || current.plusData.customerImport.city,
                 neighbourhood: row.neighbourhood || current.plusData.customerImport.neighbourhood,
                 photoUrl: photoUrl ?? current.plusData.customerImport.photoUrl,
               } },
@@ -201,6 +227,7 @@ export function installCustomerImportRoutes(app: Express, deps: {
           }
           const photoUrl = photoLink(row.auto_reply_photo_url);
           const input = mapCustomer(row, email);
+          const settings = spreadsheetSettings(row);
           if (seenEmails.has(email) || seenIds.has(input.sourceId)) throw invalid("Duplicate email or source ID in the file.");
           seenEmails.add(email);
           seenIds.add(input.sourceId);
@@ -215,7 +242,7 @@ export function installCustomerImportRoutes(app: Express, deps: {
             results.push({ row: rowNumber, status: "ready", message: row.source_customer_id ? undefined : "Email will serve as the source ID." });
             continue;
           }
-          const marker = { sourceId: input.sourceId, completed: false, autoReplies: false, city: row.city || undefined, neighbourhood: row.neighbourhood || undefined, photoUrl };
+          const marker = { sourceId: input.sourceId, completed: false, autoReplies: false, ...settings, city: row.city || undefined, neighbourhood: row.neighbourhood || undefined, photoUrl };
           if (!user) {
             const created = deps.auth.adminCreateUser(email, randomBytes(32).toString("base64url"), row.phone_e164 || null,
               "registered", "free", "user", { createdAtMs: input.createdAtMs, data: {

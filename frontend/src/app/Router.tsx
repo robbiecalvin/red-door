@@ -1505,6 +1505,7 @@ function CruiseChat({
   discoverFilter: DiscoverFilter;
   publicProfiles: ReadonlyArray<{
     userId: string;
+    scheduledOnline?: boolean;
     displayName: string;
     member?: PublicMember;
     foundingMember?: boolean;
@@ -1625,7 +1626,7 @@ function CruiseChat({
             member: p.member,
             foundingMember: p.foundingMember,
             meters: online && selfCoords ? Math.round(distanceMeters(selfCoords, { lat: online.lat, lng: online.lng })) : null,
-            isOnline: Boolean(online),
+            isOnline: Boolean(online || p.scheduledOnline),
             hasPicture: typeof p.mainPhotoMediaId === "string" && p.mainPhotoMediaId.trim().length > 0,
             mainPhotoMediaId: p.mainPhotoMediaId,
             avatarUrl: p.mainPhotoMediaId ? mediaUrlById[p.mainPhotoMediaId] : undefined

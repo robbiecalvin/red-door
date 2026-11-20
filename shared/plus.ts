@@ -38,8 +38,20 @@ export function limits(identity: PlusIdentity, now = Date.now()) {
     : { favorites: 20, pins: 3, gallery: 3, privateAlbum: 3 };
 }
 export type SavedSearch = { name: string; filters: Record<string, string | boolean> };
+export type FacilitatedReplyRule = { triggers: string[]; replies: string[] };
+export type CustomerImportSettings = {
+  sourceId: string;
+  completed: boolean;
+  autoReplies: boolean;
+  city?: string;
+  neighbourhood?: string;
+  photoUrl?: string;
+  onlineMinutesPerDay?: number;
+  rightNowTrigger?: boolean;
+  facilitatedReplies?: FacilitatedReplyRule[];
+};
 export type PlusData = {
-  customerImport?: { sourceId: string; completed: boolean; autoReplies: boolean; city?: string; neighbourhood?: string; photoUrl?: string };
+  customerImport?: CustomerImportSettings;
   payoutContact?: PayoutContact;
   registrationPolicy?: PolicyAcceptanceRecord;
   marketing?: MarketingConsent;
