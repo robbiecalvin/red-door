@@ -1,4 +1,5 @@
-import { customerScheduledLocation, customerScheduleWindow, isCustomerScheduledOnline } from "./services/customerSchedule";
+import { selectScheduledDiscovery, type ScheduledDiscoveryState } from "./services/scheduledDiscovery";
+import { customerScheduledLocation, isCustomerScheduledOnline } from "./services/customerSchedule";
 import { installCustomerImportRoutes } from "./routes/customerImportRoutes";
 import { createCustomerAutoReplies } from "./services/customerAutoReplies";
 import { installBackroomRoutes } from "./routes/backroomRoutes";
@@ -515,18 +516,57 @@ async function main(): Promise<void> {
   const blockService=createBlockService({initialBlocks:initialSafety.blocks,onStateChanged:blocks=>{safetyPersistence=communityRepository.update(s=>{s.blocks=blocks;}).then(()=>{safetyPersistenceError=null;}).catch(e=>{safetyPersistenceError=e;});}});
   const reportService=createReportService({initialReports:initialSafety.reports,onStateChanged:reports=>{safetyPersistence=communityRepository.update(s=>{s.reports=reports;}).then(()=>{safetyPersistenceError=null;}).catch(e=>{safetyPersistenceError=e;});}});
   const pushService = await createPushService(communityRepository, authService, process.env.PUBLIC_APP_URL ?? "");
-  const visibleOnSchedule = (userId: string) =>
-    isCustomerScheduledOnline(userId, authService.getUser(userId)?.plusData?.customerImport?.onlineMinutesPerDay);
+  const discoveryStateKey = "scheduledCustomerDiscovery";
+  let scheduledDiscovery = await communityRepository.readSetting<ScheduledDiscoveryState>(discoveryStateKey) ?? { online: [], recent: [] };
+  let onlineScheduledIds = new Set(scheduledDiscovery.online);
+  let recentScheduledIds = new Set(scheduledDiscovery.recent);
+  let lastDiscoverySecond = -1;
+  let discoveryNeedsSave = false;
+  function refreshScheduledDiscovery(now = Date.now()) {
+    const second = Math.floor(now / 1_000);
+    if (second === lastDiscoverySecond) return;
+    lastDiscoverySecond = second;
+    const visible = new Set<string>();
+    const eligible = new Set<string>();
+    for (const { id } of authService.listUsers()) {
+      const user = authService.getUser(id);
+      const schedule = user?.plusData?.customerImport;
+      if (!user || user.bannedAtMs || !schedule?.completed || !schedule.onlineMinutesPerDay ||
+          hidesDiscovery(user.plusData?.member, user)) continue;
+      visible.add(id);
+      if (isCustomerScheduledOnline(id, schedule.onlineMinutesPerDay, now)) eligible.add(id);
+    }
+    const next = selectScheduledDiscovery(eligible, visible, scheduledDiscovery);
+    if (JSON.stringify(next) !== JSON.stringify(scheduledDiscovery)) {
+      scheduledDiscovery = next;
+      onlineScheduledIds = new Set(next.online);
+      recentScheduledIds = new Set(next.recent);
+      discoveryNeedsSave = true;
+    }
+    if (discoveryNeedsSave) {
+      discoveryNeedsSave = false;
+      void communityRepository.update(state => { state.settings[discoveryStateKey] = next; })
+        .catch(() => { discoveryNeedsSave = true; });
+    }
+  }
+  function visibleOnSchedule(userId: string) {
+    if (!authService.getUser(userId)?.plusData?.customerImport?.completed) return true;
+    refreshScheduledDiscovery();
+    return onlineScheduledIds.has(userId);
+  }
+
   const enrichProfile = <T extends { userId: string; mainPhotoMediaId?: string }>(profile: T, includeProfileLinks = false) => {
     const user = authService.getUser(profile.userId);
     const settings = user?.plusData?.customerImport;
     const now = Date.now();
     const member = publicMember(user?.plusData?.member, user?.plusData?.photoVerification, profile.mainPhotoMediaId, now, includeProfileLinks);
-    const window = settings?.onlineMinutesPerDay !== undefined
-      ? customerScheduleWindow(profile.userId, settings.onlineMinutesPerDay, now) : undefined;
+    const managed = settings?.completed === true;
+    const online = managed && visibleOnSchedule(profile.userId);
+    const recentlyActive = managed && !online && recentScheduledIds.has(profile.userId);
     return { ...profile, foundingMember: user?.plusData?.founderAtMs !== undefined,
-      scheduledOnline: settings?.onlineMinutesPerDay === undefined ? undefined : Boolean(window),
-      member: window && settings?.rightNowTrigger ? { ...member, rightNowExpiresAtMs: now + 15_000 } : member };
+      scheduledOnline: managed ? online : undefined, recentlyActive: recentlyActive || undefined,
+      member: managed && !online ? { ...member, rightNowExpiresAtMs: undefined } :
+        online && settings?.rightNowTrigger ? { ...member, rightNowExpiresAtMs: now + 15_000 } : member };
   };
   const hiddenPresence = (key: string) => {
     if (!key.startsWith("user:")) return false;
@@ -575,7 +615,7 @@ async function main(): Promise<void> {
     }
   });
 
-  const customerAutoReply = createCustomerAutoReplies(authService, chatService, communityRepository);
+  const customerAutoReply = createCustomerAutoReplies(authService, chatService, communityRepository, { visibleOnSchedule });
 
   const metricsRepo = postgresPool ? analyticsRepository(postgresPool) : null;
   let metricsQueue: Promise<void> = Promise.resolve();
@@ -1522,7 +1562,12 @@ async function main(): Promise<void> {
     const result = await profileService.listPublicProfiles();
     if (!result.ok) return sendError(res, result.error);
     const banned = bannedUserIds();
-    return res.status(200).json({ profiles: result.value.filter((profile) => {const user=authService.getUser(profile.userId);return !banned.has(profile.userId) && visibleOnSchedule(profile.userId) && !(user && hidesDiscovery(user.plusData?.member,user));}).map(profile => enrichProfile(profile)) });
+    refreshScheduledDiscovery();
+    return res.status(200).json({ profiles: result.value.filter(profile => {
+      const user = authService.getUser(profile.userId);
+      return !banned.has(profile.userId) && !(user && hidesDiscovery(user.plusData?.member, user)) &&
+        (visibleOnSchedule(profile.userId) || recentScheduledIds.has(profile.userId));
+    }).map(profile => enrichProfile(profile)) });
   });
 
   app.put("/profile/me", async (req, res) => {
@@ -2120,6 +2165,9 @@ async function main(): Promise<void> {
     }
   });
 
+  const scheduledDiscoveryTimer = setInterval(() => refreshScheduledDiscovery(), 5_000);
+  scheduledDiscoveryTimer.unref();
+
   const autoReplyTimer = setInterval(() => {
     void customerAutoReply.drain(
       reply => safeBroadcast(gateway.broadcast, "chat_message", { message: reply }),
@@ -2580,6 +2628,7 @@ async function main(): Promise<void> {
     clearInterval(priorityCleanup);
     stopGrowth();
     clearInterval(autoReplyTimer);
+    clearInterval(scheduledDiscoveryTimer);
     await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue, guestPersistQueue, safetyPersistence, favoritesPersistence, communityRepository.flush(), shutdownLive()]);
     if (postgresPool) {
       await postgresPool.end();
