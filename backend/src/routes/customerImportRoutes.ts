@@ -39,6 +39,16 @@ function flag(value: string | undefined, fallback: boolean): boolean {
   return /^true$/i.test(value);
 }
 
+function photoLink(value?: string): string | undefined {
+  if (!value) return;
+  let url: URL;
+  try { url = new URL(value); } catch { throw invalid("Photo links must be valid HTTPS URLs."); }
+  if (url.protocol !== "https:" || url.username || url.password || url.href.length > 430) {
+    throw invalid("Use an HTTPS photo URL at most 430 characters, with no embedded credentials.");
+  }
+  return url.href;
+}
+
 function mapCustomer(row: Record<string, string>, email: string) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Invalid email address.");
   if (row.phone_e164 && !/^\+[1-9]\d{7,14}$/.test(row.phone_e164)) throw invalid("Phone number must use E.164 format.");
@@ -91,7 +101,8 @@ export function installCustomerImportRoutes(app: Express, deps: {
   app.post("/admin/customer-import/:action", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     if (!deps.admin(req, res)) return;
-    const apply = req.params.action === "apply";
+    const updatePhotos = req.params.action === "photos";
+    const apply = req.params.action === "apply" || updatePhotos;
     if (!apply && req.params.action !== "preview") return res.sendStatus(404);
     if (typeof req.body?.csv !== "string") return res.status(400).json({ message: "Choose a CSV file." });
     if (apply && importing) return res.status(409).json({ message: "Another import is running." });
@@ -100,8 +111,8 @@ export function installCustomerImportRoutes(app: Express, deps: {
     try {
       const [rawHeaders, ...rows] = readCsv(req.body.csv);
       const headers = rawHeaders?.map(header => header.trim()) ?? [];
-      if (!["email", "display_name", "age"].every(key => headers.includes(key)) || new Set(headers).size !== headers.length) {
-        throw invalid("Include unique headers for email, display_name and age.");
+      if (!(updatePhotos ? ["email", "auto_reply_photo_url"] : ["email", "display_name", "age"]).every(key => headers.includes(key)) || new Set(headers).size !== headers.length) {
+        throw invalid(updatePhotos ? "Include email and auto_reply_photo_url headers." : "Include unique headers for email, display_name and age.");
       }
       if (rows.length > 1000) throw invalid("Import at most 1000 rows at once.");
       const existing = new Map(deps.auth.listUsers().map(user => [user.email.toLowerCase(), user.id]));
@@ -115,6 +126,20 @@ export function installCustomerImportRoutes(app: Express, deps: {
           const row = Object.fromEntries(headers.map((key, column) => [key, cells[column].trim()]));
           const email = row.email.toLowerCase();
           if (!email) throw invalid("Email is missing.");
+          if (updatePhotos) {
+            if (!row.auto_reply_photo_url) continue;
+            const id = existing.get(email);
+            const user = id ? deps.auth.getUser(id) : undefined;
+            const marker = user?.plusData?.customerImport;
+            if (!user || !marker?.completed) throw invalid("No matching imported account.");
+            const photoUrl = photoLink(row.auto_reply_photo_url);
+            const changed = deps.auth.updatePlus(user.id, { plusData: { ...user.plusData, customerImport: { ...marker, photoUrl } } });
+            if (!changed.ok) throw invalid(changed.error.message);
+            await deps.persist();
+            results.push({ row: rowNumber, status: "updated" });
+            continue;
+          }
+          const photoUrl = photoLink(row.auto_reply_photo_url);
           const input = mapCustomer(row, email);
           if (seenEmails.has(email) || seenIds.has(input.sourceId)) throw invalid("Duplicate email or source ID in the file.");
           seenEmails.add(email);
@@ -130,7 +155,7 @@ export function installCustomerImportRoutes(app: Express, deps: {
             results.push({ row: rowNumber, status: "ready", message: row.source_customer_id ? undefined : "Email will serve as the source ID." });
             continue;
           }
-          const marker = { sourceId: input.sourceId, completed: false, autoReplies: false, city: row.city || undefined, neighbourhood: row.neighbourhood || undefined };
+          const marker = { sourceId: input.sourceId, completed: false, autoReplies: false, city: row.city || undefined, neighbourhood: row.neighbourhood || undefined, photoUrl };
           if (!user) {
             const created = deps.auth.adminCreateUser(email, randomBytes(32).toString("base64url"), row.phone_e164 || null,
               "registered", "free", "user", { createdAtMs: input.createdAtMs, data: {
