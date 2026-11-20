@@ -311,9 +311,8 @@ export function MapView({
           evt.stopPropagation();
           m.onClick?.();
         };
+        // Native button clicks follow a completed tap, while MapLibre handles pans and drags.
         markerButton.addEventListener("click", trigger);
-        markerButton.addEventListener("touchend", trigger, { passive: false });
-        markerButton.addEventListener("pointerup", trigger);
       }
       const marker = new ml.Marker({ 
         element: markerButton,
