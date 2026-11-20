@@ -29,16 +29,18 @@ function parseLocationPayload(text: string): { lat: number; lng: number; link: s
 }
 
 function displayMessageText(text: string): string {
-  return text.trim() === FIRE_SIGNAL_TEXT ? "🔥 I'm into you" : text;
+  const visibleText = text.replace(/^Automatic replies are on for this conversation\.\r?\n\r?\n/, "");
+  return visibleText.trim() === FIRE_SIGNAL_TEXT ? "🔥 I'm into you" : visibleText;
 }
 
 function renderMessageText(text: string): React.ReactNode {
-  const match = /^(?:(Automatic replies are on for this conversation\.)\n\n)?Photo: (https:\/\/\S+)$/.exec(text);
+  const visibleText = displayMessageText(text);
+  const match = /^Photo: (https:\/\/\S+)$/.exec(visibleText);
   if (!match) return displayMessageText(text);
   try {
-    const url = new URL(match[2]);
+    const url = new URL(match[1]);
     if (url.protocol !== "https:" || url.username || url.password) return displayMessageText(text);
-    return <>{match[1] && <p>{match[1]}</p>}Photo: <a href={url.href} target="_blank" rel="noopener noreferrer">{url.hostname}</a></>;
+    return <>Photo: <a href={url.href} target="_blank" rel="noopener noreferrer">{url.hostname}</a></>;
   } catch {
     return displayMessageText(text);
   }

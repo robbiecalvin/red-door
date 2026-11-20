@@ -253,6 +253,7 @@ function isFireSignalText(text: string): boolean {
 }
 
 function displayMessageText(text: string): string {
+  text = text.replace(/^Automatic replies are on for this conversation\.\r?\n\r?\n/, "");
   const trimmed = text.trim();
   if (trimmed.startsWith("LOCATION|")) return "Location Sent";
   if (trimmed.startsWith(GROUP_INVITE_REQUEST_PREFIX)) return "You’ve received a Chat Invite";
