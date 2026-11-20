@@ -28,30 +28,40 @@ test("imported customers can follow up on a plan and stop after twelve incoming 
     };
     const options = { now: () => time, random: () => 0 };
     const initial = createCustomerAutoReplies(auth, chat, await createCommunityRepository(null, storage), options);
-    const delivered: { reply: ChatMessage; markedRead: boolean }[] = [];
-    const flush = (worker: typeof initial) => worker.drain((reply, markedRead) => { delivered.push({ reply, markedRead }); });
+    const delivered: ChatMessage[] = [];
+    const readEvents: number[] = [];
+    const flush = (worker: typeof initial) => worker.drain(reply => { delivered.push(reply); }, () => { readEvents.push(time); });
     expect(imported.value.emailVerified).toBe(false);
     await initial.schedule(incoming("I live in Vancouver"));
     await initial.schedule(incoming("Hello"));
-    time += 19_999;
+    time += 14_999;
     await flush(initial);
+    expect(readEvents).toHaveLength(0);
     expect(delivered).toHaveLength(0);
-    const resumed = createCustomerAutoReplies(auth, chat, await createCommunityRepository(null, storage), options);
     time++;
-    await flush(resumed);
-    expect(delivered[0].reply.text).toMatch(/^(Hey 👋|Hey there|Hi!|Hey, how’s it going\?)$/);
-    expect(delivered[0].markedRead).toBe(true);
+    await flush(initial);
+    expect(readEvents).toEqual([time]);
     const read = chat.listMessages(sender, "cruise", toKey);
     if (!read.ok) throw new Error(read.error.message);
     expect(read.value.find(message => message.text === "Hello")?.readAtMs).toBe(time);
+    expect(delivered).toHaveLength(0);
+    const resumed = createCustomerAutoReplies(auth, chat, await createCommunityRepository(null, storage), options);
+    time += 4_999;
+    await flush(resumed);
+    expect(delivered).toHaveLength(0);
+    time++;
+    await flush(resumed);
+    expect(delivered[0].text).toMatch(/^(Hey 👋|Hey there|Hi!|Hey, how’s it going\?)$/);
     for (const question of ["Horny?", "Sup?", "Got pics?", "Location?", "Want to grab a coffee?", "Sounds good", "Pics?", "Are you free tonight?", "The weather is cold", "Thanks", "Hey"]) {
       await resumed.schedule(incoming(question));
     }
-    time += 20_000;
+    time += 15_000;
+    await flush(resumed);
+    time += 5_000;
     await flush(resumed);
     expect(delivered).toHaveLength(9);
-    expect(delivered[3].reply.text).toBe("Photo: https://example.com/profile.jpg");
-    expect(delivered[6].reply.text).toMatch(/like to do|neighbourhood or a time/);
+    expect(delivered[3].text).toBe("Photo: https://example.com/profile.jpg");
+    expect(delivered[6].text).toMatch(/like to do|neighbourhood or a time/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

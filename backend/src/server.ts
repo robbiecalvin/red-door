@@ -2121,10 +2121,10 @@ async function main(): Promise<void> {
   });
 
   const autoReplyTimer = setInterval(() => {
-    void customerAutoReply.drain((reply, markedRead) => {
-      safeBroadcast(gateway.broadcast, "chat_message", { message: reply });
-      if (markedRead) safeBroadcast(gateway.broadcast, "chat_read", { actorKey: reply.fromKey, otherKey: reply.toKey, chatKind: reply.chatKind });
-    }).catch(() => console.error("[Badehaus X] Could not deliver queued automatic chat replies."));
+    void customerAutoReply.drain(
+      reply => safeBroadcast(gateway.broadcast, "chat_message", { message: reply }),
+      (actorKey, otherKey) => safeBroadcast(gateway.broadcast, "chat_read", { actorKey, otherKey, chatKind: "cruise" }),
+    ).catch(() => console.error("[Badehaus X] Could not deliver queued automatic chat replies."));
   }, 2_000);
   autoReplyTimer.unref();
 

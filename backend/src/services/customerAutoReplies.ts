@@ -84,6 +84,7 @@ function answer(intent: ReplyIntent, user: StoredUser, question: string): string
 
 type PendingReply = {
   key: string; fromKey: string; recipientId: string; intent: ReplyIntent; question: string; dueAt: number; expiresAt: number;
+  readGapMs?: number; readAtMs?: number; sequence?: number;
 };
 const queueKey = "customerAutoReplyQueue";
 
@@ -139,37 +140,63 @@ export function createCustomerAutoReplies(
       if (!enqueue || !intent) return;
       const time = now();
       const previousDue = pending.filter(job => job.key === key).reduce((latest, job) => Math.max(latest, job.dueAt), 0);
-      const dueAt = Math.max(previousDue, time + 20_000 + Math.floor(random() * 3_575_000));
-      pending.push({ key, fromKey: message.fromKey, recipientId: recipient.id, intent, question, dueAt, expiresAt: time + 3_600_000 });
+      const dueAt = Math.max(previousDue, time + 20_000 + Math.floor(random() * 3_560_000));
+      pending.push({ key, fromKey: message.fromKey, recipientId: recipient.id, intent, question, dueAt, expiresAt: time + 3_600_000,
+        readGapMs: 5_000 + Math.floor(random() * 10_001), sequence: window.received + 1 });
     });
   }
 
-  async function drain(deliver: (reply: ChatMessage, markedRead: boolean) => void) {
+  function nextActionAt(job: PendingReply): number {
+    const gap = job.readGapMs ?? 5_000;
+    return job.readAtMs === undefined ? job.dueAt - gap : Math.max(job.dueAt, job.readAtMs + gap);
+  }
+
+  async function drain(deliver: (reply: ChatMessage) => void, notifyRead: (actorKey: string, otherKey: string) => void) {
     if (draining) return;
     draining = true;
     try {
       const time = now();
       const waiting = await repository.readSetting<PendingReply[]>(queueKey);
-      if (!waiting?.some(job => job.dueAt <= time)) return;
+      if (!waiting?.some(job => nextActionAt(job) <= time || job.expiresAt < time)) return;
       const due = await repository.update(state => {
         const pending = (state.settings[queueKey] ?? []) as PendingReply[];
-        state.settings[queueKey] = pending.filter(job => job.dueAt > time);
-        return pending.filter(job => job.dueAt <= time).sort((a, b) => a.dueAt - b.dueAt);
+        const blockedBy = new Map<string, number>();
+        for (const job of pending) {
+          if (job.expiresAt < time || (job.readAtMs !== undefined && nextActionAt(job) <= time)) continue;
+          blockedBy.set(job.key, Math.min(blockedBy.get(job.key) ?? Infinity, job.sequence ?? 0));
+        }
+        const ready = new Set(pending.filter(job => job.expiresAt < time || (nextActionAt(job) <= time &&
+          (job.readAtMs === undefined || (job.sequence ?? 0) <= (blockedBy.get(job.key) ?? Infinity)))));
+        state.settings[queueKey] = pending.filter(job => !ready.has(job));
+        return [...ready].sort((a, b) => a.dueAt - b.dueAt || (a.sequence ?? 0) - (b.sequence ?? 0));
       });
       for (const job of due) {
         const recipient = auth.getUser(job.recipientId);
         const sender = auth.getUser(job.fromKey.slice(5));
         const progress = await repository.readSetting<Record<string, ReplyProgress>>("customerAutoReplyWindow");
-        const reply = time <= job.expiresAt && recipient && !recipient.bannedAtMs && sender?.emailVerified && !sender.bannedAtMs &&
+        const reply = now() <= job.expiresAt && recipient && !recipient.bannedAtMs && sender?.emailVerified && !sender.bannedAtMs &&
           !progress?.[job.key]?.stopped && recipient.plusData?.customerImport?.autoReplies
           ? answer(job.intent, recipient, job.question) : undefined;
         if (reply && recipient) {
           const session = recipientSession(recipient);
-          const sent = chat.sendMessage(session, { chatKind: "cruise", toKey: job.fromKey, text: reply });
-          if (sent.ok) {
-            const read = chat.markRead(session, "cruise", job.fromKey);
-            deliver(sent.value, read.ok);
-            continue;
+          if (job.readAtMs === undefined) {
+            const readAtMs = now();
+            if (readAtMs + (job.readGapMs ?? 5_000) <= job.expiresAt &&
+                chat.markRead(session, "cruise", job.fromKey).ok) {
+              await repository.update(state => {
+                const byThread = state.settings.customerAutoReplyWindow as Record<string, ReplyProgress>;
+                if (byThread[job.key]?.stopped) return;
+                (state.settings[queueKey] as PendingReply[]).push({ ...job, readAtMs });
+              });
+              notifyRead(`user:${recipient.id}`, job.fromKey);
+              continue;
+            }
+          } else {
+            const sent = chat.sendMessage(session, { chatKind: "cruise", toKey: job.fromKey, text: reply });
+            if (sent.ok) {
+              deliver(sent.value);
+              continue;
+            }
           }
         }
         if (job.intent === "photo") await repository.update(state => {
