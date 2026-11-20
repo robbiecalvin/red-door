@@ -6,7 +6,7 @@ import { createAuthService } from "../backend/src/services/authService";
 import { createChatService, type ChatMessage } from "../backend/src/services/chatService";
 import { createCustomerAutoReplies } from "../backend/src/services/customerAutoReplies";
 
-test("imported customers use reply pools only for the first five incoming messages", async () => {
+test("imported customers can follow up on a plan and stop after twelve incoming messages", async () => {
   const dir = await mkdtemp(join(tmpdir(), "customer-auto-replies-"));
   try {
     const storage = join(dir, "community.json");
@@ -29,9 +29,16 @@ test("imported customers use reply pools only for the first five incoming messag
     expect((await initial(incoming("Hello")))?.text).toMatch(/^(Hey 👋|Hey there|Hi!|Hey, how’s it going\?)$/);
     const resumed = createCustomerAutoReplies(auth, chat, await createCommunityRepository(null, storage));
     expect((await resumed(incoming("Horny?")))?.text).toMatch(/^(Yeah|Yep|I am|Yeah, you\?)$/);
-    expect((await resumed(incoming("Sup?")))?.text).toMatch(/^(NM, you\?|Not much, you\?|Just chilling\. You\?|Nothing much\. How about you\?)$/);
+    expect((await resumed(incoming("Sup?")))?.text).toMatch(/NM|Not much|Just chilling/);
     expect((await resumed(incoming("Got pics?")))?.text).toBe("Photo: https://example.com/profile.jpg");
-    expect(await resumed(incoming("Location?"))).toBeUndefined();
+    expect((await resumed(incoming("Location?")))?.text).toBe("West End, Vancouver. What area are you in?");
+    expect((await resumed(incoming("Want to grab a coffee?")))?.text).toMatch(/first meet|meetup/);
+    expect((await resumed(incoming("Sounds good")))?.text).toMatch(/like to do|neighbourhood or a time/);
+    expect(await resumed(incoming("Pics?"))).toBeUndefined();
+    expect((await resumed(incoming("Are you free tonight?")))?.text).toMatch(/time|day/);
+    expect(await resumed(incoming("The weather is cold"))).toBeUndefined();
+    expect((await resumed(incoming("Thanks")))?.text).toMatch(/course|welcome/);
+    expect(await resumed(incoming("Hey"))).toBeUndefined();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
