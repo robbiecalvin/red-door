@@ -237,6 +237,12 @@ function validateStats(v: unknown): Result<ProfileStats> {
   });
 }
 
+export function validateAdminProfile(update: ProfileUpdate): string | undefined {
+  for (const result of [validateDisplayName(update.displayName), validateAge(update.age), validateBio(update.bio), validateStats(update.stats)]) {
+    if (!result.ok) return result.error.message;
+  }
+}
+
 export function createProfileService(deps: ProfileServiceDeps): Readonly<{
   getMe(session: SessionLike): Promise<Result<Profile>>;
   upsertMe(session: SessionLike, update: ProfileUpdate): Promise<Result<Profile>>;

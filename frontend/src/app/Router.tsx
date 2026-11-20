@@ -1,3 +1,4 @@
+import { CustomerImport } from "./CustomerImport";
 import { PrivateAlbumsSettings, RequestPrivateAlbum } from "./PrivateAlbums";
 import { GrowthDashboard, MarketingPreferences } from "./GrowthPanels";
 import { MembershipPrograms } from "./MembershipPrograms";
@@ -6644,6 +6645,7 @@ function SettingsPanel({
             </div>
 
             <div style={{ display: "grid", gap: 6 }}>
+              <CustomerImport api={api} session={session} />
               <div style={{ fontSize: 15, fontWeight: 700 }}>CREATE USER & PROFILE</div>
               <div style={{ display: "grid", gap: 8 }}>
                 <label style={{ display: "grid", gap: 4 }}>

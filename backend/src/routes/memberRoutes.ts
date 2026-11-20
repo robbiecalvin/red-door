@@ -24,6 +24,20 @@ export function installMemberRoutes(app:Express,deps:{
   const cleanup=setInterval(()=>void purgeProofs().catch(()=>{}),3600000);cleanup.unref();void purgeProofs().catch(()=>{});
   app.get("/members/me",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;let v=a.user.plusData?.photoVerification;const profile=await profiles.getByUserId(a.user.id);if(v?.status==="approved" && v.mainPhotoMediaId!==profile?.mainPhotoMediaId)v={...v,status:"outdated",reason:"Your main photo changed. Request a fresh review for the new photo."};res.json({preferences:currentMember(auth.getUser(a.user.id)?.plusData?.member),verification:v ?? null,plus:hasPlus(a.session)});}));
   app.put("/members/me",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;const preferences=updateMember(a.user.plusData?.member,req.body,a.session);await save(a.user.id,{member:preferences});if(preferences.hideLocation || preferences.incognito || preferences.hideProfile)deps.privacyChanged?.(`user:${a.user.id}`,Boolean(preferences.incognito || preferences.hideProfile));res.json({preferences,plus:hasPlus(a.session),verification:auth.getUser(a.user.id)?.plusData?.photoVerification ?? null});}));
+  app.get("/members/automatic-replies", wrap(async (req, res) => {
+    const actor = member(req, res);
+    if (!actor) return;
+    const setting = actor.user.plusData?.customerImport;
+    res.json({ available: setting?.completed === true, enabled: setting?.autoReplies === true });
+  }));
+  app.delete("/members/automatic-replies", wrap(async (req, res) => {
+    const actor = member(req, res);
+    if (!actor) return;
+    const setting = actor.user.plusData?.customerImport;
+    if (!setting?.completed) throw new MemberError("NOT_FOUND", "Automatic replies are unavailable.", 404);
+    await save(actor.user.id, { customerImport: { ...setting, autoReplies: false } });
+    res.json({ enabled: false });
+  }));
   app.post("/members/verification/challenge",wrap(async(req,res)=>{
     const a=member(req,res);if(!a)return;const p=await profiles.getByUserId(a.user.id);if(!p?.mainPhotoMediaId)throw new MemberError("PHOTO_REQUIRED","Add a main profile photo before requesting verification.");
     const previous=a.user.plusData?.photoVerification;if(previous?.status==="pending")throw new MemberError("PENDING_REVIEW","Your photo is awaiting review. Withdraw it before making a new request.",409);
