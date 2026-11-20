@@ -1,4 +1,4 @@
-import { customerScheduleWindow, isCustomerScheduledOnline } from "./services/customerSchedule";
+import { customerScheduledLocation, customerScheduleWindow, isCustomerScheduledOnline } from "./services/customerSchedule";
 import { installCustomerImportRoutes } from "./routes/customerImportRoutes";
 import { createCustomerAutoReplies } from "./services/customerAutoReplies";
 import { installBackroomRoutes } from "./routes/backroomRoutes";
@@ -532,7 +532,9 @@ async function main(): Promise<void> {
     if (!key.startsWith("user:")) return false;
     const userId = key.slice(5);
     const user = authService.getUser(userId);
-    return Boolean(user && (user.bannedAtMs || hidesPresence(user.plusData?.member, user) || !visibleOnSchedule(userId)));
+    const windows = user?.plusData?.customerImport?.scheduledLocations;
+    return Boolean(user && (user.bannedAtMs || hidesPresence(user.plusData?.member, user) ||
+      !visibleOnSchedule(userId) || (windows?.length && !customerScheduledLocation(windows))));
   };
   const matchingService = createMatchingService({
     blockChecker: {
@@ -2210,20 +2212,19 @@ async function main(): Promise<void> {
     
     // Get users with travel mode enabled
     const allProfiles = await profileRepo.listAll();
-    const travelModeUsers = allProfiles.filter((profile) => {
-      return profile.travelMode?.enabled === true && 
-             profile.travelMode.lat !== undefined && 
-             profile.travelMode.lng !== undefined &&
-             !banned.has(profile.userId) && !hiddenPresence(`user:${profile.userId}`) && !blockService.isBlocked(viewerKey,`user:${profile.userId}`);
-    }).map((profile) => ({
-      key: `user:${profile.userId}`,
-      userType: "registered" as const,
-      userId: profile.userId,
-      lat: profile.travelMode!.lat!,
-      lng: profile.travelMode!.lng!,
-      status: "Travel mode",
-      updatedAtMs: profile.updatedAtMs
-    }));
+    const travelModeUsers = allProfiles.flatMap(profile => {
+      const key = `user:${profile.userId}`;
+      if (banned.has(profile.userId) || hiddenPresence(key) || blockService.isBlocked(viewerKey, key)) return [];
+      const schedule = authService.getUser(profile.userId)?.plusData?.customerImport?.scheduledLocations;
+      const scheduled = customerScheduledLocation(schedule);
+      const point = schedule?.length ? scheduled : profile.travelMode?.enabled ? profile.travelMode : undefined;
+      if (!point || point.lat === undefined || point.lng === undefined) return [];
+      return [{
+        key, userType: "registered" as const, userId: profile.userId, lat: point.lat, lng: point.lng,
+        status: scheduled ? `Around ${scheduled.area}` : "Travel mode",
+        updatedAtMs: scheduled ? Date.now() : profile.updatedAtMs,
+      }];
+    });
     
     // Combine and deduplicate (active presence takes precedence)
     const presenceMap = new Map<string, typeof activePresence[0]>();

@@ -2,7 +2,7 @@ import type { CommunityRepository } from "../repositories/communityRepository";
 import type { AuthService, StoredUser } from "./authService";
 import type { ChatMessage, ChatService } from "./chatService";
 import { hidesPresence } from "./memberService";
-import { customerScheduleWindow } from "./customerSchedule";
+import { customerScheduledLocation, customerScheduleWindow } from "./customerSchedule";
 
 const intents = {
   rightNow: /^(?:right now|r u free rn|can you meet right now|meet right now)[.!? ]*$/i,
@@ -73,7 +73,9 @@ function answer(intent: ReplyIntent, user: StoredUser, question: string): string
     }
     case "location": {
       if (hidesPresence(user.plusData?.member, user)) return;
-      const location = [record?.neighbourhood, record?.city].filter(Boolean).join(", ");
+      const scheduled = customerScheduledLocation(record?.scheduledLocations);
+      if (record?.scheduledLocations?.length && (!scheduled || !customerScheduleWindow(user.id, record.onlineMinutesPerDay ?? 0, Date.now()))) return;
+      const location = scheduled?.area ?? [record?.neighbourhood, record?.city].filter(Boolean).join(", ");
       return location ? `${location}. What area are you in?` : undefined;
     }
     case "photo": return record?.photoUrl ? `Photo: ${record.photoUrl}` : undefined;
