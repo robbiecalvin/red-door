@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Express, Request, Response } from "express";
-import type { AuthService, Session } from "../services/authService";
-import { createProfileService, validateAdminProfile, type ProfileUpdate } from "../services/profileService";
+import type { AuthService, Session, StoredUser } from "../services/authService";
+import { createProfileService, validateAdminProfile, type Profile, type ProfileUpdate } from "../services/profileService";
 import { MemberError, updateMember } from "../services/memberService";
 import { DEFAULT_MEMBER } from "../../../shared/member";
 
@@ -49,22 +49,25 @@ function photoLink(value?: string): string | undefined {
   return url.href;
 }
 
-function mapCustomer(row: Record<string, string>, email: string) {
+function mapCustomer(row: Record<string, string>, email: string, existing?: { profile: Profile; user: StoredUser }) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Invalid email address.");
   if (row.phone_e164 && !/^\+[1-9]\d{7,14}$/.test(row.phone_e164)) throw invalid("Phone number must use E.164 format.");
   if (unsupported.some(key => hasRecords(row[key]))) throw invalid("Media, billing and history require a separate import.");
   if (row.account_status && row.account_status.toLowerCase() !== "active") throw invalid("Only active accounts can be imported.");
   if (row.source_plan_name && row.source_plan_name.toLowerCase() !== "free") throw invalid("Only free accounts can be imported.");
 
-  const stats: Record<string, string | number> = {};
+  const stats: Record<string, unknown> = { ...existing?.profile.stats };
   for (const [column, key] of Object.entries(profileFields)) if (row[column]) stats[key] = row[column];
   for (const [column, key] of Object.entries(numberFields)) if (row[column]) stats[key] = Number(row[column]);
-  const hideProfile = flag(row.hide_profile, true);
-  const hideLocation = flag(row.hide_location, true);
-  const incognito = flag(row.incognito, false);
+  const preferences = existing?.user.plusData?.member;
+  const hideProfile = flag(row.hide_profile, preferences?.hideProfile ?? true);
+  const hideLocation = flag(row.hide_location, preferences?.hideLocation ?? true);
+  const incognito = flag(row.incognito, preferences?.incognito ?? false);
   let profile: ProfileUpdate = {
-    displayName: row.display_name, age: row.age ? Number(row.age) : undefined,
-    bio: row.bio ?? "", stats, discreetMode: flag(row.discreet_mode, false),
+    displayName: row.display_name || existing?.profile.displayName,
+    age: row.age ? Number(row.age) : existing?.profile.age,
+    bio: row.bio || existing?.profile.bio || "", stats,
+    discreetMode: flag(row.discreet_mode, existing?.profile.discreetMode ?? false),
   };
   const lat = Number(row.approx_latitude), lng = Number(row.approx_longitude);
   if (row.approx_latitude || row.approx_longitude) {
@@ -77,13 +80,16 @@ function mapCustomer(row: Record<string, string>, email: string) {
   }
   const issue = validateAdminProfile(profile);
   if (issue) throw invalid(issue);
-  const prompts: unknown = JSON.parse(row.profile_prompts_json || "[]");
+  const prompts: unknown = row.profile_prompts_json ? JSON.parse(row.profile_prompts_json) : preferences?.prompts ?? [];
   const rawLinks: unknown = JSON.parse(row.profile_links_json || "[]");
   if (!Array.isArray(rawLinks)) throw invalid("Profile links must be a JSON array.");
-  const links = Object.fromEntries(rawLinks.map(link => [link.platform, { url: link.url, visible: link.visible }]));
-  const member = updateMember(undefined, {
+  const links = {
+    ...Object.fromEntries(Object.keys(row.profile_links_json ? preferences?.profileLinks ?? {} : {}).map(key => [key, null])),
+    ...Object.fromEntries(rawLinks.map(link => [link.platform, { url: link.url, visible: link.visible }])),
+  };
+  const member = updateMember(preferences, {
     hideProfile, hideLocation, incognito, profileLinks: links,
-    interests: (row.interests || "").split(";").map(item => item.trim()).filter(Boolean), prompts,
+    interests: row.interests ? (row.interests === "[]" ? [] : row.interests.split(";").map(item => item.trim()).filter(Boolean)) : preferences?.interests ?? [], prompts,
   }, { tier: "free", userType: "registered" });
   const createdAtMs = row.account_created_at ? Date.parse(row.account_created_at) : undefined;
   if (createdAtMs !== undefined && !Number.isFinite(createdAtMs)) throw invalid("Invalid account creation date.");
@@ -102,8 +108,9 @@ export function installCustomerImportRoutes(app: Express, deps: {
     res.setHeader("Cache-Control", "no-store");
     if (!deps.admin(req, res)) return;
     const updatePhotos = req.params.action === "photos";
-    const apply = req.params.action === "apply" || updatePhotos;
-    if (!apply && req.params.action !== "preview") return res.sendStatus(404);
+    const update = req.params.action === "update" || req.params.action === "update-preview";
+    const apply = req.params.action === "apply" || req.params.action === "update" || updatePhotos;
+    if (!apply && !update && req.params.action !== "preview") return res.sendStatus(404);
     if (typeof req.body?.csv !== "string") return res.status(400).json({ message: "Choose a CSV file." });
     if (apply && importing) return res.status(409).json({ message: "Another import is running." });
     if (apply) importing = true;
@@ -111,12 +118,23 @@ export function installCustomerImportRoutes(app: Express, deps: {
     try {
       const [rawHeaders, ...rows] = readCsv(req.body.csv);
       const headers = rawHeaders?.map(header => header.trim()) ?? [];
-      if (!(updatePhotos ? ["email", "auto_reply_photo_url"] : ["email", "display_name", "age"]).every(key => headers.includes(key)) || new Set(headers).size !== headers.length) {
-        throw invalid(updatePhotos ? "Include email and auto_reply_photo_url headers." : "Include unique headers for email, display_name and age.");
+      const required = updatePhotos ? ["email", "auto_reply_photo_url"] : update ? [] : ["email", "display_name", "age"];
+      if (!required.every(key => headers.includes(key)) || new Set(headers).size !== headers.length ||
+          (update && !headers.some(key => key === "email" || key === "source_customer_id"))) {
+        throw invalid(update ? "Include an email or source_customer_id column and use unique headers." :
+          updatePhotos ? "Include email and auto_reply_photo_url headers." : "Include unique headers for email, display_name and age.");
       }
       if (rows.length > 1000) throw invalid("Import at most 1000 rows at once.");
       const existing = new Map(deps.auth.listUsers().map(user => [user.email.toLowerCase(), user.id]));
-      const seenEmails = new Set<string>(), seenIds = new Set<string>();
+      const bySource = new Map<string, Set<string>>();
+      if (update) for (const id of existing.values()) {
+        const imported = deps.auth.getUser(id)?.plusData?.customerImport;
+        if (!imported?.completed) continue;
+        const ids = bySource.get(imported.sourceId) ?? new Set();
+        ids.add(id);
+        bySource.set(imported.sourceId, ids);
+      }
+      const seenEmails = new Set<string>(), seenIds = new Set<string>(), updatedIds = new Set<string>();
       const results = [];
       for (const [index, cells] of rows.entries()) {
         const rowNumber = index + 2;
@@ -124,7 +142,49 @@ export function installCustomerImportRoutes(app: Express, deps: {
         try {
           if (cells.length !== headers.length) throw invalid("The row does not match the header width.");
           const row = Object.fromEntries(headers.map((key, column) => [key, cells[column].trim()]));
-          const email = row.email.toLowerCase();
+          const email = (row.email ?? "").toLowerCase();
+          if (update) {
+            const source = row.source_customer_id;
+            if (!source && !email) throw invalid("Email or source customer ID is missing.");
+            const sourceMatches = source ? bySource.get(source) : undefined;
+            const emailId = email ? existing.get(email) : undefined;
+            if (sourceMatches && sourceMatches.size > 1) throw invalid("Source customer ID is ambiguous.");
+            const id = source ? sourceMatches?.values().next().value : emailId;
+            if (source && email && id !== emailId) throw invalid("Email and source ID do not match the same account.");
+            const user = id ? deps.auth.getUser(id) : undefined;
+            const marker = user?.plusData?.customerImport;
+            if (!user || !marker?.completed) {
+              results.push({ row: rowNumber, status: "skipped", message: "No matching imported account." });
+              continue;
+            }
+            if (updatedIds.has(user.id)) throw invalid("This account appears more than once in the file.");
+            const previous = await deps.profiles.adminGetProfile(user.id);
+            if (!previous.ok) throw invalid(previous.error.message);
+            const input = mapCustomer(row, user.email, { profile: previous.value, user });
+            const photoUrl = photoLink(row.auto_reply_photo_url);
+            updatedIds.add(user.id);
+            if (!apply) {
+              results.push({ row: rowNumber, status: "ready" });
+              continue;
+            }
+            const written = await deps.profiles.adminUpsertProfile(user.id, input.profile);
+            if (!written.ok) throw invalid(written.error.message);
+            const current = deps.auth.getUser(user.id);
+            if (!current?.plusData?.customerImport) throw new Error("Import account missing.");
+            const member = mapCustomer(row, user.email, { profile: previous.value, user: current }).member;
+            const changed = deps.auth.updatePlus(user.id, {
+              ...(row.phone_e164 ? { phoneE164: row.phone_e164 } : {}),
+              plusData: { ...current.plusData, member, customerImport: {
+                ...current.plusData.customerImport, city: row.city || current.plusData.customerImport.city,
+                neighbourhood: row.neighbourhood || current.plusData.customerImport.neighbourhood,
+                photoUrl: photoUrl ?? current.plusData.customerImport.photoUrl,
+              } },
+            });
+            if (!changed.ok) throw invalid(changed.error.message);
+            await deps.persist();
+            results.push({ row: rowNumber, status: "updated" });
+            continue;
+          }
           if (!email) throw invalid("Email is missing.");
           if (updatePhotos) {
             if (!row.auto_reply_photo_url) continue;
