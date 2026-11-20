@@ -97,7 +97,7 @@ function recipientSession(recipient: StoredUser) {
 
 export function createCustomerAutoReplies(
   auth: AuthService, chat: ChatService, repository: CommunityRepository,
-  { now = Date.now, random = Math.random }: { now?: () => number; random?: () => number } = {},
+  { now = Date.now, random = Math.random, visibleOnSchedule = () => true }: { now?: () => number; random?: () => number; visibleOnSchedule?: (userId: string) => boolean } = {},
 ) {
   let draining = false;
   async function schedule(message: ChatMessage): Promise<void> {
@@ -133,7 +133,8 @@ export function createCustomerAutoReplies(
       const intent: ReplyIntent | undefined = configured ??
         (briefAgreement.test(question) && (previous === "plans" || previous === "availability") ? "followUp" : undefined);
       const sendPhoto = intent === "photo" && !window.photoSent && Boolean(recipient.plusData?.customerImport?.photoUrl);
-      const enqueue = intent && (intent !== "photo" || sendPhoto) && answer(intent, recipient, question);
+      const enqueue = intent && (intent !== "photo" || sendPhoto) &&
+        (intent !== "rightNow" || visibleOnSchedule(recipient.id)) && answer(intent, recipient, question);
       progress[key] = { ...window, received: window.received + 1, messageIds: [...window.messageIds, message.messageId],
         photoSent: window.photoSent || sendPhoto, lastIntent: enqueue ? intent : previous,
       };
@@ -175,7 +176,8 @@ export function createCustomerAutoReplies(
         const sender = auth.getUser(job.fromKey.slice(5));
         const progress = await repository.readSetting<Record<string, ReplyProgress>>("customerAutoReplyWindow");
         const reply = now() <= job.expiresAt && recipient && !recipient.bannedAtMs && sender?.emailVerified && !sender.bannedAtMs &&
-          !progress?.[job.key]?.stopped && recipient.plusData?.customerImport?.autoReplies
+          !progress?.[job.key]?.stopped && recipient.plusData?.customerImport?.autoReplies &&
+          (job.intent !== "rightNow" || visibleOnSchedule(recipient.id))
           ? answer(job.intent, recipient, job.question) : undefined;
         if (reply && recipient) {
           const session = recipientSession(recipient);

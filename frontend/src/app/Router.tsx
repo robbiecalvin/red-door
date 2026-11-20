@@ -468,6 +468,8 @@ function CruiseSurface({
   const [profilesLoading, setProfilesLoading] = useState(true);
   const [publicProfiles, setPublicProfiles] = useState<ReadonlyArray<{
     userId: string;
+    scheduledOnline?: boolean;
+    recentlyActive?: boolean;
     displayName: string;
     member?: PublicMember;
     age: number;
@@ -609,6 +611,8 @@ function CruiseSurface({
     () => new Set(visiblePublicProfiles.map((profile) => chatKeyFromProfileUserId(profile.userId))),
     [visiblePublicProfiles]
   );
+  const discoveryOnlineKeys = useMemo(() => new Set(visiblePublicProfiles
+    .filter(profile => profile.scheduledOnline !== false).map(profile => chatKeyFromProfileUserId(profile.userId))), [visiblePublicProfiles]);
   const mergedPresence = useMemo(() => {
     const byKey = new Map<string, CruisePresenceUpdate>();
     for (const p of snapshotPresence) byKey.set(p.key, p);
@@ -623,10 +627,10 @@ function CruiseSurface({
       mergedPresence.filter((p) => {
         if (p.key === meKey) return false;
         if (blockedKeys.has(p.key)) return false;
-        if (p.key.startsWith("user:")) return visibleProfileKeys.has(p.key);
+        if (p.key.startsWith("user:")) return discoveryOnlineKeys.has(p.key);
         return true;
       }),
-    [blockedKeys, meKey, mergedPresence, visibleProfileKeys]
+    [blockedKeys, meKey, mergedPresence, discoveryOnlineKeys]
   );
   const sortedPeers = useMemo(() => {
     if (!selfCoords) return onlinePeers;
@@ -1121,12 +1125,12 @@ function CruiseSurface({
       if (row.key === meKey) return true;
       if (filteredPeopleKeys && !filteredPeopleKeys.has(row.key)) return false;
       if (blockedKeys.has(row.key)) return false;
-      if (row.key.startsWith("user:")) return visibleProfileKeys.has(row.key);
+      if (row.key.startsWith("user:")) return discoveryOnlineKeys.has(row.key);
       return true;
     });
     const filteredPresence = mapVisibility.people ? peoplePresence : peoplePresence.filter((row) => row.key === meKey);
     return filteredPresence;
-  }, [filteredPeopleKeys, blockedKeys, mapVisibility.people, meKey, mergedPresence, selfCoords, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter, visibleProfileKeys]);
+  }, [filteredPeopleKeys, blockedKeys, mapVisibility.people, meKey, mergedPresence, selfCoords, session.userType, settings.defaultCenterLat, settings.defaultCenterLng, travelCenter, discoveryOnlineKeys]);
 
   const avatarUrlByKey = useMemo(() => {
     const next: Record<string, string> = {};
@@ -1270,7 +1274,8 @@ function CruiseSurface({
         const stats = profile?.stats;
         const isSelf = selectedProfileKey === meKey;
         const unreadCount = unreadByProfileKey[selectedProfileKey] ?? 0;
-        const isOnline = isSelf || onlinePeers.some(peer => peer.key === selectedProfileKey);
+        const scheduled = visiblePublicProfiles.find(profile => chatKeyFromProfileUserId(profile.userId) === selectedProfileKey);
+        const isOnline = isSelf || (scheduled?.scheduledOnline ?? onlinePeers.some(peer => peer.key === selectedProfileKey));
         const displayName = displayNameForIdentity(selectedProfileKey, profile?.displayName ?? peerProfileByKey[selectedProfileKey]?.displayName);
         const mediaIds = Array.from(new Set([
           profile?.mainPhotoMediaId, ...(profile?.galleryMediaIds ?? []), profile?.videoMediaId
@@ -1298,7 +1303,7 @@ function CruiseSurface({
         return (
           <Sheet title={displayName} onClose={close} className="rd-member-profile">
             <div className="rd-member-profile-status">
-              <span className={isOnline ? "is-online" : ""}>{isOnline ? "Online now" : "Offline"}</span>
+              <span className={isOnline ? "is-online" : ""}>{isOnline ? "Online now" : scheduled?.recentlyActive ? "Recently active" : "Offline"}</span>
               <RightNowBadge expiresAtMs={rightNowExpiresAtMs} />
               {selectedProfileDistanceLabel ? <span>{selectedProfileDistanceLabel}</span> : null}
             </div>
@@ -1506,6 +1511,7 @@ function CruiseChat({
   publicProfiles: ReadonlyArray<{
     userId: string;
     scheduledOnline?: boolean;
+    recentlyActive?: boolean;
     displayName: string;
     member?: PublicMember;
     foundingMember?: boolean;
@@ -1626,7 +1632,8 @@ function CruiseChat({
             member: p.member,
             foundingMember: p.foundingMember,
             meters: online && selfCoords ? Math.round(distanceMeters(selfCoords, { lat: online.lat, lng: online.lng })) : null,
-            isOnline: Boolean(online || p.scheduledOnline),
+            isOnline: p.scheduledOnline ?? Boolean(online),
+            recentlyActive: p.recentlyActive,
             hasPicture: typeof p.mainPhotoMediaId === "string" && p.mainPhotoMediaId.trim().length > 0,
             mainPhotoMediaId: p.mainPhotoMediaId,
             avatarUrl: p.mainPhotoMediaId ? mediaUrlById[p.mainPhotoMediaId] : undefined
@@ -2520,7 +2527,7 @@ function CruiseChat({
                     />
                     {p.isOnline ? <span className="rd-person-online-dot" aria-hidden="true" /> : null}
                   </div>
-                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong>{liveKeys.has(p.key) ? <span className="rd-live-badge">Live now</span> : null}{p.foundingMember ? <span className="rd-live-badge">Founding Member</span> : null}<RightNowBadge expiresAtMs={p.member?.rightNowExpiresAtMs} /><IntentBadge member={p.member}/><VerifiedBadge verified={p.member?.photoVerified}/><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
+                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong>{liveKeys.has(p.key) && !p.recentlyActive ? <span className="rd-live-badge">Live now</span> : null}{p.foundingMember ? <span className="rd-live-badge">Founding Member</span> : null}<RightNowBadge expiresAtMs={p.member?.rightNowExpiresAtMs} /><IntentBadge member={p.member}/><VerifiedBadge verified={p.member?.photoVerified}/><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : p.recentlyActive ? "Recently active" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
                 </button>
               ))
             )}
