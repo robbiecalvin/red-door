@@ -1,3 +1,4 @@
+import { customerScheduleWindow, isCustomerScheduledOnline } from "./services/customerSchedule";
 import { installCustomerImportRoutes } from "./routes/customerImportRoutes";
 import { createCustomerAutoReplies } from "./services/customerAutoReplies";
 import { installBackroomRoutes } from "./routes/backroomRoutes";
@@ -514,8 +515,25 @@ async function main(): Promise<void> {
   const blockService=createBlockService({initialBlocks:initialSafety.blocks,onStateChanged:blocks=>{safetyPersistence=communityRepository.update(s=>{s.blocks=blocks;}).then(()=>{safetyPersistenceError=null;}).catch(e=>{safetyPersistenceError=e;});}});
   const reportService=createReportService({initialReports:initialSafety.reports,onStateChanged:reports=>{safetyPersistence=communityRepository.update(s=>{s.reports=reports;}).then(()=>{safetyPersistenceError=null;}).catch(e=>{safetyPersistenceError=e;});}});
   const pushService = await createPushService(communityRepository, authService, process.env.PUBLIC_APP_URL ?? "");
-  const enrichProfile = <T extends {userId:string;mainPhotoMediaId?:string}>(profile:T, includeProfileLinks = false) => {const user=authService.getUser(profile.userId);return {...profile,foundingMember:user?.plusData?.founderAtMs !== undefined,member:publicMember(user?.plusData?.member,user?.plusData?.photoVerification,profile.mainPhotoMediaId,Date.now(),includeProfileLinks)};};
-  const hiddenPresence = (key:string) => {if(!key.startsWith("user:"))return false;const user=authService.getUser(key.slice(5));return Boolean(user && (user.bannedAtMs || hidesPresence(user.plusData?.member,user)));};
+  const visibleOnSchedule = (userId: string) =>
+    isCustomerScheduledOnline(userId, authService.getUser(userId)?.plusData?.customerImport?.onlineMinutesPerDay);
+  const enrichProfile = <T extends { userId: string; mainPhotoMediaId?: string }>(profile: T, includeProfileLinks = false) => {
+    const user = authService.getUser(profile.userId);
+    const settings = user?.plusData?.customerImport;
+    const now = Date.now();
+    const member = publicMember(user?.plusData?.member, user?.plusData?.photoVerification, profile.mainPhotoMediaId, now, includeProfileLinks);
+    const window = settings?.onlineMinutesPerDay !== undefined
+      ? customerScheduleWindow(profile.userId, settings.onlineMinutesPerDay, now) : undefined;
+    return { ...profile, foundingMember: user?.plusData?.founderAtMs !== undefined,
+      scheduledOnline: settings?.onlineMinutesPerDay === undefined ? undefined : Boolean(window),
+      member: window && settings?.rightNowTrigger ? { ...member, rightNowExpiresAtMs: now + 15_000 } : member };
+  };
+  const hiddenPresence = (key: string) => {
+    if (!key.startsWith("user:")) return false;
+    const userId = key.slice(5);
+    const user = authService.getUser(userId);
+    return Boolean(user && (user.bannedAtMs || hidesPresence(user.plusData?.member, user) || !visibleOnSchedule(userId)));
+  };
   const matchingService = createMatchingService({
     blockChecker: {
       isBlocked(fromKey: string, toKey: string): boolean {
@@ -1502,7 +1520,7 @@ async function main(): Promise<void> {
     const result = await profileService.listPublicProfiles();
     if (!result.ok) return sendError(res, result.error);
     const banned = bannedUserIds();
-    return res.status(200).json({ profiles: result.value.filter((profile) => {const user=authService.getUser(profile.userId);return !banned.has(profile.userId) && !(user && hidesDiscovery(user.plusData?.member,user));}).map(profile => enrichProfile(profile)) });
+    return res.status(200).json({ profiles: result.value.filter((profile) => {const user=authService.getUser(profile.userId);return !banned.has(profile.userId) && visibleOnSchedule(profile.userId) && !(user && hidesDiscovery(user.plusData?.member,user));}).map(profile => enrichProfile(profile)) });
   });
 
   app.put("/profile/me", async (req, res) => {

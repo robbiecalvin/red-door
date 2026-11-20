@@ -2,8 +2,10 @@ import type { CommunityRepository } from "../repositories/communityRepository";
 import type { AuthService, StoredUser } from "./authService";
 import type { ChatMessage, ChatService } from "./chatService";
 import { hidesPresence } from "./memberService";
+import { customerScheduleWindow } from "./customerSchedule";
 
 const intents = {
+  rightNow: /^(?:right now|r u free rn|can you meet right now|meet right now)[.!? ]*$/i,
   greeting: /^(?:h+i+|hey+|hello|hiya|yo|howdy|heya|good (?:morning|afternoon|evening))\b(?: handsome| man| there| babe| cutie)?[.!?\s]*$/i,
   interest: /^(?:(?:hey|hi)[,! ]+)?(?:are (?:you|u) |you |u )?(?:(?:still )?looking(?:\s+(?:right now|tonight|now|rn|to meet))?|horny(?:\s+(?:right now|tonight|now|rn))?)[.!?\s]*$/i,
   smallTalk: /^(?:sup|wsup|wassup|whats up|what are (?:you|u) up to|wyd|how(?:s it going| are you| are u))[.!?\s]*$/i,
@@ -31,12 +33,28 @@ const responsePools = {
 const MESSAGE_LIMIT = 12;
 const endConversation = /^(?:no thanks|not interested|please stop|stop(?: messaging me)?|dont message me|goodbye|bye)[.!? ]*$/i;
 const briefAgreement = /^(?:yeah|yes|yep|sure|sounds good|im down|works for me|lets do it)[.!? ]*$/i;
-type ReplyIntent = Intent | "followUp";
+type ReplyIntent = Intent | "followUp" | "custom";
 type ReplyProgress = { received: number; messageIds: string[]; photoSent?: boolean; lastIntent?: ReplyIntent; stopped?: boolean };
 
-function answer(intent: ReplyIntent, user: StoredUser): string | undefined {
+const normalizedTrigger = (value: string) => value.toLowerCase().trim().replace(/[’']/g, "").replace(/\s+/g, " ").replace(/[.!? ]+$/, "");
+function customRule(user: StoredUser, question: string) {
+  const text = normalizedTrigger(question);
+  return user.plusData?.customerImport?.facilitatedReplies?.find(rule =>
+    rule.triggers.some(trigger => normalizedTrigger(trigger) === text));
+}
+
+function answer(intent: ReplyIntent, user: StoredUser, question: string): string | undefined {
   const record = user.plusData?.customerImport;
   switch (intent) {
+    case "custom": {
+      const options = customRule(user, question)?.replies;
+      return options?.[Math.floor(Math.random() * options.length)];
+    }
+    case "rightNow": {
+      if (!record?.rightNowTrigger || record.onlineMinutesPerDay === undefined ||
+          !customerScheduleWindow(user.id, record.onlineMinutesPerDay, Date.now())) return;
+      return "What did you have in mind? Let’s confirm the details here.";
+    }
     case "greeting":
     case "interest":
     case "smallTalk":
@@ -82,6 +100,8 @@ export function createCustomerAutoReplies(auth: AuthService, chat: ChatService, 
     const priorIncoming = history.ok ? history.value.filter(row =>
       row.fromKey === message.fromKey && row.messageId !== message.messageId && !row.text.startsWith("GROUP_INVITE_"),
     ).length : 0;
+    const protectedIntent = matched === "photo" || matched === "location" || matched === "rightNow";
+    const configured = !protectedIntent && customRule(recipient, question) ? "custom" : matched;
     const key = `${message.chatId}:${recipient.id}`;
     const intent = await repository.update(state => {
       const progress = (state.settings.customerAutoReplyWindow ??= {}) as Record<string, ReplyProgress>;
@@ -90,7 +110,7 @@ export function createCustomerAutoReplies(auth: AuthService, chat: ChatService, 
       if (window.stopped || window.received >= MESSAGE_LIMIT || window.messageIds.includes(message.messageId)) return;
       const stopped = endConversation.test(question);
       const previous = window.lastIntent;
-      const intent: ReplyIntent | undefined = stopped ? undefined : matched ??
+      const intent: ReplyIntent | undefined = stopped ? undefined : configured ??
         (briefAgreement.test(question) && (previous === "plans" || previous === "availability") ? "followUp" : undefined);
       const sendPhoto = intent === "photo" && !window.photoSent && Boolean(recipient.plusData?.customerImport?.photoUrl);
       progress[key] = { ...window, received: window.received + 1, messageIds: [...window.messageIds, message.messageId],
@@ -102,7 +122,7 @@ export function createCustomerAutoReplies(auth: AuthService, chat: ChatService, 
 
     const current = auth.getUser(recipient.id);
     const reply = current && !current.bannedAtMs && current.plusData?.customerImport?.autoReplies
-      ? answer(intent, current) : undefined;
+      ? answer(intent, current, question) : undefined;
     const sent = reply && chat.sendMessage(session, { chatKind: "cruise", toKey: message.fromKey, text: reply });
     if (sent && sent.ok) {
       await repository.update(state => {

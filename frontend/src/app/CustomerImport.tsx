@@ -48,6 +48,7 @@ export function CustomerImport({ api, session }: Props): React.ReactElement {
     <button type="button" className="rd-btn" disabled={!file || busy} onClick={() => void run("update-preview")}>Preview customer updates</button>
     <p className="rd-muted">Match existing imports by email or source_customer_id. Filled cells replace values. Blank cells keep existing data.</p>
     <button type="button" className="rd-btn" disabled={!file || busy} onClick={() => void run("photos")}>Update automatic reply photo links</button>
+    <p className="rd-muted">Optional CSV columns: facilitated_replies_json, online_hours_per_day, right_now_trigger. Scheduled hours use Vancouver time.</p>
     <p className="rd-muted">For photo links, upload a CSV with email and auto_reply_photo_url columns.</p>
     {error && <p role="alert">{error}</p>}
     {rows.length > 0 && <div>
