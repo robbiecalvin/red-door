@@ -24,6 +24,12 @@ class ErrorBoundary extends React.Component<Readonly<{ children: React.ReactNode
     return { error };
   }
 
+  private reloadApp(): void {
+    const url = new URL(window.location.href);
+    url.searchParams.set("_reload", Date.now().toString());
+    window.location.replace(url);
+  }
+
   public render(): React.ReactNode {
     if (this.state.error) {
       return (
@@ -38,7 +44,7 @@ class ErrorBoundary extends React.Component<Readonly<{ children: React.ReactNode
             gap: 12
           }}
         >
-          <div style={{ fontSize: 24, fontWeight: 700, textAlign: "center" }}>DUALMODE</div>
+          <div style={{ fontSize: 24, fontWeight: 700, textAlign: "center" }}>Badehaus X</div>
           <div
             role="alert"
             aria-live="polite"
@@ -53,9 +59,8 @@ class ErrorBoundary extends React.Component<Readonly<{ children: React.ReactNode
               whiteSpace: "pre-wrap"
             }}
           >
-            {this.state.error.name}: {this.state.error.message}
-            {"\n"}
-            {this.state.error.stack ?? ""}
+            <p>Badehaus X couldn’t load. Reload to get the latest version.</p>
+            <button type="button" className="rd-btn" onClick={this.reloadApp}>Reload Badehaus X</button>
           </div>
         </div>
       );
