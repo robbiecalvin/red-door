@@ -12,6 +12,7 @@ type GoogleIdentity = {
   renderButton(container: HTMLElement, options: {
     theme: "outline";
     size: "large";
+    width: string;
     text: "signin_with" | "signup_with";
   }): void;
 };
@@ -58,6 +59,7 @@ export function GoogleSignInButton({ api, register = false, disabled, onCredenti
     if (!host) return;
     let active = true;
     let submitted = false;
+    let resizeObserver: ResizeObserver | undefined;
 
     async function renderButton() {
       const challenge = await api.getGoogleSignInChallenge().catch(() => null);
@@ -77,7 +79,22 @@ export function GoogleSignInButton({ api, register = false, disabled, onCredenti
           }
         });
         setStatus("ready");
-        google.renderButton(host, { theme: "outline", size: "large", text: register ? "signup_with" : "signin_with" });
+        let renderedWidth = 0;
+        const updateButtonWidth = () => {
+          const width = Math.min(host.clientWidth, 400);
+          if (!width || width === renderedWidth) return;
+          host.replaceChildren();
+          google.renderButton(host, {
+            theme: "outline",
+            size: "large",
+            text: register ? "signup_with" : "signin_with",
+            width: String(width)
+          });
+          renderedWidth = width;
+        };
+        updateButtonWidth();
+        resizeObserver = new ResizeObserver(updateButtonWidth);
+        resizeObserver.observe(host);
       } catch {
         if (active) setStatus("failed");
       }
@@ -86,6 +103,7 @@ export function GoogleSignInButton({ api, register = false, disabled, onCredenti
     void renderButton();
     return () => {
       active = false;
+      resizeObserver?.disconnect();
       host.replaceChildren();
     };
   }, [api, attempt, register]);

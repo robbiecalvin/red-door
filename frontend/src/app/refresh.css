@@ -56,8 +56,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .rd-home-main .rd-grid { gap: 28px; }
 .rd-home-hero { border: 0; background: none; overflow: visible; }
 .rd-home-hero .rd-card-body, .rd-main.mobile .rd-home-hero .rd-card-body { padding: 0; }
-.rd-welcome-brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 800; letter-spacing: -.5px; }
-.rd-adult-badge { margin-left: auto; padding: 3px 8px; border: 1px solid #ffffff25; border-radius: 7px; color: var(--muted); font-size: 10px; letter-spacing: 0; }
 .rd-home-art { position: relative; height: 220px; display: grid; place-items: center; margin: 16px 0 22px; overflow: hidden; background: radial-gradient(ellipse at 50% 90%, #b51e3324, transparent 66%); }
 .rd-door-frame { width: 92px; height: 144px; border: 2px solid #f84457; border-bottom: 0; transform: perspective(600px) rotateY(-15deg); box-shadow: 0 0 35px #ff344525, inset 0 0 28px #ef243325; position: relative; }
 .rd-door-frame::before { content: ""; position: absolute; width: 260px; height: 65px; left: -74px; bottom: -60px; background: linear-gradient(#e52d4024, transparent); clip-path: polygon(28% 0, 65% 0, 100% 100%, 0 100%); }
@@ -65,8 +63,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .rd-door-panel::after { content: ""; position: absolute; top: 52%; right: 9px; height: 4px; width: 4px; border-radius: 100%; background: #ffb2b9; }
 .rd-art-caption { position: absolute; bottom: 0; color: #8c7e83; font-size: 10px; letter-spacing: .04em; }
 .rd-eyebrow { color: var(--accent); font-size: 10px; font-weight: 650; letter-spacing: .18em; margin-bottom: 12px; }
-.rd-home-title { margin: 0; font-size: clamp(34px, 7vw, 58px); font-weight: 750; line-height: 1.08; letter-spacing: -1.8px; text-transform: none; text-shadow: none; }
-.rd-home-title span { color: #9c99a1; }
 .rd-home-copy { margin: 18px 0 22px; max-width: 380px; font-size: 14px; line-height: 1.75; }
 .rd-welcome-features { display: flex; flex-wrap: wrap; gap: 10px 18px; color: #bdbac2; font-size: 10px; }
 .rd-welcome-features span { display: flex; align-items: center; gap: 6px; }
@@ -82,7 +78,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
   .rd-home-main { display: grid; align-items: center; }
   .rd-home-main .rd-grid { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 80px; align-items: center; }
   .rd-home-art { height: 260px; }
-  .rd-welcome-brand { margin-bottom: 24px; }
   .rd-auth-hero { margin-top: 70px; }
   .rd-mobile-nav { padding-inline: max(20px, calc((100vw - 600px) / 2)); }
   .rd-main.rd-main-desktop-wide { max-width: 1440px; margin-inline: auto; padding: 24px; }
@@ -110,7 +105,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
   .rd-home-art { height: 170px; margin: 12px 0 20px; }
   .rd-door-frame { width: 74px; height: 112px; }
   .rd-home-main .rd-grid { gap: 24px; }
-  .rd-home-title { font-size: clamp(30px, 7.9vw, 40px); }
   .rd-home-copy { margin: 14px 0 18px; }
 }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent-deep); }
