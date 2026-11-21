@@ -1050,6 +1050,19 @@ export function App(): React.ReactElement {
   const desktopWideSession = Boolean(session && session.ageVerified === true && !isMobile);
   if (/\/thebackroom\/?$/.test(window.location.pathname)) return <Backroom api={api} session={session} />;
 
+  const showExploreShortcuts = showBottomNav && activeTab === "discover";
+  const publicToolbarActions = (
+    <>
+      <InstallApp iconOnly />
+      <a className="rd-btn rd-topbar-icon" href="./thebackroom/" aria-label="The Backroom" title="The Backroom">
+        <Icon name="book" />
+      </a>
+      <a className="rd-btn rd-topbar-icon" href="https://badehausx.com/store/" aria-label="Store" title="Store">
+        <Icon name="shopping-bag" />
+      </a>
+    </>
+  );
+
   return (
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav" : ""}`}>
       {recoveryOpen ? <PasswordRecovery api={api} token={recoveryToken} onClose={() => { setRecoveryOpen(false); setRecoveryToken(""); }} onComplete={() => { onLogout(); setRecoveryOpen(false); setRecoveryToken(""); setAuthView("login"); setAuthInfo("Password updated. Sign in with your new password."); }} /> : null}
@@ -1059,13 +1072,28 @@ export function App(): React.ReactElement {
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
             {session?.ageVerified === true ? (
-              <div className="rd-topbar-session">
+              <div className={`rd-topbar-session${showExploreShortcuts ? " is-explore" : ""}`}>
                 <div className="rd-brand" aria-label="Badehaus X">
-                  <span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><button type="button" className="rd-plus-badge" onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Badehaus X Plus">{session && hasPlus(session) ? "PLUS ✓" : "PLUS +"}</button>
-                  <InstallApp />
-                  <a className="rd-btn rd-backroom-link" href="./thebackroom/">The Backroom</a>
+                  <span className="rd-door-mark" aria-hidden="true" />
+                  <div className="rd-name">Badehaus X</div>
+                  <button type="button" className="rd-btn rd-topbar-icon rd-plus-badge"
+                    onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }}
+                    aria-label="Open Badehaus X Plus" title={hasPlus(session) ? "Badehaus X Plus is active" : "Badehaus X Plus"}>
+                    <Icon name={hasPlus(session) ? "check" : "plus"} />
+                  </button>
+                  {publicToolbarActions}
                 </div>
                 <div className="rd-explore-shortcuts">
+                  {showExploreShortcuts ? <div className="rd-explore-views">
+                    <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label="Map" title="Map"
+                      aria-pressed={discoverScreen === "map"} onClick={() => setDiscoverScreenAndRoute("map")}>
+                      <Icon name="map" className="rd-ui-icon" />
+                    </button>
+                    <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label="People" title="People"
+                      aria-pressed={discoverScreen === "chat"} onClick={() => setDiscoverScreenAndRoute("chat")}>
+                      <Icon name="groups" className="rd-ui-icon" />
+                    </button>
+                  </div> : null}
                   <button
                     type="button"
                     className="rd-top-avatar"
@@ -1075,25 +1103,17 @@ export function App(): React.ReactElement {
                     <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
                     <span className="rd-mobile-avatar-dot" />
                   </button>
-                  {showBottomNav && activeTab === "discover" ? <>
-                    <RightNowControl key={session.userId} api={api} session={session} />
-                    <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label="Map" title="Map"
-                      aria-pressed={discoverScreen === "map"} onClick={() => setDiscoverScreenAndRoute("map")}>
-                      <Icon name="map" className="rd-ui-icon" />
-                    </button>
-                    <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label="People" title="People"
-                      aria-pressed={discoverScreen === "chat"} onClick={() => setDiscoverScreenAndRoute("chat")}>
-                      <Icon name="groups" className="rd-ui-icon" />
-                    </button>
-                  </> : null}
-                </div>
-                <div className="rd-top-actions">
-                  <button type="button" className="rd-btn rd-icon-only-btn" onClick={toggleTopFilterPanel} aria-label="Open filter controls">
-                    <Icon name="filter" className="rd-ui-icon" />
-                  </button>
-                  <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => setTopMenuOpen((prev) => !prev)} aria-label="Open account functions">
-                    <Icon name="settings" className="rd-ui-icon" />
-                  </button>
+                  <div className="rd-explore-actions">
+                    {showExploreShortcuts ? <RightNowControl key={session.userId} api={api} session={session} /> : null}
+                    <div className="rd-top-actions">
+                      <button type="button" className="rd-btn rd-icon-only-btn" onClick={toggleTopFilterPanel} aria-label="Open filter controls">
+                        <Icon name="filter" className="rd-ui-icon" />
+                      </button>
+                      <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => setTopMenuOpen((prev) => !prev)} aria-label="Open account functions">
+                        <Icon name="settings" className="rd-ui-icon" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <ReferralToolbar api={api} session={session} onOpen={() => {
                   setTabAndRoute("settings");
@@ -1104,13 +1124,7 @@ export function App(): React.ReactElement {
               <div className="rd-brand">
                 <span className="rd-door-mark" aria-hidden="true" />
                 <div className="rd-name">Badehaus X</div>
-                <InstallApp iconOnly />
-                <a className="rd-btn rd-entrance-action" href="./thebackroom/" aria-label="The Backroom" title="The Backroom">
-                  <Icon name="book" />
-                </a>
-                <a className="rd-btn rd-entrance-action" href="https://badehausx.com/store/" aria-label="Store" title="Store">
-                  <Icon name="shopping-bag" />
-                </a>
+                {publicToolbarActions}
               </div>
             )}
           </div>

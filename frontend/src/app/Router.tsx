@@ -1232,7 +1232,7 @@ function CruiseSurface({
 
   return (
     <div className={`rd-explore-surface ${mobileTab === "map" ? "is-map" : "is-people"}`}>
-      <div className="rd-explore-toolbar"><div><span className="rd-eyebrow">EXPLORE</span><strong>{travelCenter ? "Your travel location" : selfCoords ? "People nearby" : "Discover people"}</strong></div><button className="rd-btn" onClick={() => window.dispatchEvent(new CustomEvent("rd:discover-control", {detail:{action:"open_filters"}}))}>Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button></div>
+      {mobileTab !== "map" ? <div className="rd-explore-toolbar"><div><span className="rd-eyebrow">EXPLORE</span><strong>{travelCenter ? "Your travel location" : selfCoords ? "People nearby" : "Discover people"}</strong></div><button className="rd-btn" onClick={() => window.dispatchEvent(new CustomEvent("rd:discover-control", {detail:{action:"open_filters"}}))}>Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button></div> : null}
       <div className="rd-explore-layout">
         <div className="rd-map-pane">{mobileTab === "map" ? mapPanel : null}</div>
         <div className="rd-people-pane">{chatPanel}</div>

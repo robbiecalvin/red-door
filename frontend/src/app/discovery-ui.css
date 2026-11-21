@@ -351,6 +351,10 @@
     padding: 16px;
   }
 
+  .rd-explore-surface.is-map .rd-explore-layout {
+    padding-top: 0;
+  }
+
   .rd-explore-surface .rd-people-pane {
     border: 0;
   }
@@ -401,9 +405,26 @@
   gap: 2px;
 }
 
+.rd-explore-views,
+.rd-explore-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+@media (max-width: 900px) {
+  .rd-topbar.mobile .rd-topbar-session.is-explore {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rd-topbar-session.is-explore .rd-explore-shortcuts {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+}
+
 .rd-explore-shortcuts .rd-top-avatar {
   flex-shrink: 0;
-  margin-inline-end: 4px;
 }
 
 .rd-explore-shortcuts .rd-explore-icon {
