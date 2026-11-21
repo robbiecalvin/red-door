@@ -12,6 +12,7 @@ import { isPlusFeature, type PlusFeature } from "./PlusShowcase";
 import { NOTIFICATION_ENABLED, NOTIFICATION_DISCREET } from "./NotificationSettings";
 import afterDark from "../assets/after-dark.png";
 import { PasswordRecovery } from "./PasswordRecovery";
+import { GoogleSignInButton, type GoogleCredential } from "./GoogleSignInButton";
 import { AdminAnalytics } from "./AdminAnalytics";
 import { PlusPanel } from "./PlusPanel";
 import { LAUNCH_END_MS, hasPlus } from "../../../shared/plus";
@@ -348,6 +349,7 @@ export function App(): React.ReactElement {
   const [loginPassword, setLoginPassword] = useState("");
   const [registerEmail, setRegisterEmail] = useState("");
   const [registerPassword, setRegisterPassword] = useState("");
+  const [googleRegistration, setGoogleRegistration] = useState<GoogleCredential | null>(null);
   const [phoneE164, setPhoneE164] = useState<string>("");
   const [registerDisplayName, setRegisterDisplayName] = useState<string>("");
   const [recoveryToken, setRecoveryToken] = useState(() => /^#reset=([a-f0-9]{64})$/i.exec(window.location.hash)?.[1] ?? "");
@@ -373,6 +375,9 @@ export function App(): React.ReactElement {
     return () => { active = false; };
   }, [api, authView, policyRequest]);
   const canRegister = policy?.status === "disabled" || (policy?.status === "required" && acceptedPolicy);
+  useEffect(() => {
+    if (authView !== "register") setGoogleRegistration(null);
+  }, [authView]);
 
   const [marketingConsent, setMarketingConsent] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
@@ -675,7 +680,7 @@ export function App(): React.ReactElement {
   }
 
   async function submitRegister(): Promise<void> {
-    if (!canRegister) return;
+    if (busy || !canRegister) return;
     const policyAcceptance = policy?.status === "required" ? {
       accepted: true as const, termsVersion: policy.terms.version, privacyVersion: policy.privacy.version
     } : undefined;
@@ -692,8 +697,12 @@ export function App(): React.ReactElement {
     setBusy(true);
     setLastError(null);
     setAuthInfo("");
+    const profile = { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent, marketingConsent, policyAcceptance };
     try {
-      const registration = await api.register(registerEmail, registerPassword, phoneE164, { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent, marketingConsent, policyAcceptance });
+      const googleResult = googleRegistration
+        ? await api.registerWithGoogle(googleRegistration.credential, googleRegistration.nonce, phoneE164, profile)
+        : null;
+      const registration = googleRegistration ? null : await api.register(registerEmail, registerPassword, phoneE164, profile);
       setMarketingConsent(false);
       setAcceptedPolicy(false);
       setProfileSetupDraft((prev) => ({
@@ -701,13 +710,14 @@ export function App(): React.ReactElement {
         displayName: normalizedDisplayName,
         age: String(registerAgeNumber)
       }));
+      if (googleResult) {
+        setGoogleRegistration(null);
+        await completeLogin(googleResult.session);
+        return;
+      }
       try {
         const loginRes = await api.login(registerEmail, registerPassword);
-        const nextSession = await autoVerifyAgeForRegisteredSession(loginRes.session, registerAgeNumber);
-        persistSessionToken(loginRes.session.sessionToken);
-        setSessionToken(loginRes.session.sessionToken);
-        setSession(nextSession);
-      setLoginSequence(n=>n+1);
+        await completeLogin(loginRes.session, registerAgeNumber);
         setPendingVerificationEmail(null);
         setVerificationCode("");
         setAuthInfo("");
@@ -719,11 +729,12 @@ export function App(): React.ReactElement {
         setPendingVerificationEmail(registerEmail.trim());
         setAuthView("register");
         setVerificationCode("");
-        setAuthInfo((registration as { emailDeliveryAccepted?: boolean }).emailDeliveryAccepted === false
+        setAuthInfo((registration as { emailDeliveryAccepted?: boolean } | null)?.emailDeliveryAccepted === false
           ? "Your account was created, but the email provider could not send the code. Try Resend code after one minute."
           : "Check your email for a verification code. Codes expire; you can resend after one minute.");
       }
     } catch (e) {
+      if (googleRegistration) setGoogleRegistration(null);
       if ((e as ServiceError)?.code === "REGISTRATION_POLICY_REQUIRED") setPolicyRequest(current => current + 1);
       setLastError(normalizeUiError(e, "Register failed."));
     } finally {
@@ -776,30 +787,37 @@ export function App(): React.ReactElement {
     }
   }
 
-  async function submitLogin(): Promise<void> {
+  async function completeLogin(signedInSession: Session, preferredAge?: number): Promise<void> {
+    const nextSession = await autoVerifyAgeForRegisteredSession(signedInSession, preferredAge);
+    persistSessionToken(signedInSession.sessionToken);
+    setSessionToken(signedInSession.sessionToken);
+    setSession(nextSession);
+    setLoginSequence(n => n + 1);
+  }
+
+  async function submitLogin(google?: GoogleCredential): Promise<boolean> {
+    if (busy) return false;
     requestLocationPermission();
     setBusy(true);
     setLastError(null);
     setAuthInfo("");
     try {
-      const res = await api.login(loginEmail, loginPassword);
-      const nextSession = await autoVerifyAgeForRegisteredSession(res.session);
-      persistSessionToken(res.session.sessionToken);
-      setSessionToken(res.session.sessionToken);
-      setSession(nextSession);
-      setLoginSequence(n=>n+1);
+      const res = google ? await api.loginWithGoogle(google.credential, google.nonce) : await api.login(loginEmail, loginPassword);
+      await completeLogin(res.session);
+      return true;
     } catch (e) {
       const err = e as ServiceError;
       const msg = normalizeUiError(e, "Login failed.");
-      const needsVerification = isVerificationRequiredError(e);
+      const needsVerification = !google && isVerificationRequiredError(e);
       if (needsVerification) {
         const targetEmail = typeof err.context?.email === "string" ? err.context.email : loginEmail;
         setPendingVerificationEmail(targetEmail);
         setAuthView("login");
         setAuthInfo("Verify your email before login. Check your inbox or resend the code.");
-        return;
+        return false;
       }
       setLastError(msg);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1206,6 +1224,17 @@ export function App(): React.ReactElement {
 
                   <p className="rd-auth-note"><Icon name="shield" />For adults 18 and over. You choose what to share.</p>
 
+                  {authView === "register" && (googleRegistration ? (
+                    <div className="rd-row">
+                      <span>Google account selected</span>
+                      <button type="button" className="rd-btn" disabled={busy} onClick={() => setGoogleRegistration(null)}>Use email and password</button>
+                    </div>
+                  ) : <GoogleSignInButton key="google-register" api={api} register disabled={busy} onCredential={credential => {
+                    setGoogleRegistration(credential);
+                    setLastError(null);
+                    setAuthInfo("");
+                    return true;
+                  }} />)}
                   {authView === "register" || authView === "login" ? (
                     <form
                       key={authView}
@@ -1214,19 +1243,22 @@ export function App(): React.ReactElement {
                         void (authView === "register" ? submitRegister() : submitLogin());
                       }}
                     >
-                      <label className="rd-field">
-                        <span className="rd-label">Email</span>
-                        <input className="rd-input" value={authView === "register" ? registerEmail : loginEmail}
-                          onChange={(e) => (authView === "register" ? setRegisterEmail : setLoginEmail)(e.target.value)}
-                          type="email" autoComplete="username" autoCapitalize="none" aria-label="Email" />
-                      </label>
-
-                      <label className="rd-field">
-                        <span className="rd-label">Password</span>
-                        <input className="rd-input" value={authView === "register" ? registerPassword : loginPassword}
-                          onChange={(e) => (authView === "register" ? setRegisterPassword : setLoginPassword)(e.target.value)}
-                          type="password" autoComplete={authView === "register" ? "new-password" : "current-password"} aria-label="Password" />
-                      </label>
+                      {(!googleRegistration || authView === "login") && (
+                        <>
+                          <label className="rd-field">
+                            <span className="rd-label">Email</span>
+                            <input className="rd-input" value={authView === "register" ? registerEmail : loginEmail}
+                              onChange={(e) => (authView === "register" ? setRegisterEmail : setLoginEmail)(e.target.value)}
+                              type="email" autoComplete="username" autoCapitalize="none" aria-label="Email" />
+                          </label>
+                          <label className="rd-field">
+                            <span className="rd-label">Password</span>
+                            <input className="rd-input" value={authView === "register" ? registerPassword : loginPassword}
+                              onChange={(e) => (authView === "register" ? setRegisterPassword : setLoginPassword)(e.target.value)}
+                              type="password" autoComplete={authView === "register" ? "new-password" : "current-password"} aria-label="Password" />
+                          </label>
+                        </>
+                      )}
 
                       {authView === "register" ? (
                         <label className="rd-field">
@@ -1276,7 +1308,7 @@ export function App(): React.ReactElement {
                       </div> : null}
                       {authView === "register" ? <label className="rd-field"><span><input type="checkbox" checked={marketingConsent} onChange={event => setMarketingConsent(event.target.checked)} /> {MARKETING_CONSENT_LABEL}</span></label> : null}
                       {authView === "register" ? <label className="rd-field" style={{ fontSize: 12, color: "var(--muted)" }}><span><input type="checkbox" checked={analyticsConsent} onChange={e => setAnalyticsConsent(e.target.checked)} /> Help improve Badehaus X (optional)</span><span>Share activity counts using a protected account identifier. Daily activity is kept for 35 days; inactive measurement records are deleted after 35 days. No message content, photos, or location. Change this in settings anytime.</span></label> : null}
-                      {authView === "register" ? (
+                      {authView === "register" && !googleRegistration ? (
                         <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
                           Use at least 10 characters with uppercase, lowercase, a number and a symbol.
                         </div>
@@ -1290,7 +1322,10 @@ export function App(): React.ReactElement {
                     </form>
                   ) : null}
 
-                  {authView === "login" ? <button type="button" className="rd-btn" onClick={() => { setRecoveryToken(""); setRecoveryOpen(true); }}>Forgot password?</button> : null}
+                  {authView === "login" ? <>
+                    <GoogleSignInButton key="google-login" api={api} disabled={busy} onCredential={submitLogin} />
+                    <button type="button" className="rd-btn" onClick={() => { setRecoveryToken(""); setRecoveryOpen(true); }}>Forgot password?</button>
+                  </> : null}
                   {pendingVerificationEmail !== null && (authView === "register" || authView === "login") ? (
                     <form
                       onSubmit={(e) => {

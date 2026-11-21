@@ -67,6 +67,7 @@ function parseStoredUser(row: Record<string, unknown>): StoredUser | null {
     ...(row.verification_security && typeof row.verification_security === "object" ? (()=>{
       const security=row.verification_security as Record<string,unknown>;
       return {
+        googleSubject: typeof security.googleSubject === "string" ? security.googleSubject : undefined,
         emailOwnershipVerifiedAtMs:typeof security.emailOwnershipVerifiedAtMs==="number"?security.emailOwnershipVerifiedAtMs:undefined,
         verificationLastSentAtMs:typeof security.verificationLastSentAtMs==="number"?security.verificationLastSentAtMs:undefined,
         verificationAttemptCount:typeof security.verificationAttemptCount==="number"?security.verificationAttemptCount:undefined,
@@ -200,7 +201,7 @@ export function createPostgresAuthStateRepository(pool: Pool): AuthStateReposito
               user.verificationCodeExpiresAtMs,
               user.passwordSaltB64,
               user.passwordHashB64,
-              user.createdAtMs, user.plusExpiresAtMs ?? null, JSON.stringify(user.plusData ?? {}), user.passwordResetTokenHash ?? null, user.passwordResetExpiresAtMs ?? null, JSON.stringify({emailOwnershipVerifiedAtMs:user.emailOwnershipVerifiedAtMs,verificationLastSentAtMs:user.verificationLastSentAtMs,verificationAttemptCount:user.verificationAttemptCount,verificationAttemptStartedAtMs:user.verificationAttemptStartedAtMs})
+              user.createdAtMs, user.plusExpiresAtMs ?? null, JSON.stringify(user.plusData ?? {}), user.passwordResetTokenHash ?? null, user.passwordResetExpiresAtMs ?? null, JSON.stringify({googleSubject:user.googleSubject,emailOwnershipVerifiedAtMs:user.emailOwnershipVerifiedAtMs,verificationLastSentAtMs:user.verificationLastSentAtMs,verificationAttemptCount:user.verificationAttemptCount,verificationAttemptStartedAtMs:user.verificationAttemptStartedAtMs})
             ]
           );
         }

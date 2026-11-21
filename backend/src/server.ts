@@ -6,6 +6,7 @@ import { installBackroomRoutes } from "./routes/backroomRoutes";
 import { brandedEmail } from "./services/brandedEmail";
 import { createResendEmail, ResendDeliveryError } from "./services/resendEmail";
 import { registrationPolicy } from "./services/registrationPolicy";
+import { createGoogleSignIn } from "./services/googleSignIn";
 import { installGrowthRoutes } from "./routes/growthRoutes";
 import { createReferralLedger } from "./services/referralLedger";
 import { DEFAULT_PRIORITY_RADIUS_KM, FOUNDER_PRICE_CENTS, PRIORITY_ACTIVITY_MS, isPriorityInvitation, REFERRAL_INTRO_CENTS, REFERRAL_RENEWAL_CENTS, threeMonthsAfter, withinPriorityRadius } from "../../shared/membership";
@@ -1420,8 +1421,34 @@ async function main(): Promise<void> {
     return res.set("Cache-Control", "no-store").json(registrationPolicy());
   });
 
-  app.post("/auth/register", async (req, res) => {
-    if(!emailSender)return res.status(503).json({code:"SERVICE_UNAVAILABLE",message:"Registration email is unavailable. Please try later or contact support."});
+  const googleClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
+  const googleSignIn = googleClientId ? createGoogleSignIn(googleClientId) : null;
+  app.post("/auth/google/challenge", (_req, res) => {
+    res.set("Cache-Control", "no-store");
+    if (!googleSignIn) return res.status(404).json({ message: "Google sign-in is unavailable." });
+    return res.json(googleSignIn.challenge());
+  });
+
+  app.post("/auth/google", async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    if (!googleSignIn) return res.status(404).json({ message: "Google sign-in is unavailable." });
+    const identity = await googleSignIn.verify(req.body?.credential, req.body?.nonce).catch(() => null);
+    if (!identity) return res.status(401).json({ message: "Google sign-in could not be verified. Please try again." });
+    const result = authService.loginWithGoogle(identity);
+    if (!result.ok) return sendError(res, result.error);
+    await authPersistQueue;
+    if (authPersistenceError) return res.status(503).json({ message: "Unable to save your session. Please try again." });
+    return res.json(result.value);
+  });
+
+  app.post(["/auth/register", "/auth/google/register"], async (req, res) => {
+    const usingGoogle = req.path.toLowerCase().replace(/\/$/, "") === "/auth/google/register";
+    if (usingGoogle) {
+      res.set("Cache-Control", "no-store");
+      if (!googleSignIn) return res.status(404).json({ message: "Google registration is unavailable." });
+    } else if (!emailSender) {
+      return res.status(503).json({ code: "SERVICE_UNAVAILABLE", message: "Registration email is unavailable. Please try later or contact support." });
+    }
     const age = req.body?.age;
     if (!Number.isInteger(age) || age < 18 || age > 120) return res.status(400).json({ code: "AGE_GATE_REQUIRED", message: "Declare an age between 18 and 120 to register." });
     const email = (req.body as any)?.email;
@@ -1439,6 +1466,22 @@ async function main(): Promise<void> {
     const accepted = policy.status === "required" ? {
       accepted: true as const, termsVersion: policy.terms.version, privacyVersion: policy.privacy.version
     } : undefined;
+    if (usingGoogle && googleSignIn) {
+      const identity = await googleSignIn.verify(req.body?.credential, req.body?.nonce).catch(() => null);
+      if (!identity) return res.status(401).json({ message: "Google sign-in could not be verified. Please try again." });
+      const result = authService.registerWithGoogle(identity, age, phoneE164, req.body?.promoCode,
+        req.body?.analyticsConsent === true, req.body?.marketingConsent === true, accepted);
+      if (!result.ok) return sendError(res, result.error);
+      await authPersistQueue;
+      if (authPersistenceError) return res.status(503).json({ message: "Unable to save your registration. Please try again." });
+      const user = authService.getUser(result.value.user.id);
+      if (user) {
+        recordMetric(() => metrics.registration(user.id, cohortFor(user), user.plusData?.analyticsConsent === true));
+        const ownerId = user.plusData?.priorityReferralOwnerId;
+        if (ownerId) notifyReferral(ownerId, "Badehaus X verified referral", "Someone verified their account after registering with your referral code.");
+      }
+      return res.json(result.value);
+    }
     const result = authService.register(email, password, phoneE164, req.body?.promoCode,
       req.body?.analyticsConsent === true, req.body?.marketingConsent === true, accepted);
     if (!result.ok) return sendError(res, result.error);
