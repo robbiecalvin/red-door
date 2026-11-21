@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import { Icon } from "./Icon";
 import { isAppleMobile, isInstalled, registerAppWorker } from './pwaRuntime';
 import './pwa.css';
 declare const __DUALMODE_PWA_ENABLED__: boolean | undefined;
@@ -84,12 +85,16 @@ export function PwaProvider({children}:{children:React.ReactNode}) {
   }
   return <PwaContext.Provider value={{installed,prompt,error,online,update,updating,activate,install}}>{children}{!online || (update && !installed)?<aside className="rd-pwa-status" aria-label="App connection and updates"><div role="status">{!online?'You’re offline. Messages and changes need a connection.': error || 'A Badehaus X update is ready. Finish your message before reloading.'}</div>{online && update?<button className="rd-btn" disabled={updating} onClick={activate}>{updating?'Updating…':'Reload app'}</button>:null}</aside>:null}</PwaContext.Provider>;
 }
-export function InstallApp(){
+export function InstallApp({ iconOnly = false }: { iconOnly?: boolean } = {}) {
   const {installed,prompt,error,online,update,updating,activate,install}=useContext(PwaContext),[open,setOpen]=useState(false),[busy,setBusy]=useState(false);
-  if (installed) return <button type="button" className="rd-btn rd-install-app"
-    disabled={!online || !update || updating} onClick={activate}>
-    {updating ? "Updating…" : update ? "Update app" : "App installed"}
-  </button>;
+  const buttonClass = iconOnly ? "rd-btn rd-install-app rd-entrance-action" : "rd-btn rd-install-app";
+  if (installed) {
+    const label = updating ? "Updating…" : update ? "Update app" : "App installed";
+    return <button type="button" className={buttonClass} aria-label={label} title={iconOnly ? label : undefined}
+      disabled={!online || !update || updating} onClick={activate}>
+      {iconOnly ? <Icon name={update || updating ? "download" : "check"} /> : label}
+    </button>;
+  }
   const apple=isAppleMobile();
-  return <><button type="button" className="rd-btn rd-install-app" onClick={()=>setOpen(true)} aria-label="Install Badehaus X"><span className="rd-install-full">Install Badehaus X</span><span className="rd-install-short" aria-hidden="true">Install app</span></button>{open?<Sheet title="Install Badehaus X" eyebrow="YOUR OWN DOOR. ONE TAP AWAY." onClose={()=>setOpen(false)}><div className="rd-install-guide"><img src="./icons/icon-192.png" width="72" height="72" alt="Badehaus X app icon"/><p>Add Badehaus X to your Home Screen. Open it like an app, with no app store download.</p>{prompt && !apple?<button className="rd-btn primary" disabled={busy} onClick={()=>{setBusy(true);void install().finally(()=>setBusy(false));}}>{busy?'Opening installation…':'Install app'}</button>:apple?<ol><li>Open this website in Safari.</li><li>Tap Share, then choose <strong>Add to Home Screen</strong>. You may need to scroll down.</li><li>If offered, enable <strong>Open as Web App</strong>, then tap Add.</li></ol>:<p>Open your browser’s menu and choose <strong>Install app</strong> or <strong>Add to Home Screen</strong>. On a computer, look for the install icon in the address bar. If those options aren’t available, open this site in Safari on iPhone or Chrome on Android.</p>}<p className="rd-caption">An internet connection is needed for people, messages, photos and payments. Notifications are optional and can be enabled after installation. Support depends on your device and browser.</p>{error?<p role="alert">{error}</p>:null}</div></Sheet>:null}</>;
+  return <><button type="button" className={buttonClass} onClick={()=>setOpen(true)} aria-label="Install Badehaus X" title={iconOnly ? "Install Badehaus X" : undefined}>{iconOnly ? <Icon name="download" /> : <><span className="rd-install-full">Install Badehaus X</span><span className="rd-install-short" aria-hidden="true">Install app</span></>}</button>{open?<Sheet title="Install Badehaus X" eyebrow="YOUR OWN DOOR. ONE TAP AWAY." onClose={()=>setOpen(false)}><div className="rd-install-guide"><img src="./icons/icon-192.png" width="72" height="72" alt="Badehaus X app icon"/><p>Add Badehaus X to your Home Screen. Open it like an app, with no app store download.</p>{prompt && !apple?<button className="rd-btn primary" disabled={busy} onClick={()=>{setBusy(true);void install().finally(()=>setBusy(false));}}>{busy?'Opening installation…':'Install app'}</button>:apple?<ol><li>Open this website in Safari.</li><li>Tap Share, then choose <strong>Add to Home Screen</strong>. You may need to scroll down.</li><li>If offered, enable <strong>Open as Web App</strong>, then tap Add.</li></ol>:<p>Open your browser’s menu and choose <strong>Install app</strong> or <strong>Add to Home Screen</strong>. On a computer, look for the install icon in the address bar. If those options aren’t available, open this site in Safari on iPhone or Chrome on Android.</p>}<p className="rd-caption">An internet connection is needed for people, messages, photos and payments. Notifications are optional and can be enabled after installation. Support depends on your device and browser.</p>{error?<p role="alert">{error}</p>:null}</div></Sheet>:null}</>;
 }

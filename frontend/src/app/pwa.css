@@ -35,3 +35,15 @@
   .rd-topbar .rd-backroom-link { min-height: 32px; padding-inline: 6px; font-size: 10px; }
   .rd-topbar .rd-plus-badge { white-space: nowrap; }
 }
+
+.rd-topbar .rd-entrance-action {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  text-decoration: none;
+}
+
+.rd-entrance-action svg { width: 20px; height: 20px; }

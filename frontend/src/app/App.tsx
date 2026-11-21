@@ -1100,7 +1100,19 @@ export function App(): React.ReactElement {
                   window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "membership" }));
                 }} />
               </div>
-            ) : <div className="rd-brand"><span className="rd-door-mark" aria-hidden="true" /><div className="rd-name">Badehaus X</div><InstallApp /><a className="rd-btn rd-backroom-link" href="./thebackroom/">The Backroom</a></div>}
+            ) : (
+              <div className="rd-brand">
+                <span className="rd-door-mark" aria-hidden="true" />
+                <div className="rd-name">Badehaus X</div>
+                <InstallApp iconOnly />
+                <a className="rd-btn rd-entrance-action" href="./thebackroom/" aria-label="The Backroom" title="The Backroom">
+                  <Icon name="book" />
+                </a>
+                <a className="rd-btn rd-entrance-action" href="https://badehaus.com/store" aria-label="Store" title="Store">
+                  <Icon name="shopping-bag" />
+                </a>
+              </div>
+            )}
           </div>
         </header>
       {session && session.ageVerified === true && topMenuOpen ? (
@@ -1133,15 +1145,6 @@ export function App(): React.ReactElement {
         <div className="rd-grid">
           {!session ? (
             <>
-              <section className="rd-card rd-home-hero" aria-label="Welcome to Badehaus X">
-                <div className="rd-card-body">
-                  <img className="rd-afterdark-art" src={afterDark} alt="" aria-hidden="true" />
-                  <h1 className="rd-eyebrow">SEE WHO’S INSIDE.</h1>
-                  <p className="rd-home-copy">A space for gay men to explore, chat, and connect. Livestreaming. Group Chats & more.</p>
-                  <div className="rd-welcome-features"><span><Icon name="map" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
-                </div>
-              </section>
-
               <section className="rd-card rd-auth-hero" aria-label="Authentication">
                 <div className="rd-card-head">
                   <div className="rd-card-title">Your night starts here.</div>
@@ -1362,6 +1365,15 @@ export function App(): React.ReactElement {
                       </div>
                     </form>
                   ) : null}
+                </div>
+              </section>
+
+              <section className="rd-card rd-home-hero" aria-label="Welcome to Badehaus X">
+                <div className="rd-card-body">
+                  <img className="rd-afterdark-art" src={afterDark} alt="" aria-hidden="true" />
+                  <h1 className="rd-eyebrow">SEE WHO’S INSIDE.</h1>
+                  <p className="rd-home-copy">A space for gay men to explore, chat, and connect. Livestreaming. Group Chats & more.</p>
+                  <div className="rd-welcome-features"><span><Icon name="map" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
                 </div>
               </section>
             </>
