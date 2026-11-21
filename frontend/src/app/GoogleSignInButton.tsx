@@ -12,8 +12,8 @@ type GoogleIdentity = {
   renderButton(container: HTMLElement, options: {
     theme: "outline";
     size: "large";
-    width: string;
     text: "signin_with" | "signup_with";
+    width: string;
   }): void;
 };
 
@@ -78,11 +78,11 @@ export function GoogleSignInButton({ api, register = false, disabled, onCredenti
             });
           }
         });
-        setStatus("ready");
         let renderedWidth = 0;
-        const updateButtonWidth = () => {
+        const renderAtCurrentWidth = () => {
           const width = Math.min(host.clientWidth, 400);
-          if (!width || width === renderedWidth) return;
+          if (!active || width === 0 || width === renderedWidth) return;
+          renderedWidth = width;
           host.replaceChildren();
           google.renderButton(host, {
             theme: "outline",
@@ -90,11 +90,11 @@ export function GoogleSignInButton({ api, register = false, disabled, onCredenti
             text: register ? "signup_with" : "signin_with",
             width: String(width)
           });
-          renderedWidth = width;
         };
-        updateButtonWidth();
-        resizeObserver = new ResizeObserver(updateButtonWidth);
+        renderAtCurrentWidth();
+        resizeObserver = new ResizeObserver(renderAtCurrentWidth);
         resizeObserver.observe(host);
+        setStatus("ready");
       } catch {
         if (active) setStatus("failed");
       }
@@ -110,7 +110,7 @@ export function GoogleSignInButton({ api, register = false, disabled, onCredenti
 
   return (
     <div style={{ marginBlock: status === "hidden" ? 0 : 12 }}>
-      <div ref={container} hidden={status === "failed" || disabled} />
+      <div className="rd-google-button" ref={container} hidden={status === "failed" || disabled} />
       {status === "failed" && <div role="status">
         <span>Google sign-in is temporarily unavailable. </span>
         <button type="button" className="rd-btn" disabled={disabled} onClick={() => setAttempt(value => value + 1)}>Retry</button>
