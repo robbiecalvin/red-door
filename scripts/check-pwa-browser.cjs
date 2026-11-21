@@ -11,6 +11,7 @@ const server=http.createServer((req,res)=>{
  if(relative.startsWith('api/')||relative.startsWith('media/')){privateHits++;res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'}).end(JSON.stringify({private:'controlled-private-sentinel'}));return;}
  const file=path.resolve(root,relative);if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile()){res.writeHead(404).end();return;}
  let body=fs.readFileSync(file);if(relative==='sw.js' && variant!=='a')body=Buffer.from(body.toString().replace("const VERSION = '","const VERSION = 'browser-update-"+variant+"-"));
+ if(relative==='sw.js' && variant==='stalled')body=Buffer.from(body.toString().replace('event.waitUntil(self.skipWaiting())','event.waitUntil(Promise.resolve())'));
  res.writeHead(200,{'content-type':mime[path.extname(file)]||'application/octet-stream','cache-control':'no-cache'});res.end(body);
 });
 (async()=>{
@@ -53,6 +54,12 @@ const server=http.createServer((req,res)=>{
   variant='c';await page.evaluate(async()=>{await (await navigator.serviceWorker.getRegistration()).update();});
   await toolbar.getByRole('button',{name:'Update app',exact:true}).click({timeout:15000});
   await page.waitForFunction(async()=>!(await navigator.serviceWorker.getRegistration())?.waiting);
+
+  // A waiting worker that ignores activation must not trap the user on this page.
+  await page.getByRole('tab',{name:'Login',exact:true}).click();
+  variant='stalled';await page.evaluate(async()=>{await (await navigator.serviceWorker.getRegistration()).update();});
+  await page.getByRole('button',{name:'Reload app',exact:true}).click({timeout:15000});
+  await page.getByRole('button',{name:'Create guest session'}).waitFor({timeout:15000});
 
   // iPhone install guidance is tested in Chromium with a simulated user agent, not an actual phone.
   const apple=await browser.newContext({userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',viewport:{width:390,height:844},isMobile:true,hasTouch:true});

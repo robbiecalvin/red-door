@@ -10,14 +10,18 @@ self.addEventListener('install', event => {
   // Updates wait for explicit user consent. No automatic skipWaiting.
 });
 self.addEventListener('message', event => {
-  if (event.data?.type === 'RED_DOOR_ACTIVATE_UPDATE') self.skipWaiting();
+  if (event.data?.type === 'RED_DOOR_ACTIVATE_UPDATE') event.waitUntil(self.skipWaiting());
 });
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     // Keep the previous public build for open tabs loading older lazy chunks.
-    const names = (await caches.keys()).filter(name => name.startsWith(CACHE_PREFIX));
-    const previous = names.filter(name => name !== CACHE_NAME).slice(-1);
-    await Promise.all(names.filter(name => name !== CACHE_NAME && !previous.includes(name)).map(name => caches.delete(name)));
+    try {
+      const names = (await caches.keys()).filter(name => name.startsWith(CACHE_PREFIX));
+      const previous = names.filter(name => name !== CACHE_NAME).slice(-1);
+      await Promise.all(names.filter(name => name !== CACHE_NAME && !previous.includes(name)).map(name => caches.delete(name)));
+    } catch {
+      // Cache cleanup can be retried during the next update.
+    }
     await self.clients.claim();
   })());
 });
@@ -29,7 +33,7 @@ self.addEventListener('fetch', event => {
     const relative=url.pathname.slice(scope.pathname.length);
     if (relative !== '' && !/^(index|discover|threads|public|profile|settings|submissions|promoted)\.html$/.test(relative)) return;
     const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),8000);
-    event.respondWith(fetch(request,{signal:controller.signal}).catch(async () => (await caches.open(CACHE_NAME)).match(OFFLINE_URL).then(response => response ?? new Response('Reconnect to use Badehaus X.', {status:503,headers:{'content-type':'text/plain'}}))).finally(()=>clearTimeout(timer)));
+    event.respondWith(fetch(request,{signal:controller.signal,cache:'no-cache'}).catch(async () => (await caches.open(CACHE_NAME)).match(OFFLINE_URL).then(response => response ?? new Response('Reconnect to use Badehaus X.', {status:503,headers:{'content-type':'text/plain'}}))).finally(()=>clearTimeout(timer)));
     return;
   }
   const hashedAsset = /^assets\/[A-Za-z0-9_./-]+-[A-Za-z0-9_-]{8,}\.(js|css|woff2?|png|svg|webp|jpg)$/.test(url.pathname.slice(scope.pathname.length));
