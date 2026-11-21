@@ -1072,7 +1072,7 @@ export function App(): React.ReactElement {
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
             {session?.ageVerified === true ? (
-              <div className={`rd-topbar-session${showExploreShortcuts ? " is-explore" : ""}`}>
+              <div className="rd-topbar-session">
                 <div className="rd-brand" aria-label="Badehaus X">
                   <span className="rd-door-mark" aria-hidden="true" />
                   <div className="rd-name">Badehaus X</div>

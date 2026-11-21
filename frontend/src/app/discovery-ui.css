@@ -396,16 +396,24 @@
 }
 
 @media (max-width: 900px) {
-  .rd-topbar.mobile .rd-topbar-session.is-explore {
+  .rd-topbar.mobile .rd-topbar-session {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .rd-topbar-session.is-explore .rd-explore-shortcuts {
+  .rd-topbar-session .rd-explore-shortcuts {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   }
 
-  .rd-topbar-session.is-explore .rd-explore-actions .rd-top-actions {
+  .rd-topbar-session .rd-explore-shortcuts .rd-top-avatar {
+    grid-column: 2;
+  }
+
+  .rd-topbar-session .rd-explore-actions {
+    grid-column: 3;
+  }
+
+  .rd-topbar-session .rd-explore-actions .rd-top-actions {
     margin-inline-start: auto;
   }
 }
