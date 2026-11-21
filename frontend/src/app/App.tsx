@@ -1108,7 +1108,7 @@ export function App(): React.ReactElement {
                 <a className="rd-btn rd-entrance-action" href="./thebackroom/" aria-label="The Backroom" title="The Backroom">
                   <Icon name="book" />
                 </a>
-                <a className="rd-btn rd-entrance-action" href="https://badehaus.com/store" aria-label="Store" title="Store">
+                <a className="rd-btn rd-entrance-action" href="https://badehausx.com/store/" aria-label="Store" title="Store">
                   <Icon name="shopping-bag" />
                 </a>
               </div>

@@ -40,7 +40,7 @@ const server=http.createServer((req,res)=>{
   const welcomeCard=await page.getByRole('region',{name:'Welcome to Badehaus X'}).boundingBox();
   assert.ok(authCard && welcomeCard && authCard.y + authCard.height <= welcomeCard.y);
   assert.equal(await page.getByRole('link',{name:'The Backroom',exact:true}).getAttribute('href'),'./thebackroom/');
-  assert.equal(await page.getByRole('link',{name:'Store',exact:true}).getAttribute('href'),'https://badehaus.com/store');
+  assert.equal(await page.getByRole('link',{name:'Store',exact:true}).getAttribute('href'),'https://badehausx.com/store/');
   await page.getByRole('tab',{name:'Anon login',exact:true}).click();
   await page.getByRole('button',{name:'Create guest session',exact:true}).waitFor();
   assert.equal(await page.getByText('A Badehaus X update is ready.',{exact:false}).count(),0,'first installation must not offer a false update');
