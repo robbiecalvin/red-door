@@ -9,8 +9,10 @@ const PwaContext=createContext<Context>({installed:false,prompt:null,error:'',as
 export function PwaProvider({children}:{children:React.ReactNode}) {
   const [installed,setInstalled]=useState(isInstalled),[prompt,setPrompt]=useState<InstallPrompt|null>(null),[error,setError]=useState('');
   const [online,setOnline]=useState(navigator.onLine),[update,setUpdate]=useState(false),[updating,setUpdating]=useState(false);
-  const registration=useRef<ServiceWorkerRegistration|null>(null),reloadRequested=useRef(false),updateTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
-  useEffect(()=>()=>clearTimeout(updateTimer.current),[]);
+  const registration=useRef<ServiceWorkerRegistration|null>(null);
+  const pendingReload=useRef<(() => void) | null>(null);
+  const cancelReload=useRef<(() => void) | null>(null);
+  useEffect(()=>()=>cancelReload.current?.(),[]);
   useEffect(()=>{
     const before=(event:Event)=>{event.preventDefault();setPrompt(event as InstallPrompt);};
     const installedNow=()=>{setInstalled(true);setPrompt(null);};
@@ -27,7 +29,12 @@ export function PwaProvider({children}:{children:React.ReactNode}) {
     let controllerSeen=Boolean(navigator.serviceWorker.controller);
     const state=()=>{if(!disposed && installing?.state==='installed' && reg?.active)setUpdate(true);};
     const found=()=>{installing?.removeEventListener('statechange',state);installing=reg?.installing??null;installing?.addEventListener('statechange',state);};
-    const changed=()=>{if(disposed)return;if(!controllerSeen){controllerSeen=true;return;}if(reloadRequested.current)window.location.reload();else if(registration.current?.active)setUpdate(true);};
+    const changed=()=>{
+      if(disposed)return;
+      if(pendingReload.current){pendingReload.current();return;}
+      if(!controllerSeen){controllerSeen=true;return;}
+      if(registration.current?.active)setUpdate(true);
+    };
     const check=()=>{if(document.visibilityState==='visible')void registration.current?.update().catch(()=>{});};
     navigator.serviceWorker.addEventListener('controllerchange',changed);
     document.addEventListener('visibilitychange',check);
@@ -35,11 +42,45 @@ export function PwaProvider({children}:{children:React.ReactNode}) {
     return()=>{disposed=true;reg?.removeEventListener('updatefound',found);installing?.removeEventListener('statechange',state);navigator.serviceWorker.removeEventListener('controllerchange',changed);document.removeEventListener('visibilitychange',check);};
   },[]);
   async function install(){if(!prompt)return;setError('');try{await prompt.prompt();await prompt.userChoice;}catch{setError('Use your browser’s menu to install Badehaus X.');}finally{setPrompt(null);}}
-  function activate(){
+  function activate() {
+    if (pendingReload.current) return;
+    const worker = registration.current?.waiting;
+    if (!worker) {
+      window.location.reload();
+      return;
+    }
+
+    setError('');
     setUpdating(true);
-    if(registration.current?.waiting){reloadRequested.current=true;registration.current.waiting.postMessage({type:'RED_DOOR_ACTIVATE_UPDATE'});
-      updateTimer.current=setTimeout(()=>{reloadRequested.current=false;setUpdating(false);setError('The update has not activated yet. Check your connection and try Reload again.');},10000);}
-    else window.location.reload();
+    const stateChanged = () => {
+      if (worker.state === 'activated' || worker.state === 'redundant') reload();
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      worker.removeEventListener('statechange', stateChanged);
+      cancelReload.current = null;
+    };
+    const reload = () => {
+      if (!cancelReload.current) return;
+      cleanup();
+      if (navigator.onLine) window.location.reload();
+      else {
+        pendingReload.current = null;
+        setUpdating(false);
+      }
+    };
+    // Old workers and some browsers may never report activation. The user has
+    // already requested a reload, so don't leave them on a stale page.
+    const timer = setTimeout(reload, 10000);
+    cancelReload.current = cleanup;
+    pendingReload.current = reload;
+    worker.addEventListener('statechange', stateChanged);
+    try {
+      worker.postMessage({ type: 'RED_DOOR_ACTIVATE_UPDATE' });
+      stateChanged();
+    } catch {
+      reload();
+    }
   }
   return <PwaContext.Provider value={{installed,prompt,error,online,update,updating,activate,install}}>{children}{!online || (update && !installed)?<aside className="rd-pwa-status" aria-label="App connection and updates"><div role="status">{!online?'You’re offline. Messages and changes need a connection.': error || 'A Badehaus X update is ready. Finish your message before reloading.'}</div>{online && update?<button className="rd-btn" disabled={updating} onClick={activate}>{updating?'Updating…':'Reload app'}</button>:null}</aside>:null}</PwaContext.Provider>;
 }
