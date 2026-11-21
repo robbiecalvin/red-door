@@ -87,7 +87,7 @@ export function PwaProvider({children}:{children:React.ReactNode}) {
 }
 export function InstallApp({ iconOnly = false }: { iconOnly?: boolean } = {}) {
   const {installed,prompt,error,online,update,updating,activate,install}=useContext(PwaContext),[open,setOpen]=useState(false),[busy,setBusy]=useState(false);
-  const buttonClass = iconOnly ? "rd-btn rd-install-app rd-entrance-action" : "rd-btn rd-install-app";
+  const buttonClass = iconOnly ? "rd-btn rd-install-app rd-topbar-icon" : "rd-btn rd-install-app";
   if (installed) {
     const label = updating ? "Updating…" : update ? "Update app" : "App installed";
     return <button type="button" className={buttonClass} aria-label={label} title={iconOnly ? label : undefined}

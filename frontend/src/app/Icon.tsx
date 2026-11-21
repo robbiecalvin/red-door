@@ -1,9 +1,10 @@
 import React from "react";
 
-export type IconName = "live" | "map" | "message" | "board" | "filter" | "settings" | "user" | "book" | "star" | "logout" | "shield" | "grid" | "groups" | "lightning" | "download" | "check" | "shopping-bag";
+export type IconName = "live" | "map" | "message" | "board" | "filter" | "settings" | "user" | "book" | "star" | "logout" | "shield" | "grid" | "groups" | "lightning" | "download" | "check" | "shopping-bag" | "plus";
 const paths: Record<IconName, React.ReactNode> = {
   download: <path d="M12 3v12m-5-5 5 5 5-5M4 16v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4" />,
   "shopping-bag": <><path d="M5 8h14l2 13H3L5 8Z" /><path d="M9 10V6a3 3 0 0 1 6 0v4" /></>,
+  plus: <path d="M12 5v14M5 12h14" />,
   check: <path d="m5 12 4 4L19 6" />,
   live: <><rect x="2.5" y="6" width="13" height="12" rx="3" /><path d="m15.5 10 6-3v10l-6-3" /></>,
   lightning: <path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" fill="currentColor" />,
