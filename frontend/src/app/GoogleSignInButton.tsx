@@ -13,6 +13,7 @@ type GoogleIdentity = {
     theme: "outline";
     size: "large";
     text: "signin_with" | "signup_with";
+    width: string;
   }): void;
 };
 
@@ -58,6 +59,7 @@ export function GoogleSignInButton({ api, register = false, disabled, onCredenti
     if (!host) return;
     let active = true;
     let submitted = false;
+    let resizeObserver: ResizeObserver | undefined;
 
     async function renderButton() {
       const challenge = await api.getGoogleSignInChallenge().catch(() => null);
@@ -76,8 +78,23 @@ export function GoogleSignInButton({ api, register = false, disabled, onCredenti
             });
           }
         });
+        let renderedWidth = 0;
+        const renderAtCurrentWidth = () => {
+          const width = Math.min(host.clientWidth, 400);
+          if (!active || width === 0 || width === renderedWidth) return;
+          renderedWidth = width;
+          host.replaceChildren();
+          google.renderButton(host, {
+            theme: "outline",
+            size: "large",
+            text: register ? "signup_with" : "signin_with",
+            width: String(width)
+          });
+        };
+        renderAtCurrentWidth();
+        resizeObserver = new ResizeObserver(renderAtCurrentWidth);
+        resizeObserver.observe(host);
         setStatus("ready");
-        google.renderButton(host, { theme: "outline", size: "large", text: register ? "signup_with" : "signin_with" });
       } catch {
         if (active) setStatus("failed");
       }
@@ -86,13 +103,14 @@ export function GoogleSignInButton({ api, register = false, disabled, onCredenti
     void renderButton();
     return () => {
       active = false;
+      resizeObserver?.disconnect();
       host.replaceChildren();
     };
   }, [api, attempt, register]);
 
   return (
     <div style={{ marginBlock: status === "hidden" ? 0 : 12 }}>
-      <div ref={container} hidden={status === "failed" || disabled} />
+      <div className="rd-google-button" ref={container} hidden={status === "failed" || disabled} />
       {status === "failed" && <div role="status">
         <span>Google sign-in is temporarily unavailable. </span>
         <button type="button" className="rd-btn" disabled={disabled} onClick={() => setAttempt(value => value + 1)}>Retry</button>
