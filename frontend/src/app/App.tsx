@@ -341,7 +341,7 @@ export function App(): React.ReactElement {
   const [lastError, setLastError] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
 
-  const [authView, setAuthView] = useState<AuthView>("guest");
+  const [authView, setAuthView] = useState<AuthView>("login");
   const [activeTab, setActiveTab] = useState<TopTab>(() => tabFromLocation());
   const [discoverScreen, setDiscoverScreen] = useState<DiscoverScreen>(() => discoverScreenFromHash());
   const [discoverFilter, setDiscoverFilter] = useState<DiscoverFilter>("all");
@@ -628,7 +628,7 @@ export function App(): React.ReactElement {
     setUnreadChatCount(0);
     setLastError(null);
     setAuthInfo("");
-    setAuthView("guest");
+    setAuthView("login");
     setLoginEmail("");
     setLoginPassword("");
     setRegisterEmail("");
@@ -1135,10 +1135,8 @@ export function App(): React.ReactElement {
             <>
               <section className="rd-card rd-home-hero" aria-label="Welcome to Badehaus X">
                 <div className="rd-card-body">
-                  <div className="rd-welcome-brand"><span className="rd-door-mark" aria-hidden="true" />Badehaus X<span className="rd-adult-badge">18+</span></div>
                   <img className="rd-afterdark-art" src={afterDark} alt="" aria-hidden="true" />
-                  <div className="rd-eyebrow">SEE WHO’S INSIDE.</div>
-                  <h1 className="rd-home-title">Badehaus<br /><span>X</span></h1>
+                  <h1 className="rd-eyebrow">SEE WHO’S INSIDE.</h1>
                   <p className="rd-home-copy">A space for gay men to explore, chat, and connect. Livestreaming. Group Chats & more.</p>
                   <div className="rd-welcome-features"><span><Icon name="map" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
                 </div>
