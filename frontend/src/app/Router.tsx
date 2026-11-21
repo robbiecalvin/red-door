@@ -451,10 +451,8 @@ function CruiseSurface({
   onOpenThreadRequested(key: string): void;
   onUnreadCountChange?(count: number): void;
 }>): React.ReactElement {
-  const [activeFilterCount, setActiveFilterCount] = useState(0);
   const [filteredPeopleKeys, setFilteredPeopleKeys] = useState<ReadonlySet<string> | null>(null);
   useEffect(() => { const update = (event: Event) => { const keys=(event as CustomEvent<{keys:string[] | null}>).detail.keys; setFilteredPeopleKeys(keys ? new Set(keys) : null); }; window.addEventListener("rd:people-filter", update); return () => window.removeEventListener("rd:people-filter", update); }, []);
-  useEffect(() => { const update = (event: Event) => setActiveFilterCount((event as CustomEvent<{count:number}>).detail.count); window.addEventListener("rd:filter-count", update); return () => window.removeEventListener("rd:filter-count", update); }, []);
   const [mobileTab, setMobileTab] = useState<MobileCruiseTab>(discoverScreen);
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
   const [selectedProfileKey, setSelectedProfileKey] = useState<string | null>(null);
@@ -1232,7 +1230,6 @@ function CruiseSurface({
 
   return (
     <div className={`rd-explore-surface ${mobileTab === "map" ? "is-map" : "is-people"}`}>
-      {mobileTab !== "map" ? <div className="rd-explore-toolbar"><div><span className="rd-eyebrow">EXPLORE</span><strong>{travelCenter ? "Your travel location" : selfCoords ? "People nearby" : "Discover people"}</strong></div><button className="rd-btn" onClick={() => window.dispatchEvent(new CustomEvent("rd:discover-control", {detail:{action:"open_filters"}}))}>Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button></div> : null}
       <div className="rd-explore-layout">
         <div className="rd-map-pane">{mobileTab === "map" ? mapPanel : null}</div>
         <div className="rd-people-pane">{chatPanel}</div>
@@ -2339,7 +2336,6 @@ function CruiseChat({
   }, []);
 
   const activeFilterCount = [rightNowOnly, Boolean(distanceLimitKm), photoReviewedOnly,favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
-  useEffect(() => { window.dispatchEvent(new CustomEvent("rd:filter-count", {detail:{count:activeFilterCount}})); }, [activeFilterCount]);
   useEffect(() => { window.dispatchEvent(new CustomEvent("rd:people-filter", {detail:{keys: activeFilterCount ? gridCards.map(card => card.key) : null}})); }, [activeFilterCount, gridCards]);
 
   if (view === "thread" && peerKey.trim()) {
