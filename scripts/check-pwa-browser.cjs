@@ -21,9 +21,16 @@ const server=http.createServer((req,res)=>{
  const browser=context.browser();
  try{
   const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const expectDefaultLogin=async()=>{
+   await page.getByLabel('Email',{exact:true}).waitFor();
+   assert.equal(await page.getByRole('tab',{name:'Login',exact:true}).getAttribute('aria-selected'),'true');
+  };
   // No external services are contacted by this test.
   await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
   await page.goto(base);await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
+  await expectDefaultLogin();
+  await page.getByRole('tab',{name:'Anon login',exact:true}).click();
+  await page.getByRole('button',{name:'Create guest session',exact:true}).waitFor();
   assert.equal(await page.getByText('A Badehaus X update is ready.',{exact:false}).count(),0,'first installation must not offer a false update');
   const installability=await(await context.newCDPSession(page)).send('Page.getInstallabilityErrors');assert.deepEqual(installability.installabilityErrors,[]);
   const manifest=await page.evaluate(async()=>{const result=await fetch('./manifest.webmanifest');return result.json();});
@@ -39,12 +46,12 @@ const server=http.createServer((req,res)=>{
   await context.setOffline(true);await page.getByText('You’re offline.',{exact:false}).waitFor();
   assert.equal(await page.evaluate(async()=>{try{await fetch('./api/private');return false;}catch{return true;}}),true,'private API cannot be served from cache offline');
   await page.goto(base);await page.getByRole('heading',{name:'Let’s reconnect.'}).waitFor();assert.equal(await page.getByRole('button',{name:'Try again'}).count(),1);
-  await context.setOffline(false);await page.getByRole('button',{name:'Try again'}).click();await page.getByRole('button',{name:'Create guest session'}).waitFor();
+  await context.setOffline(false);await page.getByRole('button',{name:'Try again'}).click();await expectDefaultLogin();
   // A waiting update must preserve an in-progress form until explicitly accepted.
   await page.getByRole('tab',{name:'Login',exact:true}).click();await page.getByLabel('Email',{exact:true}).fill('controlled-draft@example.com');
   variant='b';await page.evaluate(async()=>{const reg=await navigator.serviceWorker.getRegistration();await reg.update();});
   await page.getByRole('button',{name:'Reload app',exact:true}).waitFor({timeout:15000});assert.equal(await page.getByLabel('Email',{exact:true}).inputValue(),'controlled-draft@example.com');
-  await page.getByRole('button',{name:'Reload app',exact:true}).click();await page.getByRole('button',{name:'Create guest session'}).waitFor();
+  await page.getByRole('button',{name:'Reload app',exact:true}).click();await expectDefaultLogin();
   await page.waitForFunction(async()=>{const reg=await navigator.serviceWorker.getRegistration();return !reg.waiting;});
   keys=await page.evaluate(()=>caches.keys());assert.ok(keys.some(k=>k.includes('browser-update-b-')));
   assert.ok(keys.length<=2,'keep at most current and previous public builds for this scope');
@@ -59,7 +66,7 @@ const server=http.createServer((req,res)=>{
   await page.getByRole('tab',{name:'Login',exact:true}).click();
   variant='stalled';await page.evaluate(async()=>{await (await navigator.serviceWorker.getRegistration()).update();});
   await page.getByRole('button',{name:'Reload app',exact:true}).click({timeout:15000});
-  await page.getByRole('button',{name:'Create guest session'}).waitFor({timeout:15000});
+  await expectDefaultLogin();
 
   // iPhone install guidance is tested in Chromium with a simulated user agent, not an actual phone.
   const apple=await browser.newContext({userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',viewport:{width:390,height:844},isMobile:true,hasTouch:true});
