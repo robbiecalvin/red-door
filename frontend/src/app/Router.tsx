@@ -17,7 +17,7 @@ import { AdminLaunchChecks } from "./AdminLaunchChecks";
 import { BillingSettings, PromoCodeForm } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { POSTING_BOARDS, isPostingBoard, type PostingBoard } from "../../../shared/postingBoard";
-import { MemberEditor, MemberProfileLinks, ProfileExternalLinks, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, useMember } from "./MemberPanels";
+import { MemberEditor, MemberProfileLinks, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, useMember } from "./MemberPanels";
 import type { PublicMember } from "../../../shared/member";
 import { queueReply } from "./replyDraft";
 import { PlusMembershipCard } from "./PlusShowcase";
@@ -30,7 +30,7 @@ import { hasPlus, limits } from "../../../shared/plus";
 import { openPlus } from "./PlusPanel";
 import { SavedSearches } from "./SavedSearches";
 import { Icon } from "./Icon";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 
 import {
   apiClient,
@@ -426,6 +426,14 @@ function channelToChatKind(channel: MessageChannel): "cruise" | "date" {
   return channel === "instant" ? "cruise" : "date";
 }
 
+type ThreadProfileRequest = {
+  key: string;
+  displayName: string;
+  chatKind: "cruise" | "date";
+  onMessage(): void;
+  onError(message: string): void;
+};
+
 function CruiseSurface({
   api,
   session,
@@ -437,6 +445,7 @@ function CruiseSurface({
   isMobile,
   discoverScreen,
   onOpenThreadRequested,
+  threadProfileOpener,
   onUnreadCountChange
 }: Readonly<{
   api: Api;
@@ -449,6 +458,7 @@ function CruiseSurface({
   isMobile: boolean;
   discoverScreen: DiscoverScreen;
   onOpenThreadRequested(key: string): void;
+  threadProfileOpener?: React.Ref<(request: ThreadProfileRequest) => void>;
   onUnreadCountChange?(count: number): void;
 }>): React.ReactElement {
   const [filteredPeopleKeys, setFilteredPeopleKeys] = useState<ReadonlySet<string> | null>(null);
@@ -456,6 +466,7 @@ function CruiseSurface({
   const [mobileTab, setMobileTab] = useState<MobileCruiseTab>(discoverScreen);
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(null);
   const [selectedProfileKey, setSelectedProfileKey] = useState<string | null>(null);
+  const [threadProfileRequest, setThreadProfileRequest] = useState<ThreadProfileRequest | null>(null);
   const [selfCoords, setSelfCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [priorityPlacement, setPriorityPlacement] = useState<Record<string, number>>({});
   const [snapshotPresence, setSnapshotPresence] = useState<ReadonlyArray<CruisePresenceUpdate>>([]);
@@ -698,11 +709,11 @@ function CruiseSurface({
 
   useEffect(() => {
     if (!selectedProfileKey || selectedProfileKey === meKey) return;
-    if (blockedKeys.has(selectedProfileKey) || (selectedProfileKey.startsWith("user:") && !visibleProfileKeys.has(selectedProfileKey))) {
+    if (blockedKeys.has(selectedProfileKey) || (!threadProfileRequest && selectedProfileKey.startsWith("user:") && !visibleProfileKeys.has(selectedProfileKey))) {
       setSelectedProfileKey(null);
       setSelectedPublicProfile(null);
     }
-  }, [blockedKeys, meKey, selectedProfileKey, visibleProfileKeys]);
+  }, [blockedKeys, meKey, selectedProfileKey, threadProfileRequest, visibleProfileKeys]);
 
   useEffect(() => {
     const missing = sortedPeers
@@ -908,19 +919,20 @@ function CruiseSurface({
     });
   }, [api, mediaFetchedAtById, mediaRetryAfterById, mediaUrlById, mediaUrlFreshForMs, publicProfiles]);
 
-  async function openProfileByKey(key: string): Promise<void> {
+  async function openProfileByKey(key: string, request: ThreadProfileRequest | null = null): Promise<void> {
+    setThreadProfileRequest(request);
     const keyChanged = selectedProfileKeyRef.current !== key;
     if (keyChanged) {
       setSelectedPublicProfile(null);
       setSelectedMediaIndex(0);
     }
     setSelectedProfileKey((prev) => (prev === key ? prev : key));
+    const requestSeq = ++profileRequestSeqRef.current;
     const profileId = profileIdFromPresenceKey(key);
     if (!profileId) {
       setSelectedPublicProfile(null);
       return;
     }
-    const requestSeq = ++profileRequestSeqRef.current;
     try {
       if (key === meKey) {
         const meProfile = await api.getMyProfile(session.sessionToken);
@@ -992,9 +1004,18 @@ function CruiseSurface({
         setSelectedPublicProfile(null);
         return;
       }
-      setLastError(normalizeErrorMessage(e));
+      if (request) {
+        setSelectedProfileKey(null);
+        request.onError(normalizeErrorMessage(e));
+      } else {
+        setLastError(normalizeErrorMessage(e));
+      }
     }
   }
+
+  useImperativeHandle(threadProfileOpener, () => (request) => {
+    void openProfileByKey(request.key, request);
+  });
 
   async function toggleFavoriteFromProfile(userId: string): Promise<void> {
     if (session.userType === "guest") {
@@ -1014,7 +1035,7 @@ function CruiseSurface({
     const normalizedTarget = normalizePeerKey(targetKey);
     if (!normalizedTarget || normalizedTarget === meKey) return;
     try {
-      await api.sendChat(session.sessionToken, session.mode === "date" ? "date" : "cruise", normalizedTarget, FIRE_SIGNAL_TEXT);
+      await api.sendChat(session.sessionToken, threadProfileRequest?.chatKind ?? (session.mode === "date" ? "date" : "cruise"), normalizedTarget, FIRE_SIGNAL_TEXT);
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
     }
@@ -1244,7 +1265,7 @@ function CruiseSurface({
         const unreadCount = unreadByProfileKey[selectedProfileKey] ?? 0;
         const scheduled = visiblePublicProfiles.find(profile => chatKeyFromProfileUserId(profile.userId) === selectedProfileKey);
         const isOnline = isSelf || (scheduled?.scheduledOnline ?? onlinePeers.some(peer => peer.key === selectedProfileKey));
-        const displayName = displayNameForIdentity(selectedProfileKey, profile?.displayName ?? peerProfileByKey[selectedProfileKey]?.displayName);
+        const displayName = displayNameForIdentity(selectedProfileKey, profile?.displayName ?? threadProfileRequest?.displayName ?? peerProfileByKey[selectedProfileKey]?.displayName);
         const mediaIds = Array.from(new Set([
           profile?.mainPhotoMediaId, ...(profile?.galleryMediaIds ?? []), profile?.videoMediaId
         ].filter((id): id is string => Boolean(id))));
@@ -1252,9 +1273,13 @@ function CruiseSurface({
         const activeId = mediaIds[activeIndex];
         const activeUrl = mediaUrlById[activeId];
         const preview = avatarForKey(selectedProfileKey);
-        const close = () => setSelectedProfileKey(null);
+        const close = () => {
+          profileRequestSeqRef.current += 1;
+          setSelectedProfileKey(null);
+        };
         const message = () => {
-          onOpenThreadRequested(selectedProfileKey);
+          if (threadProfileRequest) threadProfileRequest.onMessage();
+          else onOpenThreadRequested(selectedProfileKey);
           close();
         };
         const reply = (excerpt: string) => {
@@ -2860,6 +2885,7 @@ function ThreadsPanel({
   initialPeerKey,
   onCloseOverlay,
   onActiveThreadChange,
+  onOpenProfile,
   api,
   session,
   setLastError,
@@ -2874,6 +2900,7 @@ function ThreadsPanel({
   initialPeerKey?: string | null;
   onCloseOverlay?(): void;
   onActiveThreadChange?(key: string | null): void;
+  onOpenProfile(request: ThreadProfileRequest): void;
   api: Api;
   session: Session;
   setLastError(value: string | null): void;
@@ -2895,10 +2922,6 @@ function ThreadsPanel({
   const [selectedPeerKey, setSelectedPeerKey] = useState<string | null>(initialPeerKey ?? null);
   useEffect(() => { onActiveThreadChange?.(selectedPeerKey); }, [selectedPeerKey, onActiveThreadChange]);
   const [messages, setMessages] = useState<ReadonlyArray<ChatMessage>>([]);
-  const [threadView, setThreadView] = useState<"messages" | "profile">("messages");
-  const [threadProfile, setThreadProfile] = useState<PublicProfile | null>(null);
-  const [threadProfileLoading, setThreadProfileLoading] = useState<boolean>(false);
-  const [groupStatus, setGroupStatus] = useState<string | null>(null);
   const [pinnedKeys, setPinnedKeys] = useState<ReadonlySet<string>>(new Set());
   const [deletedKeys, setDeletedKeys] = useState<ReadonlySet<string>>(new Set());
   const avatarUrlByMediaIdRef = useRef<Record<string, string>>({});
@@ -3130,7 +3153,6 @@ function ThreadsPanel({
   useEffect(() => {
     if (!openThreadRequest?.key) return;
     setSelectedPeerKey(normalizePeerKey(openThreadRequest.key));
-    setThreadView("messages");
     if (typeof onThreadRequestConsumed === "function") onThreadRequestConsumed();
   }, [onThreadRequestConsumed, openThreadRequest]);
 
@@ -3142,7 +3164,6 @@ function ThreadsPanel({
         return;
       }
       setSelectedPeerKey(null);
-      setThreadView("messages");
     }
   }, [deletedKeys, onCloseOverlay, selectedPeerKey]);
 
@@ -3151,39 +3172,10 @@ function ThreadsPanel({
       const custom = evt as CustomEvent<{ tab?: TopTab }>;
       if (custom.detail?.tab !== "threads") return;
       setSelectedPeerKey(null);
-      setThreadView("messages");
     };
     window.addEventListener("rd:tab-select", onTabSelect as EventListener);
     return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
   }, []);
-
-  useEffect(() => {
-    if (!selectedPeerKey) return;
-    const profileId = profileIdFromPresenceKey(selectedPeerKey);
-    if (!profileId) {
-      setThreadProfile(null);
-      return;
-    }
-    let cancelled = false;
-    setThreadProfileLoading(true);
-    void api
-      .getPublicProfile(profileId, session.sessionToken)
-      .then((res) => {
-        if (!cancelled) setThreadProfile(res.profile);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setThreadProfile(null);
-          setLastError(normalizeErrorMessage(e));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setThreadProfileLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, selectedPeerKey, setLastError, threadView]);
 
   useEffect(() => {
     if (!selectedPeerKey) {
@@ -3254,16 +3246,6 @@ function ThreadsPanel({
     [api, session.sessionToken]
   );
 
-  async function sendFireToSelectedPeer(): Promise<void> {
-    if (!selectedPeerKey) return;
-    try {
-      await api.sendChat(session.sessionToken, selectedChatKind, selectedPeerKey, FIRE_SIGNAL_TEXT);
-      setGroupStatus("Fire sent.");
-    } catch (e) {
-      setLastError(normalizeErrorMessage(e));
-    }
-  }
-
   function togglePinThread(key: string): void {
     const next = new Set(pinnedKeys);
     if (next.has(key)) next.delete(key);
@@ -3284,7 +3266,6 @@ function ThreadsPanel({
     });
     if (selectedPeerKey && toDelete.has(selectedPeerKey)) {
       setSelectedPeerKey(null);
-      setThreadView("messages");
     }
     setSelectedKeys(new Set());
     setSelectMode(false);
@@ -3299,7 +3280,6 @@ function ThreadsPanel({
       return next;
     });
     setSelectedPeerKey(null);
-    setThreadView("messages");
     setSelectedKeys(new Set());
     setSelectMode(false);
   }
@@ -3313,8 +3293,18 @@ function ThreadsPanel({
     {groupPanel}
   </>;
 
+  function openConversation(row: (typeof rows)[number]): void {
+    setSelectedPeerKey(row.key);
+    setChatReadCursor(row.chatKind, row.key, Date.now());
+    setRows((prev) => {
+      const next = prev.map((item) => item.key === row.key ? { ...item, unreadCount: 0 } : item);
+      return threadRowsEqual(prev, next) ? prev : next;
+    });
+  }
+
   if (selectedPeerKey) {
-    const peerLabel = activeRow?.displayName ?? threadProfile?.displayName ?? (selectedPeerKey ? displayNameForPeerKey(selectedPeerKey) : "Anon");
+    const peerLabel = activeRow?.displayName ?? displayNameForPeerKey(selectedPeerKey);
+    const displayName = displayNameForIdentity(selectedPeerKey, peerLabel);
     const thread = (
       <div className="rd-active-thread"
         style={{
@@ -3325,75 +3315,31 @@ function ThreadsPanel({
           marginBlock: 0
         }}
       >
-        <div className="rd-thread-header" style={{ position: "sticky", top: 0, zIndex: 46, background: "#17171b", borderBottom: "1px solid var(--line)", padding: "12px", display: "flex", justifyContent: "space-between", alignItems:"center", gap:12 }}><button className="rd-btn" aria-label="Back to conversations" onClick={() => setSelectedPeerKey(null)}>←</button><strong>{displayNameForIdentity(selectedPeerKey, peerLabel)}</strong>
-          <button
-            type="button"
-            onClick={() => setThreadView((prev) => (prev === "messages" ? "profile" : "messages"))}
-            style={{ background: "transparent", border: 0, color: "#ff7a88", fontSize: 13, fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase", padding: 0, cursor: "pointer" }}
-          >
-            {threadView === "messages" ? "View Profile" : "Back to Thread"}
+        <div className="rd-thread-header" style={{ position: "sticky", top: 0, zIndex: 46, background: "#17171b", borderBottom: "1px solid var(--line)", padding: "12px", display: "flex", alignItems: "center", gap: 12 }}>
+          <button className="rd-btn" aria-label="Back to conversations" onClick={() => setSelectedPeerKey(null)}>←</button>
+          <button type="button" className="rd-thread-avatar rd-thread-avatar-mini" aria-label={`View ${displayName}’s profile`}
+            onClick={() => onOpenProfile({ key: selectedPeerKey, displayName, chatKind: selectedChatKind, onMessage: () => {}, onError: setLastError })}>
+            <img src={activeRow?.avatarUrl ?? avatarForKey(selectedPeerKey)} alt="" />
           </button>
+          <strong>{displayName}</strong>
         </div>
         {session.userId && selectedPeerKey.startsWith("user:") && hasPlus(session) ? (
           <button type="button" className="rd-btn" onClick={() => setGroupView({ peerId: selectedPeerKey.slice(5) })}>Start group conversation</button>
         ) : null}
         {groupPanel}
-        {threadView === "messages" ? (
-          <ChatWindow key={selectedPeerKey}
+        <ChatWindow key={selectedPeerKey}
           readReceipts={hasPlus(session)}
-            chatKind={selectedChatKind}
-            peerKey={selectedPeerKey}
-            currentUserKey={meKey}
-            messages={messages}
-            client={client}
-            title={peerLabel}
-            peerSummary={{ displayName: peerLabel }}
-            showHeader={false}
-            edgeToEdge={true}
-            fillHeight={isMobile}
-          />
-        ) : (
-          <div style={{ padding: 12, display: "grid", gap: 12 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "88px 1fr", gap: 12, alignItems: "center" }}>
-              <img
-                src={activeRow?.avatarUrl ?? avatarForKey(selectedPeerKey)}
-                alt="Profile avatar"
-                style={{ width: 88, height: 88, borderRadius: "50%", objectFit: "cover", border: "2px solid #ff3047" }}
-              />
-              <div style={{ display: "grid", gap: 4 }}>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{displayNameForIdentity(selectedPeerKey, threadProfile?.displayName ?? peerLabel)}</div>
-                <div style={{ color: "#ff7a88", fontSize: 14 }}>Open to a conversation</div>
-              </div>
-            </div>
-            {threadProfileLoading ? <div style={{ color: "#9fb6bf", fontSize: 14 }}>Loading profile...</div> : null}
-            {!threadProfileLoading ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ color: "#ced3dc", fontSize: 14, lineHeight: 1.5 }}>
-                  <div>Age: {threadProfile?.age ?? "-"}</div>
-                  <div>Race: {threadProfile?.stats?.race ?? "-"}</div>
-                  <div>Height: {threadProfile?.stats?.heightInches ?? "-"}</div>
-                  <div>Weight: {threadProfile?.stats?.weightLbs ?? "-"}</div>
-                  <div>Cock Size: {threadProfile?.stats?.cockSizeInches ?? "-"}</div>
-                  <div>Cut / Uncut: {threadProfile?.stats?.cutStatus ?? "-"}</div>
-                  <div>Position: {threadProfile?.stats?.position ?? "-"}</div>
-                  <ProfileDetailsView stats={threadProfile?.stats} />
-                  <ProfileExternalLinks member={threadProfile?.member} />
-                  {selectedPeerKey?.startsWith("user:") ? <RequestPrivateAlbum key={selectedPeerKey} api={api} session={session} ownerId={selectedPeerKey.slice(5)} /> : null}
-                  <div style={{ marginTop: 8 }}>Bio: {threadProfile?.bio ?? "-"}</div>
-                </div>
-                <div>
-                  <button
-                    type="button"
-                    style={{ ...buttonSecondary(false), color: "#ffb347", borderColor: "rgba(255,179,71,0.65)" }}
-                    onClick={() => void sendFireToSelectedPeer()}
-                  >
-                    🔥 FIRE
-                  </button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        )}
+          chatKind={selectedChatKind}
+          peerKey={selectedPeerKey}
+          currentUserKey={meKey}
+          messages={messages}
+          client={client}
+          title={peerLabel}
+          peerSummary={{ displayName: peerLabel }}
+          showHeader={false}
+          edgeToEdge={true}
+          fillHeight={isMobile}
+        />
       </div>
     );
     const dialog = (
@@ -3404,7 +3350,7 @@ function ThreadsPanel({
     );
     if (onCloseOverlay) return dialog;
     return (
-      <MessageWorkspace rows={visibleRows} current={selectedPeerKey} onSelect={key => { setSelectedPeerKey(key); setThreadView("messages"); }}>
+      <MessageWorkspace rows={visibleRows} current={selectedPeerKey} onSelect={setSelectedPeerKey}>
         {isMobile ? thread : dialog}
       </MessageWorkspace>
     );
@@ -3448,87 +3394,40 @@ function ThreadsPanel({
       {visibleRows.length === 0 ? (
         <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name={mode === "pinned" ? "star" : "message"} /></span><h2>{mode === "pinned" ? "Keep your favorites close." : "Every connection starts with hello."}</h2><p>{mode === "pinned" ? "Pin a conversation to find it here." : "Your conversations will appear here once you start chatting."}</p></div>
       ) : (
-        visibleRows.map((row) => (
-          <button
-            key={row.key}
-            type="button"
-            onClick={() => {
-            if (selectMode) {
-              setSelectedKeys((prev) => {
-                const next = new Set(prev);
-                if (next.has(row.key)) next.delete(row.key);
-                else next.add(row.key);
-                return next;
-              });
-              return;
-            }
-            setSelectedPeerKey(row.key);
-            setChatReadCursor(row.chatKind, row.key, Date.now());
-            setRows((prev) => {
-              const next = prev.map((item) => (item.key === row.key ? { ...item, unreadCount: 0 } : item));
-              return threadRowsEqual(prev, next) ? prev : next;
-            });
-          }}
-            style={{
-              border: 0,
-              borderBottom: "1px solid rgba(255,58,77,0.24)",
-              borderRadius: 0,
-              padding: "10px 12px",
-              background: selectMode && selectedKeys.has(row.key) ? "rgba(108,20,30,0.5)" : "rgba(0,0,0,0.2)",
-              textAlign: "left",
-              color: "#fff",
-              cursor: "pointer",
-              display: "grid",
-              gridTemplateColumns: "52px 1fr auto",
-              gap: 10,
-              alignItems: "center",
-              width: "100%"
-            }}
-          >
-            <img
-              src={row.avatarUrl ?? avatarForKey(row.key)}
-              alt={`${displayNameForIdentity(row.key, row.displayName)} avatar`}
-              style={{ width: 52, height: 52, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(255,122,136,0.9)" }}
-            />
-            <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
-              <div style={{ fontWeight: 700 }}>{displayNameForIdentity(row.key, row.displayName)}</div>
-              <div style={{ color: "#b9bec9", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.preview}</div>
-            </div>
-            <div style={{ display: "grid", justifyItems: "end", gap: 6 }}>
-              {row.unreadCount > 0 ? (
-                <span
-                  style={{
-                    minWidth: 20,
-                    height: 20,
-                    borderRadius: 999,
-                    paddingInline: 6,
-                    display: "grid",
-                    placeItems: "center",
-                    background: "linear-gradient(180deg, #ff8a00 0%, #ff5d1f 100%)",
-                    color: "#fff",
-                    fontSize: 11,
-                    fontWeight: 700
-                  }}
-                >
-                  {row.unreadCount > 99 ? "99+" : row.unreadCount}
-                </span>
-              ) : null}
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  togglePinThread(row.key);
-                }}
-                style={{ border: 0, background: "transparent", color: pinnedKeys.has(row.key) ? "#8ec7ff" : "#7384a0", cursor: "pointer", fontSize: 16, padding: 0, lineHeight: 1 }}
-                aria-label={pinnedKeys.has(row.key) ? "Unpin thread" : "Pin thread"}
-              >
+        visibleRows.map((row) => {
+          const displayName = displayNameForIdentity(row.key, row.displayName);
+          const selected = selectMode && selectedKeys.has(row.key);
+
+          return (
+            <div key={row.key} className="rd-thread-list-row" data-selected={selected}>
+              <button type="button" className="rd-thread-avatar" aria-label={`View ${displayName}’s profile`}
+                onClick={() => onOpenProfile({ key: row.key, displayName, chatKind: row.chatKind, onMessage: () => openConversation(row), onError: setLastError })}>
+                <img src={row.avatarUrl ?? avatarForKey(row.key)} alt="" />
+              </button>
+              <button type="button" className="rd-thread-list-conversation" aria-pressed={selectMode ? selected : undefined} onClick={() => {
+                if (!selectMode) {
+                  openConversation(row);
+                  return;
+                }
+                setSelectedKeys((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(row.key)) next.delete(row.key);
+                  else next.add(row.key);
+                  return next;
+                });
+              }}>
+                <strong>{displayName}</strong>
+                <span>{row.preview}</span>
+                {row.unreadCount > 0 ? <span className="rd-thread-unread">{row.unreadCount > 99 ? "99+" : row.unreadCount}</span> : null}
+              </button>
+              <button type="button" className="rd-thread-pin" data-pinned={pinnedKeys.has(row.key)}
+                onClick={() => togglePinThread(row.key)} aria-label={pinnedKeys.has(row.key) ? "Unpin thread" : "Pin thread"}>
                 {pinnedKeys.has(row.key) ? "📌" : "•"}
               </button>
             </div>
-          </button>
-        ))
+          );
+        })
       )}
-      {groupStatus ? <div style={{ color: "#ff7a88", fontSize: 12, padding: 10 }}>{groupStatus}</div> : null}
     </div>
   );
 }
@@ -6892,6 +6791,8 @@ export function Router({
   onLogout?(): void;
 }>): React.ReactElement {
   const isMobile = useIsMobile();
+  const threadProfileOpener = useRef<((request: ThreadProfileRequest) => void) | null>(null);
+  const openThreadProfile = (request: ThreadProfileRequest) => threadProfileOpener.current?.(request);
   const [exploreThreadKey, setExploreThreadKey] = useState<string | null>(null);
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
   const [rememberedThread, setRememberedThread] = useState<string | null>(null);
@@ -6989,6 +6890,7 @@ export function Router({
           setLastError={setDiscoverError}
           isMobile={isMobile}
           discoverScreen={discoverScreen}
+          threadProfileOpener={threadProfileOpener}
           onOpenThreadRequested={(key) => {
             if (!isMobile) {
               setExploreThreadKey(normalizePeerKey(key));
@@ -7001,14 +6903,14 @@ export function Router({
         />
       </div>
       {activeTab === "discover" && exploreThreadKey && !isMobile ? (
-        <ThreadsPanel key={exploreThreadKey} initialPeerKey={exploreThreadKey}
+        <ThreadsPanel onOpenProfile={openThreadProfile} key={exploreThreadKey} initialPeerKey={exploreThreadKey}
           onCloseOverlay={() => setExploreThreadKey(null)}
           api={api} session={session} setLastError={setThreadsError} isMobile={false}
           onUnreadCountChange={onUnreadCountChange}
         />
       ) : null}
       {activeTab === "threads" && !isMobile ? (
-        <ThreadsPanel initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
+        <ThreadsPanel onOpenProfile={openThreadProfile} initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
           api={api}
           session={session}
           setLastError={setThreadsError}
@@ -7076,7 +6978,7 @@ export function Router({
               />
             ) : null}
             {mobileInboxTab === "threads" ? (
-              <ThreadsPanel initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
+              <ThreadsPanel onOpenProfile={openThreadProfile} initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
                 api={api}
                 session={session}
                 setLastError={setThreadsError}
@@ -7088,7 +6990,7 @@ export function Router({
               />
             ) : null}
             {mobileInboxTab === "pinned" ? (
-              <ThreadsPanel initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
+              <ThreadsPanel onOpenProfile={openThreadProfile} initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
                 api={api}
                 session={session}
                 setLastError={setThreadsError}
@@ -7102,7 +7004,7 @@ export function Router({
             ) : null}
             {mobileInboxTab === "spots" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} compact={true} /> : null}
             {mobileInboxTab === "groups" ? <>
-              <ThreadsPanel api={api} session={session} setLastError={setThreadsError} isMobile={isMobile} groupOnly />
+              <ThreadsPanel onOpenProfile={openThreadProfile} api={api} session={session} setLastError={setThreadsError} isMobile={isMobile} groupOnly />
               <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setGroupsError} compact={true} />
             </> : null}
           </div>
