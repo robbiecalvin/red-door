@@ -2,10 +2,6 @@
   background: #101012;
 }
 
-.rd-explore-toolbar > div:first-child {
-  align-items: baseline;
-}
-
 .rd-explore-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -337,22 +333,9 @@
 }
 
 @media (min-width: 901px) {
-  .rd-explore-toolbar > div:first-child {
-    display: flex;
-    gap: 14px;
-  }
-
-  .rd-explore-toolbar strong {
-    font-size: 16px;
-  }
-
   .rd-explore-surface .rd-explore-layout {
     grid-template-columns: minmax(0, 1fr);
-    padding: 16px;
-  }
-
-  .rd-explore-surface.is-map .rd-explore-layout {
-    padding-top: 0;
+    padding: 0 16px 16px;
   }
 
   .rd-explore-surface .rd-people-pane {
@@ -420,6 +403,10 @@
   .rd-topbar-session.is-explore .rd-explore-shortcuts {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .rd-topbar-session.is-explore .rd-explore-actions .rd-top-actions {
+    margin-inline-start: auto;
   }
 }
 
