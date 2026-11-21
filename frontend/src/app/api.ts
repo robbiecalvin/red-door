@@ -45,6 +45,8 @@ export type VerifyEmailOrLoginResponse = Readonly<{
   session: Session;
 }>;
 
+type GoogleSignInChallenge = { clientId: string; nonce: string };
+
 export type RegisterResponse = Readonly<{
   email: string;
   verificationRequired: true;
@@ -2564,6 +2566,9 @@ function createLocalApiClient(): Readonly<{
   requestPasswordReset(email: string): Promise<{ message: string }>;
   confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
   getRegistrationPolicy(): Promise<RegistrationPolicy>;
+  getGoogleSignInChallenge(): Promise<GoogleSignInChallenge | null>;
+  loginWithGoogle(credential: string, nonce: string): Promise<VerifyEmailOrLoginResponse>;
+  registerWithGoogle(credential: string, nonce: string, phoneE164: string, profile: RegistrationProfileInput): Promise<VerifyEmailOrLoginResponse>;
   getPrivacy(sessionToken: string): Promise<{ analyticsConsent: boolean }>;
   setPrivacy(sessionToken: string, analyticsConsent: boolean): Promise<{ analyticsConsent: boolean }>;
   getAnalytics(sessionToken: string): Promise<AnalyticsSummary>;
@@ -2720,6 +2725,9 @@ function createLocalApiClient(): Readonly<{
     async memberPhoto() { throw new Error("Photo verification needs a connected backend."); return new Blob(); },
     async requestPasswordReset() { throw { message: "Account recovery requires the live backend and email delivery." }; },
     async confirmPasswordReset() { throw { message: "Password reset links must be used with the live backend." }; },
+    async getGoogleSignInChallenge() { return null; },
+    async loginWithGoogle() { throw { message: "Google sign-in requires the live backend." }; },
+    async registerWithGoogle() { throw { message: "Google registration requires the live backend." }; },
     async getRegistrationPolicy() { return { status: "disabled" }; },
     async getPrivacy(token) { const state = readState(), session = requireUserSession(state, token); return { analyticsConsent: state.usersById[session.userId!]?.plusData?.analyticsConsent === true }; },
     async setPrivacy(token, analyticsConsent) { const state = readState(), session = requireUserSession(state, token), user = state.usersById[session.userId!]; writeState({ ...state, usersById: { ...state.usersById, [user.id]: { ...user, plusData: { ...user.plusData, analyticsConsent } } } }); return { analyticsConsent }; },
@@ -4112,6 +4120,9 @@ export function apiClient(basePath = "/api"): Readonly<{
   requestPasswordReset(email: string): Promise<{ message: string }>;
   confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
   getRegistrationPolicy(): Promise<RegistrationPolicy>;
+  getGoogleSignInChallenge(): Promise<GoogleSignInChallenge | null>;
+  loginWithGoogle(credential: string, nonce: string): Promise<VerifyEmailOrLoginResponse>;
+  registerWithGoogle(credential: string, nonce: string, phoneE164: string, profile: RegistrationProfileInput): Promise<VerifyEmailOrLoginResponse>;
   getPrivacy(sessionToken: string): Promise<{ analyticsConsent: boolean }>;
   setPrivacy(sessionToken: string, analyticsConsent: boolean): Promise<{ analyticsConsent: boolean }>;
   getAnalytics(sessionToken: string): Promise<AnalyticsSummary>;
@@ -4276,6 +4287,29 @@ export function apiClient(basePath = "/api"): Readonly<{
     async memberPhoto(token,userId,purpose) {const route=purpose==="priority"?`/admin/membership/priority/${encodeURIComponent(userId)}/proof`:`/admin/photo-verifications/${encodeURIComponent(userId)}/photo`;const response=await fetch(`${basePath}${route}`,{headers:headers(token),cache:"no-store"});if(!response.ok){await readJsonOrThrow(response);throw new Error("Photo unavailable.");}return response.blob();},
     async requestPasswordReset(email) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/request`, { method: "POST", headers: headers(), body: JSON.stringify({ email }) })) as Promise<{ message: string }>; },
     async confirmPasswordReset(token, password) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/confirm`, { method: "POST", headers: headers(), body: JSON.stringify({ token, password }) })) as Promise<{ ok: true }>; },
+    async getGoogleSignInChallenge() {
+      const response = await fetch(`${basePath}/auth/google/challenge`, { method: "POST", cache: "no-store" });
+      if (response.status === 404) return null;
+      return await readJsonOrThrow(response) as GoogleSignInChallenge;
+    },
+    async loginWithGoogle(credential, nonce) {
+      const response = await fetch(`${basePath}/auth/google`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ credential, nonce }),
+        cache: "no-store"
+      });
+      return await readJsonOrThrow(response) as VerifyEmailOrLoginResponse;
+    },
+    async registerWithGoogle(credential, nonce, phoneE164, profile) {
+      const response = await fetch(`${basePath}/auth/google/register`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ ...profile, phoneE164, credential, nonce }),
+        cache: "no-store"
+      });
+      return await readJsonOrThrow(response) as VerifyEmailOrLoginResponse;
+    },
     async getRegistrationPolicy() {
       const response = await fetch(`${basePath}/auth/registration-policy`, { cache: "no-store" });
       if (response.status === 404) return { status: "disabled" };

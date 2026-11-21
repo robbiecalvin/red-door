@@ -48,6 +48,7 @@ export type StoredUser = Readonly<{
   ageVerified: boolean;
   emailVerified: boolean;
   emailOwnershipVerifiedAtMs?: number;
+  googleSubject?: string;
   verificationLastSentAtMs?: number;
   verificationAttemptCount?: number;
   verificationAttemptStartedAtMs?: number;
@@ -83,6 +84,7 @@ export type RegisterResult = Readonly<{
 }>;
 
 export type LoginResult = VerifyEmailResult;
+export type GoogleIdentity = Readonly<{ email: string; subject: string }>;
 
 export type VerifyEmailResult = Readonly<{
   user: Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role" | "bannedAtMs" | "bannedReason">;
@@ -102,6 +104,8 @@ export type AuthService = Readonly<{
   verifyEmail(email: string, code: string): Result<VerifyEmailResult>;
   resendVerificationCode(email: string): Result<RegisterResult>;
   login(email: string, password: string): Result<VerifyEmailResult>;
+  loginWithGoogle(identity: GoogleIdentity): Result<LoginResult>;
+  registerWithGoogle(identity: GoogleIdentity, age: number, phoneE164: string, promoCode?: string, analyticsConsent?: boolean, marketingConsent?: boolean, acceptedPolicy?: PolicyAcceptance): Result<LoginResult>;
   resolveJWT(token: string): Result<Session>;
   issueJWT(user: Pick<StoredUser, "id" | "email" | "userType" | "tier" | "role">): Result<string>;
   getSession(sessionToken: string): Result<Session>;
@@ -319,6 +323,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         role: c.role === "admin" ? "admin" : "user",
         ageVerified: c.ageVerified === true,
         emailVerified: c.emailVerified,
+        googleSubject: typeof c.googleSubject === "string" ? c.googleSubject : undefined,
         emailOwnershipVerifiedAtMs: typeof c.emailOwnershipVerifiedAtMs === "number" ? c.emailOwnershipVerifiedAtMs : undefined,
         verificationLastSentAtMs: typeof c.verificationLastSentAtMs === "number" ? c.verificationLastSentAtMs : undefined,
         verificationAttemptCount: typeof c.verificationAttemptCount === "number" ? c.verificationAttemptCount : undefined,
@@ -519,6 +524,100 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
   const resetRequests = new Map<string, number>();
   const verificationAttempts = new Map<string, { startedAt: number; count: number }>();
+
+  function signInUser(user: StoredUser): LoginResult {
+    const now = nowMs();
+    const session = createSessionForUser(user, now);
+    return {
+      user: userPublic(user),
+      jwt: issueJWTInternal(user, now, session.sessionToken),
+      session
+    };
+  }
+
+  function googleSubjectInUse(subject: string): boolean {
+    return [...usersById.values()].some(user => user.googleSubject === subject);
+  }
+
+  function registerUser(email: string, password: string, phoneE164: string, promoCode?: string, analyticsConsent?: boolean, marketingConsent?: boolean, acceptedPolicy?: PolicyAcceptance, google?: GoogleIdentity): Result<StoredUser> {
+    if (typeof email !== "string" || !isLikelyValidEmail(email)) {
+      return err("UNAUTHORIZED_ACTION", "Invalid email.");
+    }
+    const normalizedPhone = typeof phoneE164 === "string" ? phoneE164.trim() : "";
+    if (!google && !deps.emailOnlyVerification && !skipEmailVerification && !isLikelyValidPhoneE164(normalizedPhone)) {
+      return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
+    }
+    if ((google || skipEmailVerification || deps.emailOnlyVerification) && normalizedPhone.length > 0 && !isLikelyValidPhoneE164(normalizedPhone)) {
+      return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
+    }
+    const passwordValid = skipEmailVerification
+      ? typeof password === "string" && password.length >= 6
+      : isStrongPassword(password);
+    if (!passwordValid) {
+      return err(
+        "UNAUTHORIZED_ACTION",
+        skipEmailVerification
+          ? "Invalid password. Use at least 6 characters."
+          : "Invalid password. Use at least 10 chars with uppercase, lowercase, number, and symbol."
+      );
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+    if (google && (adminEmails.has(normalizedEmail) || googleSubjectInUse(google.subject))) {
+      return err("UNAUTHORIZED_ACTION", "This Google account cannot be used to register. Try signing in.");
+    }
+    if (usersByEmail.has(normalizedEmail)) {
+      return err("UNAUTHORIZED_ACTION", "Email already registered.");
+    }
+
+    let plusExpiresAtMs: number | undefined;
+    const requestedCode = typeof promoCode === "string" ? promoCode.trim().toUpperCase() : "";
+    const referralOwner = /^BX-[0-9A-F]{32}$/.test(requestedCode)
+      ? [...usersById.values()].find(u => u.plusData?.priorityReferralCode === requestedCode &&
+        u.plusData.priorityApprovedAtMs !== undefined && !u.bannedAtMs && u.emailVerified)
+      : undefined;
+    const priorityInvited = isPriorityInvitation(requestedCode);
+    try { if (!referralOwner && !priorityInvited) plusExpiresAtMs = launchGrant(promoCode, nowMs()); }
+    catch (e) { return err("UNAUTHORIZED_ACTION", (e as Error).message); }
+    const salt = crypto.randomBytes(PASSWORD_SALT_BYTES);
+    const hash = hashPassword(password, salt);
+
+    const now = nowMs();
+    const user: StoredUser = {
+      id: crypto.randomUUID(),
+      email: normalizedEmail,
+      phoneE164: normalizedPhone.length > 0 ? normalizedPhone : null,
+      userType: "registered",
+      tier: plusExpiresAtMs ? "premium" : "free",
+      plusExpiresAtMs,
+      plusData: { analyticsConsent: analyticsConsent === true, ...(acceptedPolicy ? { registrationPolicy: { ...acceptedPolicy, acceptedAtMs: now, source: "registration" as const } } : {}), ...(marketingConsent === true ? {
+        marketing: { enabled: true, token: crypto.randomBytes(32).toString("hex"),
+          history: [{ enabled: true, atMs: now, source: "registration", version: MARKETING_CONSENT_VERSION }] }
+      } : {}), ...(priorityInvited ? {
+        priorityInvited: true, priorityApprovedAtMs: now,
+        priorityReferralCode: `BX-${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`
+      } : {}), ...(referralOwner ? { priorityReferralOwnerId: referralOwner.id } : {}), ...(plusExpiresAtMs ? {redeemedPromoCodes:[normalizePromoCode(promoCode)],providerTutorialPending:!deps.emailOnlyVerification && normalizePromoCode(promoCode)===PROVIDER_LAUNCH_CODE} : {}) },
+      role: "user",
+      ageVerified: Boolean(google),
+      // The standalone server never enables the legacy verification bypass.
+      emailVerified: Boolean(google) || (skipEmailVerification && !adminEmails.has(normalizedEmail)),
+      ...(google ? { googleSubject: google.subject, emailOwnershipVerifiedAtMs: now } : {}),
+      bannedAtMs: null,
+      bannedReason: null,
+      verificationCodeSaltB64: null,
+      verificationCodeHashB64: null,
+      verificationCodeExpiresAtMs: null,
+      passwordSaltB64: salt.toString("base64"),
+      passwordHashB64: hash.toString("base64"),
+      createdAtMs: now
+    };
+
+    usersByEmail.set(normalizedEmail, user);
+    usersById.set(user.id, user);
+    persistUsers();
+    return ok(user);
+  }
+
   return {
     requestPasswordReset(email) {
       if (typeof email !== "string" || !isLikelyValidEmail(email)) return null;
@@ -551,81 +650,23 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       return ok({ session });
     },
 
-    register(email: string, password: string, phoneE164: string, promoCode?: string, analyticsConsent?: boolean, marketingConsent?: boolean, acceptedPolicy?: PolicyAcceptance): Result<RegisterResult> {
-      if (typeof email !== "string" || !isLikelyValidEmail(email)) {
-        return err("UNAUTHORIZED_ACTION", "Invalid email.");
-      }
-      const normalizedPhone = typeof phoneE164 === "string" ? phoneE164.trim() : "";
-      if (!deps.emailOnlyVerification && !skipEmailVerification && !isLikelyValidPhoneE164(normalizedPhone)) {
-        return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
-      }
-      if ((skipEmailVerification || deps.emailOnlyVerification) && normalizedPhone.length > 0 && !isLikelyValidPhoneE164(normalizedPhone)) {
-        return err("UNAUTHORIZED_ACTION", "Invalid phone number. Use E.164 format, e.g. +15555551234.");
-      }
-      const passwordValid = skipEmailVerification
-        ? typeof password === "string" && password.length >= 6
-        : isStrongPassword(password);
-      if (!passwordValid) {
-        return err(
-          "UNAUTHORIZED_ACTION",
-          skipEmailVerification
-            ? "Invalid password. Use at least 6 characters."
-            : "Invalid password. Use at least 10 chars with uppercase, lowercase, number, and symbol."
-        );
-      }
-
-      const normalizedEmail = normalizeEmail(email);
-      if (usersByEmail.has(normalizedEmail)) {
-        return err("UNAUTHORIZED_ACTION", "Email already registered.");
-      }
-
-      let plusExpiresAtMs: number | undefined;
-      const requestedCode = typeof promoCode === "string" ? promoCode.trim().toUpperCase() : "";
-      const referralOwner = /^BX-[0-9A-F]{32}$/.test(requestedCode)
-        ? [...usersById.values()].find(u => u.plusData?.priorityReferralCode === requestedCode &&
-          u.plusData.priorityApprovedAtMs !== undefined && !u.bannedAtMs && u.emailVerified)
-        : undefined;
-      const priorityInvited = isPriorityInvitation(requestedCode);
-      try { if (!referralOwner && !priorityInvited) plusExpiresAtMs = launchGrant(promoCode, nowMs()); }
-      catch (e) { return err("UNAUTHORIZED_ACTION", (e as Error).message); }
-      const salt = crypto.randomBytes(PASSWORD_SALT_BYTES);
-      const hash = hashPassword(password, salt);
-
-      const now = nowMs();
-      const user: StoredUser = {
-        id: crypto.randomUUID(),
-        email: normalizedEmail,
-        phoneE164: normalizedPhone.length > 0 ? normalizedPhone : null,
-        userType: "registered",
-        tier: plusExpiresAtMs ? "premium" : "free",
-        plusExpiresAtMs,
-        plusData: { analyticsConsent: analyticsConsent === true, ...(acceptedPolicy ? { registrationPolicy: { ...acceptedPolicy, acceptedAtMs: now, source: "registration" as const } } : {}), ...(marketingConsent === true ? {
-          marketing: { enabled: true, token: crypto.randomBytes(32).toString("hex"),
-            history: [{ enabled: true, atMs: now, source: "registration", version: MARKETING_CONSENT_VERSION }] }
-        } : {}), ...(priorityInvited ? {
-          priorityInvited: true, priorityApprovedAtMs: now,
-          priorityReferralCode: `BX-${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`
-        } : {}), ...(referralOwner ? { priorityReferralOwnerId: referralOwner.id } : {}), ...(plusExpiresAtMs ? {redeemedPromoCodes:[normalizePromoCode(promoCode)],providerTutorialPending:!deps.emailOnlyVerification && normalizePromoCode(promoCode)===PROVIDER_LAUNCH_CODE} : {}) },
-        role: "user",
-        ageVerified: false,
-        // The standalone server never enables the legacy verification bypass.
-        emailVerified: skipEmailVerification && !adminEmails.has(normalizedEmail),
-        bannedAtMs: null,
-        bannedReason: null,
-        verificationCodeSaltB64: null,
-        verificationCodeHashB64: null,
-        verificationCodeExpiresAtMs: null,
-        passwordSaltB64: salt.toString("base64"),
-        passwordHashB64: hash.toString("base64"),
-        createdAtMs: now
-      };
-
-      usersByEmail.set(normalizedEmail, user);
-      usersById.set(user.id, user);
-      persistUsers();
-      const delivery = !user.emailVerified ? setVerificationCode(user, now) : undefined;
+    register(email, password, phoneE164, promoCode, analyticsConsent, marketingConsent, acceptedPolicy) {
+      const result = registerUser(email, password, phoneE164, promoCode, analyticsConsent, marketingConsent, acceptedPolicy);
+      if (!result.ok) return result;
+      const user = result.value;
+      const delivery = !user.emailVerified ? setVerificationCode(user, user.createdAtMs) : undefined;
       notifyStateChanged();
-      return ok({ email: normalizedEmail, verificationRequired: true, ...(delivery ? { delivery } : {}) });
+      return ok({ email: user.email, verificationRequired: true, ...(delivery ? { delivery } : {}) });
+    },
+
+    registerWithGoogle(identity, age, phoneE164, promoCode, analyticsConsent, marketingConsent, acceptedPolicy) {
+      if (!Number.isInteger(age) || age < 18 || age > 120) {
+        return err("AGE_GATE_REQUIRED", "Declare an age between 18 and 120 to register.");
+      }
+      const password = crypto.randomBytes(32).toString("hex") + "Aa1!";
+      const result = registerUser(identity.email, password, phoneE164, promoCode, analyticsConsent, marketingConsent, acceptedPolicy, identity);
+      if (!result.ok) return result;
+      return ok(signInUser(result.value));
     },
 
     verifyEmail(email: string, code: string): Result<VerifyEmailResult> {
@@ -761,14 +802,25 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         loginUser = autoVerifiedUser;
       }
 
-      const now = nowMs();
-      const session = createSessionForUser(loginUser, now);
-      const token = issueJWTInternal(loginUser, now, session.sessionToken);
-      return ok({
-        user: userPublic(loginUser),
-        jwt: token,
-        session
-      });
+      return ok(signInUser(loginUser));
+    },
+
+    loginWithGoogle({ email, subject }) {
+      const user = usersByEmail.get(normalizeEmail(email));
+      if (!user?.emailVerified || user.role === "admin" || adminEmails.has(user.email)) {
+        return err("UNAUTHORIZED_ACTION", "Use Google with a verified Badehaus X account, or sign in with your password.");
+      }
+      const banned = assertNotBanned(user);
+      if (!banned.ok) return banned;
+      if (user.googleSubject === subject) return ok(signInUser(user));
+      if (user.googleSubject || googleSubjectInUse(subject)) {
+        return err("UNAUTHORIZED_ACTION", "Use the Google account linked to your Badehaus X account.");
+      }
+      const linkedUser = { ...user, googleSubject: subject };
+      usersById.set(user.id, linkedUser);
+      usersByEmail.set(user.email, linkedUser);
+      persistUsers();
+      return ok(signInUser(linkedUser));
     },
 
     resolveJWT(token) {

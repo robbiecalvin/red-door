@@ -226,6 +226,14 @@ Primary implementation: `backend/src/server.ts`
 
 Use `.env.example` as baseline.
 
+### Google sign-in and registration
+
+In Google Auth Platform, configure the app's branding and audience, then create a **Web application** OAuth client. Add `https://badehausx.com` to **Authorized JavaScript origins**, plus any other frontend origins you use to serve the app. For local testing, add the exact origin, such as `http://localhost:5173`.
+
+Set `GOOGLE_OAUTH_CLIENT_ID` on the backend and restart it. The Login and Register tabs load Google's button when the backend is configured. The popup uses only the public client ID and requires no redirect URI. If the Google app is in testing, add the accounts you plan to test with.
+
+Google registration requires the same age declaration and applicable policy acceptance as password registration. Google supports sign-in here for Gmail and Google Workspace addresses whose Google-managed domain matches the email. An existing member can use Google with the same verified email address. The app links the Google account on first sign-in. Administrators use the password flow.
+
 ### Google Sheets signup capture
 
 The early-access homepage can forward each new signup to a Google Sheet through a deployed Google Apps Script web app.
