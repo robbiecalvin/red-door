@@ -1,464 +1,109 @@
-# Badehaus X (Web + Optional Backend)
+# Badehaus X
 
-Last updated: 2026-11-16
+Badehaus X is an 18+ cruise-first social web app for gay men. Explore nearby profiles through a map or People grid, start a conversation, and find local plans and cruising spots. The app runs in the browser and can be installed as a progressive web app (PWA).
 
-## What this project is
+[Visit Badehaus X](https://badehausx.com/) · [Validation and launch plan](next_steps.md) · [Product rules](docs/product.md)
 
-Badehaus X is a cruise-first social platform with:
-- A static web frontend (GitHub Pages-compatible)
-- An optional Express + WebSocket backend for multi-user/networked behavior
-- Optional PostgreSQL persistence and optional S3-compatible object storage
+Updated November 21, 2026 against source revision `00b78c2`. Hosted availability and launch approval are tracked in the validation plan.
 
-The active frontend product emphasis is Cruise mode. Date and Hybrid logic exists server-side and in services/tests, with frontend behavior still cruise-first.
+## Product overview
 
-## Install Badehaus X on your phone
+| Area | What the repository implements |
+| --- | --- |
+| Entrance and accounts | Login-first entrance with public Explore, guest access where permitted, password registration with email ownership verification, optional Google sign-in and registration, and password recovery. Guests appear as **Anon** with distinct underlying accounts. The 18+ gate uses self-declared age. |
+| Explore and profiles | Map and People views, shared discovery filters, approximate distance bands, favorites, temporary Right Now statuses, media and privacy settings. Denied GPS does not publish the default map center as user presence. The map offers bounded recovery and a People fallback. |
+| Inbox and safety | Private threads, read state, quoted replies, media, group invites, realtime WebSocket updates with polling recovery, and opt-in push. Mobile Inbox avatars open the shared member profile. Cruise chat retention is 72 hours. Blocking, reporting, private album approval/revocation, and admin moderation are available through the backend. |
+| Community | Public postings, local plans and groups with scheduling and RSVP/invitation controls, cruising spots and check-ins, and moderated submissions. The standalone interface is Cruise-first. Date and Hybrid rules remain implemented in backend services. |
+| Plus and Priority | The standard app Plus plan is CAD $7.99/month and includes Travel, advanced filters, saved searches, expanded limits, and private album features. Founder, launch promo and Priority referral terms have separate eligibility and billing paths. See [Plus setup](docs/plus-subscriptions.md) and [Priority readiness](docs/priority-invitation-readiness.md). |
+| Public editorial and store | The Backroom is a public editorial section with a versioned build-time release schedule and an admin/member review workflow. The static `/store/` has a catalog and local shopping bag. Its page marks online ordering as coming soon. |
+| Release scope | MD linking and legacy promoted-profile endpoints are disabled in standalone. The public Live tab says **Coming soon**. LiveKit rehearsal is a separate beta. |
 
-Badehaus X can be installed from the website as a PWA. Choose **Install Badehaus X** on the entrance screen or in settings. On iPhone/iPad, open Safari and choose **Share → Add to Home Screen**. On Android, use Chrome's **Install app** option when offered.
+Recent source changes include simpler mobile Explore and Groups toolbars, map markers that open on a completed tap, Google buttons aligned with Login and Register, recovery from stalled app updates, and administrative CSV import/update with scheduled discovery and facilitated chat replies. The latter two need explicit trust and hosted validation before promoting real-time activity claims. [Validation plan](next_steps.md)
 
-Installation adds a home-screen icon and an app window where supported. Messages, people, photos and payments still need a connection. The offline page helps you reconnect; private conversations and photos are excluded from the PWA cache. Updates wait for you to choose Reload.
+### Install on a phone
 
-See [installation, privacy and testing details](docs/pwa.md). Actual iPhone/Android installation and push delivery still require device rehearsal.
+On iPhone or iPad, use Safari’s **Share → Add to Home Screen**. On Android, use Chrome’s **Install app** option when offered. The app also exposes installation guidance in supported contexts. Messaging, people, photos and payments require a connection. The offline screen helps users reconnect. Private conversations and photos are excluded from the PWA cache. Updates normally wait for the user to choose **Reload**. [PWA behavior and checks](docs/pwa.md)
 
-## UI refresh
+## Run locally
 
-- Atmospheric red-door login artwork and a mobile-first black and red layout.
-- Map/People switch with shared filters, filter counts, readable profile cards, and approximate distance bands. The map defaults to a dark vector style, with bounded recovery and a People fallback.
-- Shared bottom sheets for profiles, filters, and conversation actions; desktop navigation and split discovery/conversation layouts.
-- Profile, Privacy, Notifications, Membership, and Account settings sections. Browser notifications are optional and work while the app is open in the background.
-- Guest screen names always show **Anon**, including legacy guest profiles. Guest sessions still keep separate identities and conversations.
-- Message sending status, retry on rejection, and a composer that fits the available mobile viewport.
+Use **Node.js 24**, matching the CI workflows, and the bundled npm. Install locked dependencies with `npm ci`.
 
-## Badehaus X Plus
-
-Plus now includes interactive benefit previews, a Free/Plus comparison, clear CAD $7.99 monthly pricing, and contextual upgrade entry points for filters, Travel mode, chat limits, and profile video. Active members get shortcuts into their benefits. Guest members can start registration directly from the Plus screen.
-
-## Standalone release changes
-
-- MD navigation, linking, provider discovery and paid cross-platform messaging are disabled. Preserved integration code/data is not registered in this release.
-- Ordinary accounts require email ownership verification; phone numbers are optional. Configure SMTP before enabling registration or recovery. Age entry is self-declaration, not independent identity verification.
-- The dark map keeps its canvas during recoverable errors, loads a bundled MapLibre worker, and offers bounded retries and People fallback. Denying GPS never publishes the default map center as your presence.
-- API requests have finite deadlines; mutations are not automatically replayed.
-
-See [standalone launch evidence and remaining gates](docs/standalone-launch-report.md),
-[email ownership rollout](docs/email-ownership-rollout.md),
-[map provider and browser checks](docs/map-provider-and-recovery.md),
-[hosting and growth](docs/hosting-growth-plan.md), and
-[mobile eligibility and delivery](docs/mobile-release-plan.md).
-
-## Community and connection features
-
-- Temporary intent statuses, shared interests, profile prompts, and quoted photo/message replies.
-- Live inbox updates with polling recovery and opt-in discreet Web Push notifications.
-- Private photo review with admin approval, free location hiding, and persistent safety reports/blocks.
-- Local plans with city/category filters, public venues, RSVPs, and cancellation/reporting controls.
-- Guided profile completion, useful empty states, and Plus remembered discovery settings.
-- Opaque public guest IDs protect guest credentials; guest display names remain Anon.
-
-See [rollout validation and deployment notes](docs/community-rollout-validation.md).
-
-## Launch verification and recovery
-
-- `npm run launch:check` runs read-only checks against the current deployment; see [launch readiness and remaining hosted checks](docs/launch-readiness.md).
-- Administrators can inspect `/admin/launch/health` for database, SMTP, Stripe, MD and storage configuration without exposing secrets. Connection checks never claim the release is approved.
-- Favorites now persist across backend restarts. Offline backups include local state and, when configured, a PostgreSQL dump; an isolated restore drill verifies private conversations, media, entitlements and safety state.
-- MapLibre, Nodemailer, WebSocket and build dependencies were updated for security. The tested frontend/build versions are MapLibre 6 and Vite 6.
-
-## Tech stack
-
-- Frontend: React 18, TypeScript, Vite 6, MapLibre GL
-- Backend: Node.js, Express, WebSocket (`ws`), TypeScript (`tsx` runtime)
-- Data: In-memory + JSON persistence fallback, optional PostgreSQL (`pg`)
-- Media: Local object storage fallback, PostgreSQL object storage, or S3-compatible object storage
-- Tests: Jest + ts-jest
-
-## Core features implemented
-
-### Authentication, sessions, and identity
-
-- Guest session creation (`/auth/guest`)
-- Registered account flow (`/auth/register`, `/auth/login`)
-- Email verification and resend flow (`/auth/verify-email`, `/auth/resend-verification`)
-- 18+ age-gate verification (`/auth/verify-age`)
-- Session resolution endpoint (`/session`)
-- Role support with admin auto-promotion via configured admin emails
-- Ban/unban enforcement (admin)
-
-### Modes and access rules
-
-- Supported modes: `cruise`, `date`, `hybrid`
-- Authoritative mode endpoints:
-  - `GET /mode`
-  - `POST /mode`
-  - `POST /mode/hybrid-opt-in`
-- Service-level enforcement for invalid transitions, anonymous restrictions, and age gate restrictions
-
-### Profiles and media
-
-- Self profile read/write (`GET/PUT /profile/me`)
-- Public profile listing + single profile read
-- Profile media reference mutation (`PUT /profile/media/references`)
-- Upload initiation + completion (`/profile/media/initiate`, `/profile/media/complete`)
-- Public media URL retrieval (`/media/public/:mediaId/url`)
-- Media ownership and metadata validation via service layer
-
-### Discovery and social surfaces
-
-- Public postings (ads/events): list/create + event invite/response/join-request flows
-- Cruising spots: list/create/check-in/check-in listing/spot actions
-- Favorites: list + toggle
-- Submissions (stories): list/create/view/rate
-- MD and legacy promoted-profile routes are unavailable in the standalone release.
-
-### Chat, messaging, and real-time
-
-- Chat send/list/list threads/read receipts
-- Chat media initiate + URL retrieval
-- Mode-aware chat policy enforcement
-- Cruise-mode expiry behavior in service tests
-- WebSocket gateway with auth handshake, heartbeat, payload limits, and broadcast filtering
-- Call signaling endpoint (`/call/signal`)
-
-### Safety, moderation, and policy
-
-- Global block/unblock/list blocked
-- Report user/message endpoints
-- Admin moderation endpoints for users, cruise spots, postings, and submissions
-- Admin DB health diagnostics endpoint (`/admin/db/health`)
-- Deterministic explicit error codes mapped to HTTP statuses
-- Location privacy rules enforced in presence service tests (server-side randomization expectations)
-
-### Frontend app capabilities
-
-- Multi-tab app shell (`discover`, `threads`, `ads`, `groups`, `cruise`, `profile`, `settings`, `submissions`, `promoted`)
-- Map + chat discovery views
-- Travel/location preference and permission request plumbing
-- API endpoint resolution via build-time constants and local/remote fallback logic
-- WebSocket URL derivation logic for realtime support
-- GitHub Pages static page sync support for route HTML files
-
-## Latest shipped product updates (through 2026-03-09)
-
-The following frontend/backend behavior changes are now implemented and live in `main`:
-
-- Mobile bottom bar redesigned to focused overlays:
-  - Inbox overlay with tabs for Chat Grid, Threads, Pinned, Cruising Spots, Groups
-  - Public Ads board as a dedicated right-side bottom bar action
-- Top bar redesigned with:
-  - Badehaus X logo on left
-  - Profile preview action in center
-  - Filter and account-function overlays from top
-- Travel mode improvements:
-  - Travel picker instruction moved to in-map overlay (no extra black space)
-  - Map click now asks for confirmation before temporary relocation
-- Group creation flow improvements:
-  - Date, Start Time, End Time inputs now labeled
-  - Start/End rendered side-by-side and validated (`end > start`, future end)
-- Chat/inbox behavior upgrades:
-  - Location message preview now reads `Location Sent`
-  - Group-chat invite flow supports accept/decline end-to-end notifications
-  - Invite recipient message text uses `You’ve received a Chat Invite`
-  - Group thread title state now reflects `+1` context
-  - Unread badges now decrement correctly when messages are read
-  - Bottom inbox badge no longer resets on tab/screen changes
-  - Chat-grid unread/online visual signals refined
-- Data persistence behavior:
-  - Cruising spots persist across sessions
-  - Groups expire at configured end time
-  - Ads persist and roll over with 12-hour retention behavior
-- Moderation/safety visibility updates:
-  - Blocked users are removed from map/chat grid visibility
-  - Banned users are filtered from public profile and active presence endpoints
-- Profile/settings cleanup:
-  - Duplicate Discreet/Travel messaging removed
-  - Internal media ID labels removed from user-facing settings UI
-- Red-theme migration and mobile polish:
-  - Blue accents replaced with red variants
-  - Overflow/horizontal scroll issues reduced across overlay layouts
-  - Icon-only controls integrated from new asset set
-- Auth flow update:
-  - Registered users auto-verify age after registration/login path where age is known
-  - Separate age-gate card is now guest/anonymous-only
-- Error handling update:
-  - Error banners are now scoped to the active section/tab and no longer leak into unrelated screens (including Discover map)
-
-## API and route coverage (high level)
-
-The backend currently exposes health/config, auth, profiles/media, favorites, public postings/events, cruising spots, submissions, admin moderation/diagnostics, promoted profiles, mode/presence/matching/dating feed, chat, call signal, block list, and reporting endpoints.
-
-Primary implementation: `backend/src/server.ts`
-
-## Configuration and environment
-
-### Required baseline
-
-- Node.js 20+
-- npm 10+
-- `JWT_SECRET` for backend auth
-
-### Common environment variables
-
-- Backend/runtime:
-  - `PORT`
-  - `JWT_SECRET`
-  - `CORS_ALLOWED_ORIGINS`
-  - `ADMIN_EMAILS`
-  - `REQUIRE_DATABASE`
-  - `DATABASE_URL` / `NEON_DATABASE_URL`
-  - `DATABASE_SSL`
-- Frontend build/runtime defines:
-  - `DUALMODE_API_BASE_PATH`
-  - `DUALMODE_WS_URL`
-  - `DUALMODE_DEFAULT_CENTER_LAT`
-  - `DUALMODE_DEFAULT_CENTER_LNG`
-- Dev orchestration:
-  - `DUALMODE_BACKEND_ORIGIN`
-  - `DUALMODE_BACKEND_PORT`
-  - `DUALMODE_FRONTEND_PORT`
-  - `DUALMODE_DEV_HMR`
-  - `DUALMODE_DEV_WATCH`
-  - `DUALMODE_DEV_WATCH_POLL`
-  - `DUALMODE_DEV_WATCH_POLL_INTERVAL_MS`
-- Optional integrations present in code/env:
-  - SMTP: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
-  - Twilio: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
-  - Google Sheets webhook: `GOOGLE_SHEETS_WEBHOOK_URL`
-  - S3-compatible: `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE`
-
-Use `.env.example` as baseline.
-
-### Google sign-in and registration
-
-In Google Auth Platform, configure the app's branding and audience, then create a **Web application** OAuth client. Add `https://badehausx.com` to **Authorized JavaScript origins**, plus any other frontend origins you use to serve the app. For local testing, add the exact origin, such as `http://localhost:5173`.
-
-Set `GOOGLE_OAUTH_CLIENT_ID` on the backend and restart it. The Login and Register tabs load Google's button when the backend is configured. The popup uses only the public client ID and requires no redirect URI. If the Google app is in testing, add the accounts you plan to test with.
-
-Google registration requires the same age declaration and applicable policy acceptance as password registration. Google supports sign-in here for Gmail and Google Workspace addresses whose Google-managed domain matches the email. An existing member can use Google with the same verified email address. The app links the Google account on first sign-in. Administrators use the password flow.
-
-### Google Sheets signup capture
-
-The early-access homepage can forward each new signup to a Google Sheet through a deployed Google Apps Script web app.
-
-1. Create a Google Sheet with a tab named `Signups`.
-2. Open `Extensions -> Apps Script`.
-3. Paste this script:
-
-```javascript
-function doPost(e) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Signups");
-  const body = JSON.parse(e.postData.contents);
-
-  sheet.appendRow([
-    new Date(),
-    body.name || "",
-    body.email || "",
-    body.membershipCode || "",
-    body.createdAtMs || "",
-    body.source || "red-door"
-  ]);
-
-  return ContentService
-    .createTextOutput(JSON.stringify({ ok: true }))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-```
-
-4. Deploy the script as a web app:
-   - Execute as: `Me`
-   - Who has access: `Anyone`
-5. Copy the deployment URL into `GOOGLE_SHEETS_WEBHOOK_URL`.
-
-New early-access signups will continue to save locally in the backend store and will also be forwarded to Google Sheets. If the Google webhook fails, signup still succeeds and the server logs the sync failure explicitly.
-
-## Development and build workflow
-
-Install:
+### Browser-local demo
 
 ```bash
-npm install
-```
-
-Frontend dev (Vite custom launcher):
-
-```bash
+npm ci
 npm run dev
 ```
 
-Legacy fallback dev mode (no HMR/watch):
+Open `http://localhost:5173` by default. This mode is useful for inspecting the interface with browser-local state. Use the connected stack for sessions, shared data, cross-account permissions, and message delivery.
+
+### Connected frontend and backend
+
+Run these commands from the repository root in separate terminals.
 
 ```bash
-npm run dev:legacy
+PORT=3012 JWT_SECRET=local-development-only npm run backend:watch
 ```
-
-Backend + frontend together:
 
 ```bash
-DUALMODE_API_BASE_PATH=/api DUALMODE_WS_URL=/ws JWT_SECRET=dev npm run dev:stack
+DUALMODE_BACKEND_PORT=3012 DUALMODE_API_BASE_PATH=/api DUALMODE_WS_URL=/ws npm run dev
 ```
 
-Build:
+Check `http://localhost:3012/health` and then open the Vite URL. Use disposable accounts and local data for rehearsal. The bundled `dev:stack` helper stops existing matching backend processes and clears its selected port. The two-terminal workflow leaves unrelated local sessions alone.
+
+### Build and preview
 
 ```bash
-npm run build
+DUALMODE_API_BASE_PATH=__local__ DUALMODE_WS_URL=__disabled__ npm run build
+npm run preview
 ```
 
-Pages static sync flow:
+The build writes `dist/`. The build script defaults to the hosted API and WebSocket URLs when variables are unset, while dev defaults to browser-local mode. Set both endpoints explicitly for a staging or isolated preview. The Pages workflow builds from source and uploads `dist/`. `npm run build:pages` additionally syncs the legacy root static artifacts.
 
-```bash
-npm run build:pages
-```
+## Configuration
 
-## Testing and verification completed
+Use [.env.example](.env.example) as a variable reference. Export values for the command or configure them in the host environment. Frontend build variables ship to the browser. Keep credentials and session tokens in backend or operator-controlled configuration.
 
-The following were run successfully on 2026-03-09:
+| Purpose | Variables and setup |
+| --- | --- |
+| Backend and origins | `PORT`, `JWT_SECRET`, `CORS_ALLOWED_ORIGINS`, `PUBLIC_APP_URL`, `ADMIN_EMAILS`. Use a stable high-entropy production signing secret and exact intended browser origins. |
+| Frontend endpoints | `DUALMODE_API_BASE_PATH`, `DUALMODE_WS_URL`, `DUALMODE_PUBLIC_APP_URL`, `DUALMODE_MAP_STYLE_URL`, `DUALMODE_DEFAULT_CENTER_LAT` and `DUALMODE_DEFAULT_CENTER_LNG`. Relative `/api` and `/ws` are proxied by the dev launcher. |
+| Persistence and media | `DATABASE_URL` or `NEON_DATABASE_URL`, `DATABASE_SSL`, `REQUIRE_DATABASE`, and optional `S3_*` object-storage settings. The backend supports local JSON and object storage fallbacks. Some boards still use `backend/.data` with PostgreSQL configured. Mount it persistently and retain one backend writer. |
+| Verification and recovery | Configure `SMTP_*` or `RESEND_API_KEY` and `RESEND_FROM` for transactional mail. Use the intended HTTPS `PUBLIC_APP_URL` for member-facing links. |
+| Google sign-in | Create a Google Web application client, add exact JavaScript origins for production, staging and local as applicable, and set `GOOGLE_OAUTH_CLIENT_ID` on the backend. No redirect URI is needed for this popup. Google registration still requires age declaration and applicable policy acceptance. Administrators use password sign-in. |
+| Membership and billing | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PLUS_PRICE_ID` and optional Founder/Priority price IDs. Keep staging on test keys and independently verify signed webhook delivery. [Billing setup](docs/plus-subscriptions.md) |
+| Growth and policies | `MARKETING_SEND_ENABLED`, `MARKETING_FROM`, `MARKETING_CONTACT_ADDRESS`, `MARKETING_PUBLIC_API_URL`, `REFERRAL_EMAIL_ENABLED`, `PRIORITY_EMAIL_FROM`, and `REGISTRATION_POLICY_*`. Early-access lead forwarding uses `GOOGLE_SHEETS_WEBHOOK_URL`; the private Priority payout workflow is separate. |
+| Optional services | Provision Web Push, analytics or LiveKit only for the intended environment. See the [PWA](docs/pwa.md), [analytics](docs/baseline-analytics.md) and [Live beta](docs/live-beta.md) guides. |
 
-```bash
-npm test
-npm run typecheck
-npm run build
-```
+## Test and release
 
-### Test results snapshot
+| Command | What it checks |
+| --- | --- |
+| `npm run typecheck` | TypeScript across the project |
+| `npm run test:coverage` | Jest service, gateway and integration tests with configured coverage thresholds |
+| `npm run test:smoke` | Isolated API and billing lifecycle with fixtures |
+| `npm run build` | Production frontend, PWA assets and Backroom output |
+| `npm run test:pwa` | Chromium checks for offline privacy and update behavior. Set `CHROMIUM_PATH` to the installed browser and build first. |
+| `npm run test:production` | Production-only dependency install and isolated backend startup |
+| `npm audit --omit=dev --audit-level=high` | Runtime dependency advisories |
+| `npm run launch:check` | Read-only deployment diagnostics. Use `PUBLIC_APP_URL` and `REDDOOR_API_URL` to select staging. |
 
-- Test suites: 16 passed / 16 total
-- Tests: 207 passed / 207 total
-- Coverage summary:
-  - Statements: 94.33%
-  - Branches: 85.57%
-  - Functions: 96.55%
-  - Lines: 98.57%
-- Critical services with 100% branch coverage in latest run:
-  - `matchingService.ts`
-  - `modeService.ts`
-  - `presenceService.ts`
+[CI](.github/workflows/ci.yml) and [Quality Gates](.github/workflows/quality-gates.yml) run on Node 24. The [Pages workflow](.github/workflows/pages.yml) publishes the build on `main`, manual dispatch and the configured Backroom release schedule. Compare the Pages `/build-sha.txt` with the intended frontend revision and the backend host’s deployed revision before accepting hosted evidence. Administrators can run launch diagnostics from **Settings → Account → Launch readiness**. [Domain and hosting setup](docs/badehaus-x-domain.md) · [Release evidence and rollback](docs/standalone-launch-report.md)
 
-### Security and vulnerability scan
+For backup, use the offline workflow in the launch guide and rehearse restoring to isolated storage. The application snapshot can include local files and a PostgreSQL dump. Back up remote objects and deployment secrets separately. [Backup and restore procedure](docs/launch-readiness.md#backups-and-restore-drills)
 
-Command run:
+The November 21 local baseline passed 375 tests across 40 suites, typecheck, production build, Chromium PWA checks and a production-only startup check. The production dependency audit reported zero vulnerabilities. [Remaining release checks](next_steps.md)
 
-```bash
-npm audit --audit-level=low
-```
+## Repository map
 
-Current findings:
-- `rollup` advisory (high) via Vite dependency chain
-- `esbuild` advisory (moderate) via Vite dependency chain
-- `fast-xml-parser` advisory (moderate) via AWS SDK XML builder chain
-- Total reported: 5 vulnerabilities (2 low, 2 moderate, 1 high)
+| Path | Purpose |
+| --- | --- |
+| [frontend/src](frontend/src) and [frontend/public](frontend/public) | React app and static assets, including the storefront |
+| [backend/src/server.ts](backend/src/server.ts), [routes](backend/src/routes) and [services](backend/src/services) | Express API, authorization and product rules |
+| [backend/src/repositories](backend/src/repositories) and [realtime](backend/src/realtime) | Persistence and WebSocket gateway |
+| [shared](shared) | Shared contracts and policy helpers |
+| [editorial/backroom](editorial/backroom) | Editorial source, covers and release schedule |
+| [scripts](scripts) and [deploy](deploy) | Build, browser checks, backup and staging/provider examples |
+| [tests](tests) and [docs](docs) | Test suites, specifications and operating guides |
 
-Notes:
-- Auto-fix path indicates potential breaking upgrade (`vite@7.x`) if using `npm audit fix --force`.
-
-## Recent update log (latest 30 commits)
-
-Based on `git log -n 30 --oneline`:
-
-- `b291817` auth: auto-verify age after register and guest-only age gate
-- `24cc1fa` travel: confirm relocation after map selection
-- `e667cb0` chat: keep inbox badge driven by app-level unread sync
-- `0021fcd` ui: scope errors to active section and suppress discover carryover
-- `5a646e0` map: overlay travel picker hint to remove bottom spacer
-- `d483314` ui: add group start/end inputs and tighten ban/block visibility
-- `0c40cce` chat: fix invite flow, location preview, and unread decrement
-- `d670cca` updates
-- `1506615` ui: center chat action sheet and tighten top icon controls
-- `ef41fbf` chat ui: fix action sheet clipping and camera/mic integrations
-- `548f0a3` ui/chat: unread-highlight grid, 12h ad retention, nav layout polish
-- `4a1d5bd` chat/groups: anon labels, unread decrement, persistent spots and expiring groups
-- `d41e9ac` ui: remove mobile overflow and retheme remaining blue accents
-- `d216a7c` ui: move session errors into active tab overlays
-- `41f2e65` frontend: darken bars and make mobile discover map full-height
-- `e32d418` frontend: increase nav and overlay icon sizes
-- `21d5467` frontend: enlarge ui icons and remove visible icon button chrome
-- `aec2dd0` frontend: move ui icons into src assets for CI-safe imports
-- `2225f14` frontend: replace nav controls with icon-only asset buttons
-- `ffa97df` frontend: redesign topbar and add expanded top-down filters
-- `d02d4ec` frontend: retheme overlays red and remove mobile horizontal overflow
-- `77c6b43` frontend: add mobile ads board overlay and third nav button
-- `e1b3c4f` frontend: add two-button mobile nav with tabbed inbox overlay
-- `d5dae03` fix: show authenticated action errors and tighten posting validation
-- `3aa7529` test: stabilize auth coverage threshold in CI
-- `bc22ada` fix: restore posting and spot creation flows
-- `3b3fc06` chore: push all pending updates
-- `36db5fc` ci: harden scripts and align workflow gates
-- `f9754ad` Add AI governance, architecture docs, and codex workflow files
-- `7592d90` fix promoted profiles create/sync behavior
-
-## Deployment and release workflow
-
-### GitHub Actions workflows
-
-- `CI` (`.github/workflows/ci.yml`)
-  - Runs on push + pull request
-  - Executes: `npm ci`, `npm run typecheck`, `npm run test:coverage`, `npm run build`, `npm audit --omit=dev --audit-level=high`
-- `Quality Gates` (`.github/workflows/quality-gates.yml`)
-  - Runs on pull requests to `main` and manual trigger
-  - Executes: typecheck, coverage tests, build, high-level audit
-- `Deploy GitHub Pages` (`.github/workflows/pages.yml`)
-  - Runs on push to `main` and manual trigger
-  - Builds site from source (`npm run build`)
-  - Publishes `dist/` via official Pages actions (`configure-pages`, `upload-pages-artifact`, `deploy-pages`)
-
-See [production domain setup](docs/badehaus-x-domain.md) for GitHub Pages, Cloudflare DNS and TLS, and Render settings.
-
-### Local deployment commands
-
-- Production build:
-  - `npm run build`
-- Build + sync static pages artifacts:
-  - `npm run build:pages`
-- Preview production build locally:
-  - `npm run preview`
-
-### Deployment notes
-
-- Pages deploy now uses workflow artifacts from source build (not committed static dist snapshots).
-- If Pages deploy fails:
-  - Verify CI/build passed on the same commit
-  - Confirm `dist/` generation succeeds locally with `npm run build`
-  - Re-run `Deploy GitHub Pages` via workflow dispatch
-
-## Project structure
-
-- `frontend/`: React app source
-- `backend/`: API server, services, repositories, realtime gateway
-- `tests/`: Jest service and gateway tests
-- `docs/`: product rules, acceptance criteria, threat/perf/style/test docs
-- `scripts/`: build/deploy utility scripts (pages sync, obfuscation)
-- `dist/`: build output
-- `assets/` + root `*.html`: GitHub Pages static publish artifacts
-
-## Key files for maintainers
-
-- Product rules: `docs/product.md`
-- Acceptance criteria: `docs/acceptance_criteria.md`
-- Testing policy: `tests/README.md`
-- API server entrypoint: `backend/src/server.ts`
-- Frontend app shell: `frontend/src/app/App.tsx`
-- Frontend router and screens: `frontend/src/app/Router.tsx`
-- Dev server launcher: `vite.dev.mjs`
-- Build script: `vite.build.mjs`
-- Pages sync script: `scripts/sync-pages-static.mjs`
-
-## Notes and known constraints
-
-- Product docs mark Date/Hybrid frontend scope as reserved, while backend services/routes include mode/matching/date-feed logic. Keep product-vs-implementation alignment explicit during future changes.
-- `npm run build` currently warns about large chunks (MapLibre bundle) but build succeeds.
-- Security advisories are currently transitive dependency issues and may require dependency-major decisions to fully remediate.
-
-## Badehaus X Plus
-
-Plus adds travel mode, advanced filters, saved searches, expanded favorites/pins and media limits, private albums, read receipts, and the existing three-person group chat flow for **CAD $7.99/month**. New registrations can use `THEREDDOORLAUNCH` for complimentary access through December 31, 2026 (Pacific time), without a card or automatic renewal. Redemption expires January 1, 2027.
-
-See [Plus subscription setup and behavior](docs/plus-subscriptions.md) for limits, Stripe backend configuration, promotion expiry, privacy rules, and deployment validation. Live purchases require Stripe credentials and a configured CAD monthly price on the backend host.
-
-## Reliability and measurement batch
-
-- Run `npm run test:smoke` for isolated core API and payment-lifecycle checks; no real Stripe charge is made.
-- Cruise retention is now enforced at 72 hours by the running server, including persisted messages with older expiry settings. Private chat/media delivery and upload authorization are checked server-side.
-- Login includes password recovery when SMTP and an HTTPS `PUBLIC_APP_URL` are configured. Password resets revoke HTTP and realtime sessions. New administrator access requires email verification.
-- Optional activity measurement is off by default. Users can opt in at registration or change the preference in profile settings. Administrators can open **Activity dashboard** from the account menu.
-- [Execution roadmap and live-release gates](docs/execution-roadmap.md) · [Metrics privacy and interpretation](docs/baseline-analytics.md).
-
-## Shared-link previews
-
-Text-message and social previews use the static Open Graph/Twitter metadata in `frontend/index.html` and `frontend/public/social/badehaus-x-share-v1.png`. The image is copied into `dist/social/` during the production build. Keep the absolute preview/canonical URLs aligned with the public site domain if it changes. Messaging services can cache older previews after deployment.
+[Architecture](docs/architecture.md) · [API reference](docs/api.md) · [Acceptance criteria](docs/acceptance_criteria.md) · [Testing policy](tests/README.md) · [Threat model](docs/threat_model.md)
