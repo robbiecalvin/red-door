@@ -25,6 +25,13 @@ const server=http.createServer((req,res)=>{
    await page.getByLabel('Email',{exact:true}).waitFor();
    assert.equal(await page.getByRole('tab',{name:'Login',exact:true}).getAttribute('aria-selected'),'true');
   };
+  const clickAndWaitForReload=async button=>{
+   await Promise.all([
+    page.waitForEvent('framenavigated',frame=>frame===page.mainFrame()),
+    button.click()
+   ]);
+   await expectDefaultLogin();
+  };
   // No external services are contacted by this test.
   await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
   await page.goto(base);await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
@@ -51,7 +58,7 @@ const server=http.createServer((req,res)=>{
   await page.getByRole('tab',{name:'Login',exact:true}).click();await page.getByLabel('Email',{exact:true}).fill('controlled-draft@example.com');
   variant='b';await page.evaluate(async()=>{const reg=await navigator.serviceWorker.getRegistration();await reg.update();});
   await page.getByRole('button',{name:'Reload app',exact:true}).waitFor({timeout:15000});assert.equal(await page.getByLabel('Email',{exact:true}).inputValue(),'controlled-draft@example.com');
-  await page.getByRole('button',{name:'Reload app',exact:true}).click();await expectDefaultLogin();
+  await clickAndWaitForReload(page.getByRole('button',{name:'Reload app',exact:true}));
   await page.waitForFunction(async()=>{const reg=await navigator.serviceWorker.getRegistration();return !reg.waiting;});
   keys=await page.evaluate(()=>caches.keys());assert.ok(keys.some(k=>k.includes('browser-update-b-')));
   assert.ok(keys.length<=2,'keep at most current and previous public builds for this scope');
@@ -59,14 +66,13 @@ const server=http.createServer((req,res)=>{
   const toolbar=page.locator('header.rd-topbar');
   await toolbar.getByRole('button',{name:'App installed',exact:true}).waitFor();
   variant='c';await page.evaluate(async()=>{await (await navigator.serviceWorker.getRegistration()).update();});
-  await toolbar.getByRole('button',{name:'Update app',exact:true}).click({timeout:15000});
+  await clickAndWaitForReload(toolbar.getByRole('button',{name:'Update app',exact:true}));
   await page.waitForFunction(async()=>!(await navigator.serviceWorker.getRegistration())?.waiting);
 
   // A waiting worker that ignores activation must not trap the user on this page.
   await page.getByRole('tab',{name:'Login',exact:true}).click();
   variant='stalled';await page.evaluate(async()=>{await (await navigator.serviceWorker.getRegistration()).update();});
-  await page.getByRole('button',{name:'Reload app',exact:true}).click({timeout:15000});
-  await expectDefaultLogin();
+  await clickAndWaitForReload(page.getByRole('button',{name:'Reload app',exact:true}));
 
   // iPhone install guidance is tested in Chromium with a simulated user agent, not an actual phone.
   const apple=await browser.newContext({userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',viewport:{width:390,height:844},isMobile:true,hasTouch:true});
