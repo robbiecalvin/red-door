@@ -106,4 +106,4 @@ The November 21 local baseline passed 375 tests across 40 suites, typecheck, pro
 | [scripts](scripts) and [deploy](deploy) | Build, browser checks, backup and staging/provider examples |
 | [tests](tests) and [docs](docs) | Test suites, specifications and operating guides |
 
-[Architecture](docs/architecture.md) · [API reference](docs/api.md) · [Acceptance criteria](docs/acceptance_criteria.md) · [Testing policy](tests/README.md) · [Threat model](docs/threat_model.md)
+[Architecture](docs/architecture.md) · [Frontend authority](docs/frontend_authority.md) · [API reference](docs/api.md) · [Acceptance criteria](docs/acceptance_criteria.md) · [Testing policy](tests/README.md) · [Threat model](docs/threat_model.md)
