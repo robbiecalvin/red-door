@@ -580,13 +580,8 @@
   border-bottom: 1px solid var(--line);
 }
 
-.rd-inbox-toolbar h1 {
-  flex: 1;
-  font-size: 18px;
-  margin: 0;
-}
-
 .rd-inbox-toolbar nav {
+  margin-inline-start: auto;
   display: flex;
   gap: 2px;
 }
@@ -642,16 +637,7 @@
   margin: 0;
 }
 
-.rd-inbox-connection {
-  width: 6px;
-  height: 6px;
-  background: var(--muted);
-  border-radius: 50%;
-}
 
-.rd-inbox-connection[data-connected="true"] {
-  background: var(--online);
-}
 
 .rd-thread-avatar {
   display: grid;

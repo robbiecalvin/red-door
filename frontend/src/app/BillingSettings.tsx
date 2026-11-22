@@ -52,6 +52,6 @@ export function AccountNotices({api,session,ready,loginSequence}:{api:Props["api
     seen.current = loginSequence;
     setDismissed(true);
   }
-  function account(){dismiss();window.location.hash="#/settings";window.dispatchEvent(new CustomEvent("rd:settings-section",{detail:"account"}));}
+  function account(){dismiss();window.location.hash="#/settings";window.dispatchEvent(new CustomEvent("rd:settings-section",{detail:"plan"}));}
   return <Sheet title={expired?"Your complimentary Plus has ended":promotional?"Keep Plus after the launch":"Plus billing is optional"} eyebrow="BILLING IS YOUR CHOICE" onClose={dismiss}><div className="rd-account-notice"><p>{expired?"Subscribe to reactivate Plus. Your free account and safety controls remain available.":promotional?"Enroll only if you want CAD $7.99 monthly from January 1, 2027, Pacific time, until canceled. No charge today.":"Plus costs CAD $7.99 monthly from checkout until canceled. Billing is optional."}</p><p>You can close this reminder and continue using your free account.</p><button className="rd-btn primary" onClick={account}>Open billing settings</button><button className="rd-btn" onClick={dismiss}>Remind me later</button></div></Sheet>;
 }

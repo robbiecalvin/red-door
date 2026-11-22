@@ -1,3 +1,7 @@
+.rd-shell {
+  --rd-app-bar-background: linear-gradient(105deg, #281c1c, #090707 48%, #281c1c);
+}
+
 .rd-art-icon {
   display: inline-block;
   flex: none;
@@ -6,7 +10,6 @@
 }
 .rd-app-brand-mark { width: 28px; height: 38px; object-fit: contain; }
 .rd-app-bars.has-bottom-nav {
-  --rd-app-bar-background: linear-gradient(105deg, #281c1c, #090707 48%, #281c1c);
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
@@ -89,6 +92,13 @@
   display: flex;
   align-items: center;
 }
+.rd-map-pane { position: relative; }
+.rd-map-pane .rd-map-actions {
+  bottom: 24px;
+  left: 8px;
+  z-index: 4;
+}
+.rd-map-actions .rd-art-icon { width: 28px; height: 28px; }
 .rd-app-inbox-badge {
   position: absolute;
   top: 0;
@@ -183,3 +193,128 @@
   text-shadow: 0 1px 3px #000;
 }
 .rd-people-grid .rd-profile-skeleton { aspect-ratio: 1; }
+
+.rd-settings-hub {
+  max-width: 840px;
+  padding: 14px 0 20px;
+}
+.rd-settings-title {
+  padding: 0 2px 16px;
+}
+.rd-settings-title h1 {
+  margin: 0;
+  font-size: clamp(24px, 4vw, 36px);
+  line-height: 1.1;
+}
+.rd-settings-hub .rd-settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 4px;
+  overflow: visible;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(105deg, #281c1c, #090707 48%, #281c1c);
+}
+.rd-settings-hub .rd-settings-tabs button {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 8px 3px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font: inherit;
+  font-size: clamp(11px, 2.8vw, 14px);
+  font-weight: 650;
+  cursor: pointer;
+}
+.rd-settings-hub .rd-settings-tabs button[aria-selected="true"] {
+  border-color: #b52d37;
+  background: #50181c;
+  color: #fff;
+}
+.rd-settings-hub .rd-settings-tabs svg,
+.rd-settings-hub .rd-settings-tabs img {
+  width: 20px;
+  height: 20px;
+}
+.rd-settings-hub .rd-profile-settings-stack {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.rd-settings-hub .rd-settings-body {
+  min-width: 0;
+  padding: clamp(12px, 3vw, 22px);
+}
+.rd-settings-hub .rd-settings-policy { justify-self: start; }
+
+.rd-topbar:has(.rd-entry-brand) {
+  background: var(--rd-app-bar-background);
+}
+.rd-entry-brand .rd-topbar-icon .rd-art-icon {
+  width: 28px;
+  height: 28px;
+}
+.rd-home-main .rd-grid {
+  gap: clamp(14px, 3vw, 32px);
+}
+.rd-home-main .rd-auth-hero {
+  background: #131113;
+  border: 1px solid #7e292e;
+  border-radius: 16px;
+}
+.rd-home-main .rd-auth-hero .rd-card-head {
+  padding-bottom: 12px;
+}
+.rd-auth-hero h1.rd-card-title {
+  margin: 0;
+  font-size: clamp(23px, 4vw, 30px);
+  line-height: 1.15;
+}
+.rd-home-main .rd-auth-hero .rd-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 12px;
+  padding: 4px;
+  background: var(--rd-app-bar-background);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.rd-home-main .rd-auth-hero .rd-tab {
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+}
+.rd-home-main .rd-auth-hero .rd-tab[aria-selected="true"] {
+  background: #50181c;
+  border-color: #b52d37;
+  color: #fff;
+}
+.rd-home-main .rd-auth-hero .rd-input {
+  background: #0b090b;
+  border-color: #554044;
+}
+.rd-home-main .rd-auth-hero .rd-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.rd-home-main .rd-auth-note {
+  margin: 0 0 12px;
+}
+.rd-home-main .rd-home-hero {
+  border: 1px solid #7e292e;
+  border-radius: 16px;
+}
+.rd-home-main .rd-home-hero h2 {
+  margin: 0;
+  font-size: clamp(23px, 4vw, 38px);
+  line-height: 1.05;
+  color: #fff;
+}
