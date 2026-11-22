@@ -30,9 +30,10 @@ import travel from "../assets/interface/travel.webp";
 import travelmodeon from "../assets/interface/travelmodeon.webp";
 import updateapp from "../assets/interface/updateapp.webp";
 
-type DrawnIconName = "board" | "user" | "book" | "logout" | "shield" | "check" | "shopping-bag" | "plus";
+type DrawnIconName = "photo" | "board" | "user" | "book" | "logout" | "shield" | "check" | "shopping-bag" | "plus";
 const paths: Record<DrawnIconName, React.ReactNode> = {
   "shopping-bag": <><path d="M5 8h14l2 13H3L5 8Z" /><path d="M9 10V6a3 3 0 0 1 6 0v4" /></>,
+  photo: <><rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m4 17 5-4 3 2 4-5 4 5" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   check: <path d="m5 12 4 4L19 6" />,
   board: <><rect x="4" y="4" width="16" height="17" rx="3" /><path d="M8 3v3M16 3v3M8 11h8M8 15h5" /></>,

@@ -1051,6 +1051,13 @@ export function App(): React.ReactElement {
   if (/\/thebackroom\/?$/.test(window.location.pathname)) return <Backroom api={api} session={session} />;
 
   const showExploreShortcuts = showBottomNav && activeTab === "discover";
+  const exploreControls = showExploreShortcuts && session ? <>
+    <RightNowControl key={session.userId} api={api} session={session} />
+    <button type="button" className="rd-btn rd-app-tool"
+      onClick={toggleTopFilterPanel} aria-label="Open filter controls" title="Filters">
+      <Icon name="filter" active={filtersActive} />
+    </button>
+  </> : null;
   const publicToolbarActions = (
     <>
       <InstallApp iconOnly />
@@ -1097,7 +1104,7 @@ export function App(): React.ReactElement {
                 </div>
               </div>
             ) : (
-              <div className="rd-brand">
+              <div className="rd-brand rd-entry-brand">
                 <img src={brandMark} className="rd-app-brand-mark" alt="" />
                 <div className="rd-name">Badehaus X</div>
                 {publicToolbarActions}
@@ -1121,7 +1128,7 @@ export function App(): React.ReactElement {
           <ReferralToolbar api={api} session={session} onOpen={() => {
             setTopMenuOpen(false);
             setTabAndRoute("settings");
-            window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "membership" }));
+            window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "plan" }));
           }} />
 
           {session.role === "admin" ? <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setAnalyticsOpen(true); }} aria-label="Open activity dashboard"><Icon name="board" className="rd-ui-icon" /></button> : null}
@@ -1149,8 +1156,7 @@ export function App(): React.ReactElement {
             <>
               <section className="rd-card rd-auth-hero" aria-label="Authentication">
                 <div className="rd-card-head">
-                  <div className="rd-card-title">Your night starts here.</div>
-                  <div className="rd-card-sub">Your next connection starts here.</div>
+                  <h1 className="rd-card-title">{authView === "login" ? "Log in" : authView === "register" ? "Create an account" : "Browse anonymously"}</h1>
                 </div>
 
                 <div className="rd-tabs" role="tablist" aria-label="Authentication tabs">
@@ -1190,9 +1196,6 @@ export function App(): React.ReactElement {
                 </div>
 
                 <div className="rd-card-body">
-                  <div style={{ color: "var(--muted)", marginBottom: 12 }}>
-                    Browse Cruise anonymously, or create an account for a more personal experience.
-                  </div>
                   {lastError ? (
                     <div
                       role="alert"
@@ -1220,7 +1223,7 @@ export function App(): React.ReactElement {
                   {authView === "guest" ? (
                     <div className="rd-row">
                       <button type="button" className="rd-btn primary" onClick={() => void createGuest()} disabled={busy} aria-label="Create guest session">
-                        Step inside →
+                        Continue as a guest
                       </button>
                     </div>
                   ) : null}
@@ -1373,9 +1376,9 @@ export function App(): React.ReactElement {
               <section className="rd-card rd-home-hero" aria-label="Welcome to Badehaus X">
                 <div className="rd-card-body">
                   <img className="rd-afterdark-art" src={afterDark} alt="" aria-hidden="true" />
-                  <h1 className="rd-eyebrow">SEE WHO’S INSIDE.</h1>
-                  <p className="rd-home-copy">A space for gay men to explore, chat, and connect. Livestreaming. Group Chats & more.</p>
-                  <div className="rd-welcome-features"><span><Icon name="map" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
+                  <h2>See who’s inside.</h2>
+                  <p className="rd-home-copy">A space for gay men to explore, chat, and connect.</p>
+                  <div className="rd-welcome-features"><span><Icon name="explore" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
                 </div>
               </section>
             </>
@@ -1522,13 +1525,13 @@ export function App(): React.ReactElement {
                 settings={settings}
                 activeTab={activeTab}
                 setActiveTab={setTabAndRoute}
+                mapControls={discoverScreen === "map" ? exploreControls : null}
                 discoverScreen={discoverScreen}
                 discoverFilter={discoverFilter}
                 busy={busy}
                 setBusy={setBusy}
                 setLastError={setLastError}
                 onUnreadCountChange={() => {}}
-                liveInboxStatus={liveInboxStatus}
                 onLogout={onLogout}
               /></LiveContext.Provider>
             </Suspense>
@@ -1539,13 +1542,7 @@ export function App(): React.ReactElement {
 
       {showBottomNav ? (
         <nav className="rd-app-dock" aria-label="Primary navigation">
-          {showExploreShortcuts && <div className="rd-app-dock-context">
-            <RightNowControl key={session?.userId} api={api} session={session!} />
-            {discoverScreen !== "map" && <button type="button" className="rd-btn rd-app-tool"
-              onClick={toggleTopFilterPanel} aria-label="Open filter controls" title="Filters">
-              <Icon name="filter" active={filtersActive} />
-            </button>}
-          </div>}
+          {discoverScreen !== "map" && exploreControls && <div className="rd-app-dock-context">{exploreControls}</div>}
           <button type="button" className="rd-btn rd-app-tool" aria-label="Explore" title="Explore"
             aria-current={activeTab === "discover" ? "page" : undefined}
             onClick={() => setTabAndRoute("discover", discoverScreen)}>

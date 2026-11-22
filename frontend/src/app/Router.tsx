@@ -444,6 +444,7 @@ function CruiseSurface({
   setLastError,
   isMobile,
   discoverScreen,
+  mapControls,
   onOpenThreadRequested,
   threadProfileOpener,
   onUnreadCountChange
@@ -457,6 +458,7 @@ function CruiseSurface({
   setLastError(value: string | null): void;
   isMobile: boolean;
   discoverScreen: DiscoverScreen;
+  mapControls?: React.ReactNode;
   onOpenThreadRequested(key: string): void;
   threadProfileOpener?: React.Ref<(request: ThreadProfileRequest) => void>;
   onUnreadCountChange?(count: number): void;
@@ -1252,7 +1254,12 @@ function CruiseSurface({
   return (
     <div className={`rd-explore-surface ${mobileTab === "map" ? "is-map" : "is-people"}`}>
       <div className="rd-explore-layout">
-        <div className="rd-map-pane">{mobileTab === "map" ? mapPanel : null}</div>
+        <div className="rd-map-pane">
+          {mobileTab === "map" && <>
+            {mapPanel}
+            {mapControls && <div className="rd-app-dock-context rd-map-actions">{mapControls}</div>}
+          </>}
+        </div>
         <div className="rd-people-pane">{chatPanel}</div>
       </div>
 
@@ -5521,7 +5528,7 @@ function StyledFilePicker({
   );
 }
 
-function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; session: Session; setLastError(value: string | null): void }>): React.ReactElement {
+function SettingsProfile({ api, session, setLastError, section }: Readonly<{ api: Api; session: Session; setLastError(value: string | null): void; section: "profile" | "photos" }>): React.ReactElement {
   const [draft, setDraft] = useState<ProfileDraft>(emptyProfileDraft());
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -5745,23 +5752,22 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
         : undefined;
 
   return (
-    <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr", alignItems: "start" }}>
-      <div style={cardStyle()}>
+    <div className="rd-profile-settings-stack">
+      {section === "profile" && <section className="rd-card rd-settings-body">
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>Your profile</div>
+          <h2>Your profile</h2>
 
           {session.userType === "guest" ? (
             <div style={{ color: "#b9bec9", fontSize: 13 }}>
               Guest profile data is temporary and clears on logout.
             </div>
           ) : null}
-          {status ? <div style={{ color: "#b9bec9", fontSize: 14 }}>{status}</div> : null}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button type="button" onClick={() => void saveProfile()} style={buttonPrimary(saving)} disabled={saving}>
-              SAVE PROFILE
+            <button type="button" onClick={() => void saveProfile()} className="rd-btn primary" disabled={saving}>
+              Save profile
             </button>
-            <button type="button" onClick={() => void refreshProfile()} style={buttonSecondary(loading)} disabled={loading}>
-              REFRESH
+            <button type="button" onClick={() => void refreshProfile()} className="rd-btn" disabled={loading}>
+              Refresh
             </button>
             <button
               type="button"
@@ -5773,13 +5779,14 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
             </button>
           </div>
         </div>
-      </div>
+      </section>}
+      {status && <p className="rd-caption" role="status">{status}</p>}
 
-      <div style={cardStyle()}>
+      {section === "photos" && <section className="rd-card rd-settings-body">
         <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>MEDIA</div>
+          <h2>Profile media</h2>
           <div style={{ color: "#b9bec9", fontSize: 14 }}>Upload and manage your photos and video.</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 10 }}>
             <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
               <StyledFilePicker
                 label="Main Photo"
@@ -5789,8 +5796,8 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
                 disabled={saving}
                 onSelect={setMainFile}
               />
-              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("photo_main", mainFile)}>
-                UPLOAD MAIN PHOTO
+              <button type="button" className="rd-btn primary" disabled={saving} onClick={() => void upload("photo_main", mainFile)}>
+                Upload main photo
               </button>
             </div>
             <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
@@ -5802,8 +5809,8 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
                 disabled={saving}
                 onSelect={setGalleryFile}
               />
-              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => void upload("photo_gallery", galleryFile)}>
-                UPLOAD GALLERY PHOTO
+              <button type="button" className="rd-btn primary" disabled={saving} onClick={() => void upload("photo_gallery", galleryFile)}>
+                Upload gallery photo
               </button>
             </div>
             <div style={{ display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,58,77,0.45)", background: "rgba(0,0,0,0.42)" }}>
@@ -5815,8 +5822,8 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
                 disabled={saving}
                 onSelect={setVideoFile}
               />
-              <button type="button" style={buttonPrimary(saving)} disabled={saving} onClick={() => { if (!hasPlus(session)) { openPlus("profile"); return; } void upload("video", videoFile); }}>
-                {hasPlus(session) ? "UPLOAD VIDEO" : "UNLOCK PROFILE VIDEO · PLUS"}
+              <button type="button" className="rd-btn primary" disabled={saving} onClick={() => { if (!hasPlus(session)) { openPlus("profile"); return; } void upload("video", videoFile); }}>
+                {hasPlus(session) ? "Upload video" : "Unlock profile video with Plus"}
               </button>
             </div>
           </div>
@@ -5870,12 +5877,12 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
             </div>
           </div>
         </div>
-      </div>
+      </section>}
 
-      <div style={cardStyle()}>
+      {section === "profile" && <section className="rd-card rd-settings-body">
         <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>About you</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+          <h2>About you</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span className="rd-label">Display Name</span>
               <input value={session.userType === "guest" ? "Anon" : draft.displayName} readOnly={session.userType === "guest"} onChange={(e) => setDraft((d) => ({ ...d, displayName: e.target.value }))} style={fieldStyle()} />
@@ -5898,11 +5905,11 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
             />
           </label>
         </div>
-      </div>
+      </section>}
 
-      <div style={cardStyle()}>
+      {section === "profile" && <section className="rd-card rd-settings-body">
         <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>Profile details</div>
+          <h2>Profile details</h2>
           <ProfileDetailsEditor value={draft.details} onChange={details => setDraft(d => ({ ...d, details }))} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
@@ -5939,7 +5946,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               </select>
             </label>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 12 }}>
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input type="checkbox" checked={draft.discreetMode} onChange={(e) => setDraft((d) => ({ ...d, discreetMode: e.target.checked }))} />
               <span className="rd-label" style={{ margin: 0 }}>Discreet Mode</span>
@@ -5947,9 +5954,9 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
           </div>
           <div style={{ color: "#b9bec9", fontSize: 13 }}>Travel mode is controlled from the Discover map via the <Icon name="travel" /> picker.</div>
         </div>
-      </div>
+      </section>}
 
-      {showMyProfile && profile ? (
+      {section === "profile" && showMyProfile && profile ? (
         <div style={cardStyle()}>
           <div style={{ display: "grid", gap: 10 }}>
             <div style={{ fontSize: 18, fontWeight: 700 }}>MY PROFILE PREVIEW</div>
@@ -6407,7 +6414,7 @@ function SettingsPanel({
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>SETTINGS</div>
           <div style={{ color: "#b9bec9", fontSize: 14 }}>{status}</div>
-          <div style={{ color: "#b9bec9", fontSize: 13 }}>Profile privacy controls are in Edit Profile.</div>
+          <div style={{ color: "#b9bec9", fontSize: 13 }}>Manage your session and account controls.</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" style={buttonSecondary(false)} onClick={() => onLogout?.()}>LOGOUT</button>
           </div>
@@ -6770,6 +6777,14 @@ function SettingsPanel({
   );
 }
 
+const SETTINGS_SECTIONS = [
+  { id: "profile", label: "Profile", icon: "grid" },
+  { id: "photos", label: "Photos", icon: "photo" },
+  { id: "privacy", label: "Privacy", icon: "shield" },
+  { id: "plan", label: "Plan", icon: "plus" }
+] as const;
+type SettingsSection = typeof SETTINGS_SECTIONS[number]["id"];
+
 export function Router({
   api,
   session,
@@ -6778,13 +6793,13 @@ export function Router({
   activeTab,
   setActiveTab,
   discoverScreen,
+  mapControls,
   discoverFilter,
   busy,
   setBusy,
   setLastError,
   onUnreadCountChange,
   hideModeCard,
-  liveInboxStatus,
   onLogout
 }: Readonly<{
   api: Api;
@@ -6794,13 +6809,13 @@ export function Router({
   activeTab: TopTab;
   setActiveTab(tab: TopTab): void;
   discoverScreen: DiscoverScreen;
+  mapControls?: React.ReactNode;
   discoverFilter: DiscoverFilter;
   busy: boolean;
   setBusy(value: boolean): void;
   setLastError(value: string | null): void;
   onUnreadCountChange?(count: number): void;
   hideModeCard?: boolean;
-  liveInboxStatus?: string;
   onLogout?(): void;
 }>): React.ReactElement {
   const isMobile = useIsMobile();
@@ -6809,8 +6824,19 @@ export function Router({
   const [exploreThreadKey, setExploreThreadKey] = useState<string | null>(null);
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
   const [rememberedThread, setRememberedThread] = useState<string | null>(null);
-  const [settingsSection, setSettingsSection] = useState("profile");
-  useEffect(()=>{const update=(event:Event)=>setSettingsSection(String((event as CustomEvent).detail));window.addEventListener("rd:settings-section",update);return()=>window.removeEventListener("rd:settings-section",update);},[]);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("profile");
+  useEffect(() => {
+    function update(event: Event) {
+      const section = (event as CustomEvent<unknown>).detail;
+      if (section === "Private album") setSettingsSection("photos");
+      else if (section === "membership" || section === "account") setSettingsSection("plan");
+      else if (typeof section === "string" && SETTINGS_SECTIONS.some(item => item.id === section)) {
+        setSettingsSection(section as SettingsSection);
+      }
+    }
+    window.addEventListener("rd:settings-section", update);
+    return () => window.removeEventListener("rd:settings-section", update);
+  }, []);
   const [mobileInboxTab, setMobileInboxTab] = useState<MobileInboxTab>("threads");
   const [scopedErrors, setScopedErrors] = useState<Partial<Record<RouterErrorScope, string>>>({});
   const isMobileInboxOpen = isMobile && activeTab === "threads";
@@ -6856,15 +6882,60 @@ export function Router({
   const setPromotedError = useMemo(() => makeScopedSetLastError("promoted"), [makeScopedSetLastError]);
 
   const unifiedSettingsSurface = (
-    <div className="rd-settings-page"><div className="rd-section-heading"><div><div className="rd-eyebrow">YOUR SPACE</div><h1>Make it yours.</h1><p>Your profile, your privacy, your preferences.</p></div></div>
-      <div className="rd-settings-tabs" role="tablist" aria-label="Settings sections">{["profile", "Private album", "privacy", "notifications", "membership", "account"].map(section => <button key={section} role="tab" aria-selected={settingsSection === section} onClick={() => setSettingsSection(section)}>{section[0].toUpperCase() + section.slice(1)}</button>)}</div>
-      <div role="tabpanel" aria-label={settingsSection}>
-      {settingsSection === "profile" ? <div className="rd-profile-settings-stack"><SettingsProfile api={api} session={session} setLastError={setProfileError} /><MemberEditor api={api} session={session}/><MemberProfileLinks api={api} session={session}/><PhotoVerificationPanel api={api} session={session}/></div> : null}
-      {settingsSection === "Private album" ? <PrivateAlbumsSettings api={api} session={session} /> : null}
-      {settingsSection === "privacy" ? <div className="rd-profile-settings-stack"><MemberPrivacy api={api} session={session}/><PrivacySettings api={api} session={session}/><PrivacyBlockList api={api} session={session}/></div> : null}
-      {settingsSection === "notifications" ? <section className="rd-card rd-settings-body"><h2>Notifications</h2><NotificationSettings api={api} session={session} /></section> : null}
-      {settingsSection === "membership" ? <div className="rd-profile-settings-stack"><MembershipPrograms api={api} session={session}/><PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} /><BillingSettings api={api} session={session}/><PromoCodeForm api={api} session={session}/></div> : null}
-      {settingsSection === "account" ? <div className="rd-profile-settings-stack"><PromoCodeForm api={api} session={session}/><BillingSettings api={api} session={session}/><MarketingPreferences api={api} session={session}/><GrowthDashboard api={api} session={session}/><AdminLaunchChecks api={api} session={session}/><PhotoReviewQueue api={api} session={session}/><SafetyReportQueue api={api} session={session}/><SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} /><a href="./legal/">Policies</a></div> : null}
+    <div className="rd-settings-page rd-settings-hub">
+      <header className="rd-settings-title"><h1>Settings</h1></header>
+      <div className="rd-settings-tabs" role="tablist" aria-label="Settings sections">
+        {SETTINGS_SECTIONS.map(({ id, label, icon }, index) => (
+          <button key={id} id={`settings-tab-${id}`} type="button" role="tab"
+            aria-selected={settingsSection === id} aria-controls="settings-content"
+            tabIndex={settingsSection === id ? 0 : -1} onClick={() => setSettingsSection(id)}
+            onKeyDown={event => {
+              const last = SETTINGS_SECTIONS.length - 1;
+              const next = event.key === "Home" ? 0 : event.key === "End" ? last
+                : event.key === "ArrowRight" ? (index + 1) % SETTINGS_SECTIONS.length
+                : event.key === "ArrowLeft" ? (index + last) % SETTINGS_SECTIONS.length : null;
+              if (next === null) return;
+              event.preventDefault();
+              const nextSection = SETTINGS_SECTIONS[next].id;
+              setSettingsSection(nextSection);
+              document.getElementById(`settings-tab-${nextSection}`)?.focus();
+            }}>
+            <Icon name={icon} active={settingsSection === id} />
+            {label}
+          </button>
+        ))}
+      </div>
+      <div id="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${settingsSection}`}
+        className="rd-profile-settings-stack" tabIndex={0}>
+        {(settingsSection === "profile" || settingsSection === "photos") &&
+          <SettingsProfile section={settingsSection} api={api} session={session} setLastError={setProfileError} />}
+        {settingsSection === "profile" && <>
+          <MemberEditor api={api} session={session} />
+          <MemberProfileLinks api={api} session={session} />
+        </>}
+        {settingsSection === "photos" && <>
+          <PrivateAlbumsSettings api={api} session={session} />
+          <PhotoVerificationPanel api={api} session={session} />
+          <PhotoReviewQueue api={api} session={session} />
+        </>}
+        {settingsSection === "privacy" && <>
+          <MemberPrivacy api={api} session={session} />
+          <PrivacySettings api={api} session={session} />
+          <PrivacyBlockList api={api} session={session} />
+          <NotificationSettings api={api} session={session} />
+          <MarketingPreferences api={api} session={session} />
+          <SafetyReportQueue api={api} session={session} />
+          <SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} />
+          <a className="rd-btn rd-settings-policy" href="./legal/">Policies</a>
+        </>}
+        {settingsSection === "plan" && <>
+          <PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} />
+          <MembershipPrograms api={api} session={session} />
+          <BillingSettings api={api} session={session} />
+          <PromoCodeForm api={api} session={session} />
+          <GrowthDashboard api={api} session={session} />
+          <AdminLaunchChecks api={api} session={session} />
+        </>}
       </div>
     </div>
   );
@@ -6902,6 +6973,7 @@ export function Router({
           setBusy={setBusy}
           setLastError={setDiscoverError}
           isMobile={isMobile}
+          mapControls={mapControls}
           discoverScreen={discoverScreen}
           threadProfileOpener={threadProfileOpener}
           onOpenThreadRequested={(key) => {
@@ -6947,10 +7019,7 @@ export function Router({
             overflowX: "hidden"
           }}
         >
-          <header className="rd-inbox-toolbar">
-            <h1>Inbox</h1>
-            {liveInboxStatus ? <span className="rd-inbox-connection" data-connected={liveInboxStatus === "Live messages connected"}
-              role="status" aria-label={liveInboxStatus} title={liveInboxStatus} /> : null}
+          <header className="rd-inbox-toolbar" aria-label="Inbox controls">
             <nav aria-label="Inbox views">
               {([
                 ["threads", "Inbox Threads", "message"],
