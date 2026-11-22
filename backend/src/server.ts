@@ -445,7 +445,7 @@ async function main(): Promise<void> {
     console.log("[Badehaus X] Persistence mode: local file storage");
   }
 
-  const freePlus = process.env.FREE_PLUS_ENABLED === "true";
+  const freePlus = process.env.FREE_PLUS_ENABLED !== "false";
   const rawAuthService = createAuthService({
     jwtSecret,
     freePlus,
@@ -1291,7 +1291,7 @@ async function main(): Promise<void> {
   const checkoutInProgress = new Set<string>();
   const checkoutHandler:express.RequestHandler = async (req,res) => {
     const actor = plusUser(req, res); if (!actor) return;
-    if (freePlus) return res.status(409).json({ message: "Plus is free right now. Paid enrollment is paused." });
+    if (freePlus) return res.status(409).json({ message: "Paid enrollment is currently paused." });
     if (checkoutInProgress.has(actor.user.id)) return res.status(409).json({ message: "Checkout is already opening. Try again shortly." });
     checkoutInProgress.add(actor.user.id);
     try {

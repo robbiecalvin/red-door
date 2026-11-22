@@ -4,7 +4,7 @@ Plus costs **CAD $7.99 per month**, using Stripe-hosted Checkout and the custome
 
 ## Free launch access
 
-Set `FREE_PLUS_ENABLED=true` on the backend to grant Plus features to all registered members without an expiry date or promo code. Account and age requirements still apply. Free access pauses new paid Checkout and deferred enrollment. Disable the flag to restore access based on each account's original entitlements.
+Free launch access is enabled by default. Registered members can use subscription features without an expiry date or promo code, and the app hides the Plus purchase and promotion screens. Account and age requirements still apply. Free access pauses new paid Checkout and deferred enrollment. Set `FREE_PLUS_ENABLED=false` on the backend to restore Plus screens and access based on each account's original entitlements.
 
 Existing subscriptions and schedules remain in Stripe and can still renew. Review them in Stripe before announcing free access to all members. Members with an existing billing account can still manage their Stripe subscription through Settings.
 
