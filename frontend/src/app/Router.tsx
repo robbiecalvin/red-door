@@ -3507,6 +3507,9 @@ function PublicPostings({
   const [spotThreadMessages, setSpotThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [spotThreadLoading, setSpotThreadLoading] = useState<boolean>(false);
   const [createPanelOpen, setCreatePanelOpen] = useState<boolean>(!compact);
+  const [groupCreateOpen, setGroupCreateOpen] = useState(false);
+  const [groupCreateError, setGroupCreateError] = useState<string | null>(null);
+  const [groupSubmitting, setGroupSubmitting] = useState(false);
   const [boardPosting, setBoardPosting] = useState<boolean>(false);
   const [boardProfileUserId, setBoardProfileUserId] = useState<string | null>(null);
   const [presenceByKey, setPresenceByKey] = useState<Record<string, { lat: number; lng: number }>>({});
@@ -3711,19 +3714,20 @@ function PublicPostings({
   }, [isMobile, screen, spots]);
 
   async function submitGroup(): Promise<void> {
-    setLastError(null);
+    if (groupSubmitting) return;
+    setGroupCreateError(null);
     if (!canPostEvents) {
-      setLastError("Anonymous users cannot create groups.");
+      setGroupCreateError("Anonymous users cannot create groups.");
       return;
     }
     const title = eventTitle;
     const body = eventBody;
     if (title.trim().length === 0) {
-      setLastError("Title is required.");
+      setGroupCreateError("Title is required.");
       return;
     }
     if (body.trim().length === 0) {
-      setLastError("Body is required.");
+      setGroupCreateError("Body is required.");
       return;
     }
     const photoMediaId = eventPhotoMediaId;
@@ -3740,38 +3744,39 @@ function PublicPostings({
       });
     }
     if (groupStartAtMs === null) {
-      setLastError("Group start date and time are required.");
+      setGroupCreateError("Group start date and time are required.");
       return;
     }
     if (groupEndAtMs === null) {
-      setLastError("Group end date and time are required.");
+      setGroupCreateError("Group end date and time are required.");
       return;
     }
     if (typeof groupStartAtMs === "number" && typeof groupEndAtMs === "number" && groupEndAtMs <= groupStartAtMs) {
-      setLastError("Group end time must be after the start time.");
+      setGroupCreateError("Group end time must be after the start time.");
       return;
     }
     if (typeof groupEndAtMs === "number" && groupEndAtMs <= Date.now()) {
-      setLastError("Group end time must be in the future.");
+      setGroupCreateError("Group end time must be in the future.");
       return;
     }
     if (!selfCoords) {
-      setLastError("Current location is required to place the group.");
+      setGroupCreateError("Current location is required to place the group.");
       return;
     }
     const guestLimit = Number(eventGuestLimit);
     if (!validGuestLimit(guestLimit)) {
-      setLastError("Enter a positive whole-number guest limit.");
+      setGroupCreateError("Enter a positive whole-number guest limit.");
       return;
     }
     if (eventLocationInstructions.trim().length === 0) {
-      setLastError("Location instructions are required.");
+      setGroupCreateError("Location instructions are required.");
       return;
     }
     if (eventGroupDetails.trim().length === 0) {
-      setLastError("Group details are required.");
+      setGroupCreateError("Group details are required.");
       return;
     }
+    setGroupSubmitting(true);
     try {
       const created = await api.createPublicPosting(session.sessionToken, {
         type: "event",
@@ -3800,9 +3805,12 @@ function PublicPostings({
       setEventLocationInstructions("");
       setEventPhotoFile(null);
       setEventPhotoMediaId("");
+      setGroupCreateOpen(false);
       await refresh();
     } catch (e) {
-      setLastError(normalizeErrorMessage(e));
+      setGroupCreateError(normalizeErrorMessage(e));
+    } finally {
+      setGroupSubmitting(false);
     }
   }
 
@@ -3942,15 +3950,17 @@ function PublicPostings({
   }
 
   async function uploadGridPhoto(kind: "event" | "spot"): Promise<void> {
+    const setUploadError = kind === "event" ? setGroupCreateError : setLastError;
     const file = kind === "event" ? eventPhotoFile : spotPhotoFile;
     if (!file) {
-      setLastError("Choose a photo before uploading.");
+      setUploadError("Choose a photo before uploading.");
       return;
     }
     if (session.userType === "guest") {
-      setLastError("Guests cannot upload media.");
+      setUploadError("Guests cannot upload media.");
       return;
     }
+    setUploadError(null);
     setUploadingKind(kind);
     try {
       const initiated = await api.initiateMediaUpload(session.sessionToken, {
@@ -3972,7 +3982,7 @@ function PublicPostings({
       if (kind === "event") setEventPhotoMediaId(initiated.mediaId);
       if (kind === "spot") setSpotPhotoMediaId(initiated.mediaId);
     } catch (e) {
-      setLastError(normalizeErrorMessage(e));
+      setUploadError(normalizeErrorMessage(e));
     } finally {
       setUploadingKind(null);
     }
@@ -4155,18 +4165,117 @@ function PublicPostings({
     const isUploading = uploadingKind === "event";
 
     return (
-      <div style={{ border: "1px solid rgba(255,58,77,0.38)", borderRadius: 0, padding: 10, background: "rgba(0,0,0,0.2)" }}>
-        <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>Groups</div>
-            {compact ? (
-              <button type="button" style={buttonSecondary(false)} onClick={() => setCreatePanelOpen((prev) => !prev)}>
-                {createPanelOpen ? "Close" : "Add group"}
-              </button>
-            ) : null}
+      <section className="rd-groups-surface" aria-label="Groups">
+          <div>
+            {events.length === 0 ? (
+              <div style={{ color: "#b9bec9", fontSize: 14 }}>No groups yet.</div>
+            ) : (
+              <div className="rd-group-list">
+                {events.map((p) => {
+                  const isHost = !!session.userId && session.userId === p.authorUserId;
+                  const isInvited = !!session.userId && (p.invitedUserIds ?? []).includes(session.userId);
+                  const isAttending = !!session.userId && (p.authorUserId === session.userId || (p.acceptedUserIds ?? []).includes(session.userId));
+                  const hasRequested = !!session.userId && (p.joinRequestUserIds ?? []).includes(session.userId);
+                  const deadline = session.userId ? p.inviteExpiresAtByUserId?.[session.userId] : undefined;
+                  const full = groupIsFull(p);
+                  const guestCount = p.attendeeCount ?? p.acceptedUserIds?.length ?? 0;
+                  const canRequestJoin = session.userType !== "guest" && !!session.userId && !isHost && !isInvited && !isAttending && !hasRequested;
+                  return (
+                    <div
+                      key={p.postingId}
+                      className="rd-group-list-card"
+                    >
+                      <div className="rd-group-list-cover">
+                        <img
+                          src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
+                          alt="Group posting"
+
+                        />
+                      </div>
+                      <div style={{ padding: 8, display: "grid", gap: 6 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
+                        <div style={{ color: "#9fb6bf", fontSize: 12 }}>
+                            {p.groupStartsAtMs ? <>Starts {formatEventDate(p.groupStartsAtMs)} at {formatEventTime(p.groupStartsAtMs)}</>
+                              : <>Ends {formatEventDate(p.eventStartAtMs)} at {formatEventTime(p.eventStartAtMs)}</>}
+                            {p.groupOccurrenceCount ? ` · ${p.groupOccurrence} of ${p.groupOccurrenceCount}` : ""}
+                            {p.groupFormat === "open-house" ? " · Open House" : ""}
+                          </div>
+                        <div style={{ color: "#9fb6bf", fontSize: 12 }}>Host: {displayNameForUserId(p.authorUserId)}</div>
+                        <div style={{ color: "#ced3dc", fontSize: 13, whiteSpace: "pre-wrap" }}>{p.body}</div>
+                        <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
+                            <div style={{ color: "#9fb6bf", fontSize: 12 }}>
+                              {p.guestLimit ? `${guestCount} of ${p.guestLimit} guest spots filled` : `${guestCount} guests attending`}{full ? " · Full" : ""}
+                            </div>
+                            {isHost ? (
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                                <input
+                                  value={inviteTargetByEventId[p.postingId] ?? ""}
+                                  onChange={(e) => setInviteTargetByEventId((prev) => ({ ...prev, [p.postingId]: e.target.value }))}
+                                  placeholder="Invite user id"
+                                  aria-label="Invite user ID"
+                                  style={fieldStyle()}
+                                />
+                                <button type="button" style={buttonSecondary(false)} onClick={() => void inviteToEvent(p.postingId)}>
+                                  INVITE
+                                </button>
+                                <label className="rd-field" style={{ gridColumn: "1 / -1" }}>
+                                  <span className="rd-label">Invitation deadline</span>
+                                  <input type="datetime-local" value={inviteDeadlineByEventId[p.postingId] ?? ""}
+                                    onChange={e => setInviteDeadlineByEventId(prev => ({ ...prev, [p.postingId]: e.target.value }))}
+                                    style={fieldStyle()} />
+                                  <small>Defaults to the group end time.</small>
+                                </label>
+                              </div>
+                            ) : null}
+                            {session.userType !== "guest" && isInvited && !isAttending && !hasRequested ? (
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                {deadline ? <small style={{ width: "100%" }}>Respond by {formatEventDate(deadline)} at {formatEventTime(deadline)}</small> : null}
+                                <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(p.postingId, true)}>
+                                  {full ? "JOIN WAITLIST" : "ACCEPT INVITE"}
+                                </button>
+                                <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(p.postingId, false)}>
+                                  DECLINE
+                                </button>
+                              </div>
+                            ) : null}
+                            {canRequestJoin ? (
+                              <button type="button" style={buttonSecondary(false)} onClick={() => void requestToJoin(p.postingId)}>
+                                {full ? "JOIN WAITLIST" : "REQUEST TO JOIN"}
+                              </button>
+                            ) : null}
+                            {hasRequested ? <div style={{ color: "#b9bec9", fontSize: 12 }}>
+                              {full ? "You’re on the waitlist." : "Join request pending host approval."}
+                              <button type="button" className="rd-btn" onClick={() => void respondToInvite(p.postingId, false)}>Withdraw request</button>
+                            </div> : null}
+                            {!isHost && isAttending ? <button type="button" className="rd-btn" onClick={() => void respondToInvite(p.postingId, false)}>Leave group</button> : null}
+                            <button
+                              type="button"
+                              style={selectedGroupId === p.postingId ? buttonPrimary(false) : buttonSecondary(false)}
+                              onClick={() => setSelectedGroupId((prev) => (prev === p.postingId ? null : p.postingId))}
+                            >
+                              {selectedGroupId === p.postingId ? "HIDE GROUP PROFILE" : "VIEW GROUP PROFILE"}
+                            </button>
+                          </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-          {createPanelOpen ? (
-            <>
+          <div className="rd-group-create-footer">
+            {canPostEvents ? <button type="button" className="rd-btn primary" aria-haspopup="dialog" onClick={() => {
+              setGroupCreateError(null);
+              setGroupCreateOpen(true);
+            }}>Create group</button> : <p className="rd-caption">Create an account to host a group.</p>}
+          </div>
+          {groupCreateOpen && canPostEvents && <Sheet title="Create group" onClose={() => {
+            if (!groupSubmitting) setGroupCreateOpen(false);
+          }}>
+            <form className="rd-group-create-form" onSubmit={event => {
+              event.preventDefault();
+              void submitGroup();
+            }}>
               <input value={eventTitle} onChange={(e) => setEventTitle(e.target.value)} placeholder="Groups title" style={fieldStyle()} aria-label="Groups title" disabled={!canPostEvents} />
               <textarea value={eventBody} onChange={(e) => setEventBody(e.target.value)} placeholder="Write group details" style={{ ...fieldStyle(), minHeight: 86, resize: "vertical" }} aria-label="Groups details" disabled={!canPostEvents} />
               <div style={{ display: "grid", gap: 8 }}>
@@ -4272,118 +4381,13 @@ function PublicPostings({
                 ) : null}
                 {!eventPhotoMediaId && eventPhotoFile ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Photo selected. Upload to attach.</div> : null}
               </div>
-              <button type="button" onClick={() => void submitGroup()} style={canPostEvents ? buttonPrimary(false) : buttonSecondary(true)} disabled={!canPostEvents}>
-                Create group
+              {groupCreateError && <p className="rd-error" role="alert">{groupCreateError}</p>}
+              <button type="submit" className="rd-btn primary" disabled={groupSubmitting || isUploading}>
+                {groupSubmitting ? "Creating…" : "Create group"}
               </button>
-              {!canPostEvents ? <div style={{ color: "#b9bec9", fontSize: 13 }}>Guests can view groups but cannot post groups.</div> : null}
-            </>
-          ) : null}
-
-          <div style={{ display: "grid", gap: 0, marginTop: 6 }}>
-            {events.length === 0 ? (
-              <div style={{ color: "#b9bec9", fontSize: 14 }}>No groups yet.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 0, gridTemplateColumns: gridColumns }}>
-                {events.map((p) => {
-                  const isHost = !!session.userId && session.userId === p.authorUserId;
-                  const isInvited = !!session.userId && (p.invitedUserIds ?? []).includes(session.userId);
-                  const isAttending = !!session.userId && (p.authorUserId === session.userId || (p.acceptedUserIds ?? []).includes(session.userId));
-                  const hasRequested = !!session.userId && (p.joinRequestUserIds ?? []).includes(session.userId);
-                  const deadline = session.userId ? p.inviteExpiresAtByUserId?.[session.userId] : undefined;
-                  const full = groupIsFull(p);
-                  const guestCount = p.attendeeCount ?? p.acceptedUserIds?.length ?? 0;
-                  const canRequestJoin = session.userType !== "guest" && !!session.userId && !isHost && !isInvited && !isAttending && !hasRequested;
-                  return (
-                    <div
-                      key={p.postingId}
-                      style={{
-                        background: "rgba(0,0,0,0.5)",
-                        border: "1px solid rgba(255,58,77,0.35)",
-                        borderRadius: 0,
-                        display: "grid",
-                        gap: 0
-                      }}
-                    >
-                      <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
-                        <img
-                          src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
-                          alt="Group posting"
-                          style={{ width: "100%", height: "100%", borderRadius: 0, objectFit: "cover", border: "none" }}
-                        />
-                      </div>
-                      <div style={{ padding: 8, display: "grid", gap: 6 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
-                        <div style={{ color: "#9fb6bf", fontSize: 12 }}>
-                            {p.groupStartsAtMs ? <>Starts {formatEventDate(p.groupStartsAtMs)} at {formatEventTime(p.groupStartsAtMs)}</>
-                              : <>Ends {formatEventDate(p.eventStartAtMs)} at {formatEventTime(p.eventStartAtMs)}</>}
-                            {p.groupOccurrenceCount ? ` · ${p.groupOccurrence} of ${p.groupOccurrenceCount}` : ""}
-                            {p.groupFormat === "open-house" ? " · Open House" : ""}
-                          </div>
-                        <div style={{ color: "#9fb6bf", fontSize: 12 }}>Host: {displayNameForUserId(p.authorUserId)}</div>
-                        <div style={{ color: "#ced3dc", fontSize: 13, whiteSpace: "pre-wrap" }}>{p.body}</div>
-                        <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
-                            <div style={{ color: "#9fb6bf", fontSize: 12 }}>
-                              {p.guestLimit ? `${guestCount} of ${p.guestLimit} guest spots filled` : `${guestCount} guests attending`}{full ? " · Full" : ""}
-                            </div>
-                            {isHost ? (
-                              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
-                                <input
-                                  value={inviteTargetByEventId[p.postingId] ?? ""}
-                                  onChange={(e) => setInviteTargetByEventId((prev) => ({ ...prev, [p.postingId]: e.target.value }))}
-                                  placeholder="Invite user id"
-                                  aria-label="Invite user ID"
-                                  style={fieldStyle()}
-                                />
-                                <button type="button" style={buttonSecondary(false)} onClick={() => void inviteToEvent(p.postingId)}>
-                                  INVITE
-                                </button>
-                                <label className="rd-field" style={{ gridColumn: "1 / -1" }}>
-                                  <span className="rd-label">Invitation deadline</span>
-                                  <input type="datetime-local" value={inviteDeadlineByEventId[p.postingId] ?? ""}
-                                    onChange={e => setInviteDeadlineByEventId(prev => ({ ...prev, [p.postingId]: e.target.value }))}
-                                    style={fieldStyle()} />
-                                  <small>Defaults to the group end time.</small>
-                                </label>
-                              </div>
-                            ) : null}
-                            {session.userType !== "guest" && isInvited && !isAttending && !hasRequested ? (
-                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                {deadline ? <small style={{ width: "100%" }}>Respond by {formatEventDate(deadline)} at {formatEventTime(deadline)}</small> : null}
-                                <button type="button" style={buttonPrimary(false)} onClick={() => void respondToInvite(p.postingId, true)}>
-                                  {full ? "JOIN WAITLIST" : "ACCEPT INVITE"}
-                                </button>
-                                <button type="button" style={buttonSecondary(false)} onClick={() => void respondToInvite(p.postingId, false)}>
-                                  DECLINE
-                                </button>
-                              </div>
-                            ) : null}
-                            {canRequestJoin ? (
-                              <button type="button" style={buttonSecondary(false)} onClick={() => void requestToJoin(p.postingId)}>
-                                {full ? "JOIN WAITLIST" : "REQUEST TO JOIN"}
-                              </button>
-                            ) : null}
-                            {hasRequested ? <div style={{ color: "#b9bec9", fontSize: 12 }}>
-                              {full ? "You’re on the waitlist." : "Join request pending host approval."}
-                              <button type="button" className="rd-btn" onClick={() => void respondToInvite(p.postingId, false)}>Withdraw request</button>
-                            </div> : null}
-                            {!isHost && isAttending ? <button type="button" className="rd-btn" onClick={() => void respondToInvite(p.postingId, false)}>Leave group</button> : null}
-                            <button
-                              type="button"
-                              style={selectedGroupId === p.postingId ? buttonPrimary(false) : buttonSecondary(false)}
-                              onClick={() => setSelectedGroupId((prev) => (prev === p.postingId ? null : p.postingId))}
-                            >
-                              {selectedGroupId === p.postingId ? "HIDE GROUP PROFILE" : "VIEW GROUP PROFILE"}
-                            </button>
-                          </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+            </form>
+          </Sheet>}
+      </section>
     );
   };
 
