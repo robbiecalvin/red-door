@@ -1,6 +1,5 @@
 import brandMark from "../assets/interface/brand.webp";
 import { Backroom } from "./Backroom";
-import { ReferralToolbar } from "./ReferralToolbar";
 import type { RegistrationPolicy } from "../../../shared/registrationPolicy";
 import { MARKETING_CONSENT_LABEL } from "../../../shared/marketing";
 import { LiveContext, useLiveState } from "./liveState";
@@ -15,9 +14,7 @@ import { NOTIFICATION_ENABLED, NOTIFICATION_DISCREET, NotificationPrompt } from 
 import afterDark from "../assets/after-dark.png";
 import { PasswordRecovery } from "./PasswordRecovery";
 import { GoogleSignInButton, type GoogleCredential } from "./GoogleSignInButton";
-import { AdminAnalytics } from "./AdminAnalytics";
 import { PlusPanel } from "./PlusPanel";
-import { LAUNCH_END_MS, hasPlus } from "../../../shared/plus";
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiClient, type ServiceError, type Session } from "./api";
@@ -362,7 +359,6 @@ export function App(): React.ReactElement {
     window.addEventListener("hashchange", receiveResetLink);
     return () => window.removeEventListener("hashchange", receiveResetLink);
   }, []);
-  const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [policy, setPolicy] = useState<RegistrationPolicy | null>(null);
   const [acceptedPolicy, setAcceptedPolicy] = useState(false);
   const [policyRequest, setPolicyRequest] = useState(0);
@@ -400,7 +396,6 @@ export function App(): React.ReactElement {
   const [topAvatarUrl, setTopAvatarUrl] = useState<string | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
-  const [topMenuOpen, setTopMenuOpen] = useState<boolean>(false);
   const unreadSyncInFlightRef = useRef<boolean>(false);
 
   const persistSessionToken = useCallback((token: string): void => {
@@ -1003,10 +998,9 @@ export function App(): React.ReactElement {
   }, []);
 
   const toggleTopFilterPanel = useCallback((): void => {
-    if (topMenuOpen) setTopMenuOpen(false);
     setTabAndRoute("discover", discoverScreen);
     window.dispatchEvent(new CustomEvent("rd:discover-control", { detail: { action: "open_filters" } }));
-  }, [discoverScreen, setTabAndRoute, topMenuOpen]);
+  }, [discoverScreen, setTabAndRoute]);
 
   useEffect(() => {
     if (FULL_PAGE_TAB_NAV) {
@@ -1023,14 +1017,10 @@ export function App(): React.ReactElement {
   }, []);
 
   useEffect(() => {
-    setTopMenuOpen(false);
-  }, [activeTab]);
-
-  useEffect(() => {
-    const open = (event: Event) => { const feature = (event as CustomEvent<{feature?:unknown}>).detail?.feature; setPlusFeature(isPlusFeature(feature) ? feature : undefined); setPlusOpen(true); };
+    const open = (event: Event) => { if (session?.freePlus !== false) return; const feature = (event as CustomEvent<{feature?:unknown}>).detail?.feature; setPlusFeature(isPlusFeature(feature) ? feature : undefined); setPlusOpen(true); };
     window.addEventListener("rd:open-plus", open);
     return () => window.removeEventListener("rd:open-plus", open);
-  }, []);
+  }, [session?.freePlus]);
   useEffect(() => {
     if (!session) return;
     const refresh = () => { void api.getSession(session.sessionToken).then(r => setSession(r.session)).catch(e => { if (e?.code === "INVALID_SESSION" || e?.code === "SESSION_NOT_FOUND") onLogout(); }); };
@@ -1073,9 +1063,8 @@ export function App(): React.ReactElement {
   return (
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav rd-app-bars" : ""}`}>
       {recoveryOpen ? <PasswordRecovery api={api} token={recoveryToken} onClose={() => { setRecoveryOpen(false); setRecoveryToken(""); }} onComplete={() => { onLogout(); setRecoveryOpen(false); setRecoveryToken(""); setAuthView("login"); setAuthInfo("Password updated. Sign in with your new password."); }} /> : null}
-      {analyticsOpen && session?.role === "admin" ? <AdminAnalytics api={api} session={session} onClose={() => setAnalyticsOpen(false)} /> : null}
-      <AccountNotices api={api} session={session} ready={Boolean(session?.ageVerified && !profileSetupChecking && !profileSetupRequired && !plusOpen)} loginSequence={loginSequence}/>
-      {plusOpen ? <PlusPanel api={api} session={session} feature={plusFeature} onClose={() => setPlusOpen(false)} onRegister={() => { setPlusOpen(false); onLogout(); setAuthView("register"); }} /> : null}
+      {session?.freePlus === false && <AccountNotices api={api} session={session} ready={Boolean(session?.ageVerified && !profileSetupChecking && !profileSetupRequired && !plusOpen)} loginSequence={loginSequence} />}
+      {plusOpen && session?.freePlus === false ? <PlusPanel api={api} session={session} feature={plusFeature} onClose={() => setPlusOpen(false)} onRegister={() => { setPlusOpen(false); onLogout(); setAuthView("register"); }} /> : null}
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
             {session?.ageVerified === true ? (
@@ -1097,9 +1086,9 @@ export function App(): React.ReactElement {
                     aria-current={activeTab === "live" ? "page" : undefined} onClick={() => setTabAndRoute("live")}>
                     <Icon name="live" active={activeTab === "live" || liveState.broadcasts.some(room => room.live)} />
                   </button>}
-                  <button type="button" className="rd-btn rd-app-tool" aria-label="Open account functions" title="Settings"
-                    aria-expanded={topMenuOpen} onClick={() => setTopMenuOpen(open => !open)}>
-                    <Icon name="settings" active={topMenuOpen || activeTab === "settings"} />
+                  <button type="button" className="rd-btn rd-app-tool" aria-label="Open settings" title="Settings"
+                    aria-current={activeTab === "settings" ? "page" : undefined} onClick={() => setTabAndRoute("settings")}>
+                    <Icon name="settings" active={activeTab === "settings"} />
                   </button>
                 </div>
               </div>
@@ -1115,38 +1104,6 @@ export function App(): React.ReactElement {
             <NotificationPrompt key={session.userId} api={api} session={session} ready={showBottomNav} />
           )}
         </header>
-      {session && session.ageVerified === true && topMenuOpen ? (
-        <div className="rd-top-collapse" role="dialog" aria-label="Account functions">
-          <button type="button" className="rd-btn rd-icon-only-btn" onClick={toggleTopFilterPanel} aria-label="Open filter controls">
-            <Icon name="filter" active={filtersActive} />
-          </button>
-          <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Badehaus X Plus">
-            <Icon name={hasPlus(session) ? "check" : "plus"} />
-          </button>
-          <a className="rd-btn rd-icon-only-btn" href="./thebackroom/" aria-label="The Backroom"><Icon name="book" /></a>
-          <a className="rd-btn rd-icon-only-btn" href="https://badehausx.com/store/" aria-label="Store"><Icon name="shopping-bag" /></a>
-          <ReferralToolbar api={api} session={session} onOpen={() => {
-            setTopMenuOpen(false);
-            setTabAndRoute("settings");
-            window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "plan" }));
-          }} />
-
-          {session.role === "admin" ? <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setAnalyticsOpen(true); }} aria-label="Open activity dashboard"><Icon name="board" className="rd-ui-icon" /></button> : null}
-          <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); openSelfProfilePreview(); }} aria-label="Open profile preview">
-            <Icon name="user" className="rd-ui-icon" />
-          </button>
-          <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("settings"); }} aria-label="Open settings">
-            <Icon name="settings" className="rd-ui-icon" />
-          </button>
-          <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setTabAndRoute("submissions"); }} aria-label="Open submissions">
-            <Icon name="book" className="rd-ui-icon" />
-          </button>
-          <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); void onLogout(); }} aria-label="Log out">
-            <Icon name="logout" className="rd-ui-icon" />
-          </button>
-        </div>
-      ) : null}
-
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
       >
@@ -1300,7 +1257,7 @@ export function App(): React.ReactElement {
                       ) : null}
 
                       {authView === "register" ? (
-                        <label className="rd-field"><span className="rd-label">Promo code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" />{Date.now() < LAUNCH_END_MS ? <span className="rd-launch-offer">Launch and gift codes unlock complimentary Plus through December 31, 2026. Priority referral codes unlock a separate paid offer in Settings.</span> : null}</label>
+                        <label className="rd-field"><span className="rd-label">Invitation or referral code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" /></label>
                       ) : null}
                       {authView === "register" && policy?.status === "required" ? <label className="rd-field">
                         <span><input type="checkbox" checked={acceptedPolicy} required onChange={event => setAcceptedPolicy(event.target.checked)} /> I accept the{" "}

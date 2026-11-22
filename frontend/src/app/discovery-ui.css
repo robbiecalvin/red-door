@@ -569,8 +569,6 @@
 .rd-map-right-now { position: absolute; right: -5px; bottom: -4px; display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid #fa6173; border-radius: 50%; background: #221013; color: #ff4058; pointer-events: none; }
 .rd-map-right-now svg { width: 14px; height: 14px; fill: currentColor; }
 
-.rd-referral-toolbar { grid-column: 1 / -1; justify-self: start; display: flex; flex-wrap: wrap; gap: 6px 16px; text-align: left; font-size: .78rem; }
-.rd-referral-toolbar strong { margin-inline-start: 4px; }
 
 .rd-inbox-toolbar {
   display: flex;
@@ -602,22 +600,11 @@
   height: 21px;
 }
 
-.rd-postings-heading {
-  margin: 0;
-  padding: 10px 12px 0;
-  font-size: 20px;
-}
-
 .rd-posting-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   padding: 8px 10px;
-}
-
-.rd-posting-toolbar select {
-  width: auto;
-  max-width: 116px;
 }
 
 .rd-posting-toolbar input {

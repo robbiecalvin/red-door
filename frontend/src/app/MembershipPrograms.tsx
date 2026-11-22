@@ -58,28 +58,48 @@ export function MembershipPrograms({ api, session }: Props) {
   if (!session.userId) return null;
   return <section className="rd-card rd-settings-body">
     <h2>Membership programs</h2>
-    {status?.priorityInvited && !status.priority && !status.priorityPending ? <p>Priority invitation saved. Redeem it to activate complimentary Plus.</p> : null}
-    {status?.founderRateEligible ? <p>Founding Member · CAD $4.99/month after your free period.</p> : null}
+    {status?.priorityInvited && !status.priority && !status.priorityPending ? <p>Priority invitation saved. Redeem it to activate Priority membership.</p> : null}
+    {session.freePlus === false && status?.founderRateEligible ? <p>Founding Member · CAD $4.99/month after your free period.</p> : null}
     {status?.priority ? <>
-      <p>Priority Member · Complimentary Plus</p>
+      <p>Priority Member</p>
       {status.priorityReferralCode ? <p>Your personal referral code is <code>{status.priorityReferralCode}</code>.</p> : null}
       <PayoutContact api={api} token={token} />
-      {referrals ? <dl className="rd-billing-summary">
-        <div><dt>Referrals this month</dt><dd>{referrals.monthlyReferrals}</dd></div>
-        <div><dt>Lifetime referrals</dt><dd>{referrals.lifetimeReferrals}</dd></div>
-        <div><dt>Earnings this month</dt><dd>{referralCurrency.format(referrals.monthlyEarningsCents / 100)}</dd></div>
-        <div><dt>Unpaid balance</dt><dd>{referralCurrency.format(referrals.unpaidCents / 100)}</dd></div>
-        <div><dt>Net paid</dt><dd>{referralCurrency.format(referrals.paidCents / 100)}</dd></div>
-        {referrals.pendingAdjustmentCents ? <div><dt>Pending chargeback adjustment</dt><dd>{referralCurrency.format(referrals.pendingAdjustmentCents / 100)}</dd></div> : null}
-        {referrals.payoutAdjustments?.map(({ atMs, cents }, index) => <div key={index}>
-          <dt>Chargeback adjustment · {new Date(atMs).toLocaleDateString("en-CA", { timeZone: "America/Vancouver" })}</dt>
-          <dd>{referralCurrency.format(-cents / 100)}</dd>
-        </div>)}
-      </dl> : null}
-      <button className="rd-btn" disabled={busy} onClick={() => void run(() => api.memberRequest(token, "/membership/priority/resign", {}), "Priority membership ended.")}>Resign from Priority</button>
+      {referrals && <div className="rd-referral-summary">
+        <div className="rd-referral-totals">
+          <section className="rd-referral-metrics" aria-label="Referrals">
+            <h3>Referrals</h3>
+            <dl>
+              <div><dt>This month</dt><dd>{referrals.monthlyReferrals}</dd></div>
+              <div><dt>Lifetime</dt><dd>{referrals.lifetimeReferrals}</dd></div>
+            </dl>
+          </section>
+          <section className="rd-referral-metrics" aria-label="Earnings">
+            <h3>Earnings</h3>
+            <dl>
+              <div><dt>This month</dt><dd>{referralCurrency.format(referrals.monthlyEarningsCents / 100)}</dd></div>
+              <div><dt>Unpaid balance</dt><dd>{referralCurrency.format(referrals.unpaidCents / 100)}</dd></div>
+              <div><dt>Net paid</dt><dd>{referralCurrency.format(referrals.paidCents / 100)}</dd></div>
+            </dl>
+          </section>
+        </div>
+        {Boolean(referrals.pendingAdjustmentCents || referrals.payoutAdjustments?.length) &&
+          <section className="rd-referral-metrics" aria-label="Chargeback adjustments">
+            <h3>Chargeback adjustments</h3>
+            <dl>
+              {referrals.pendingAdjustmentCents ? <div>
+                <dt>Pending</dt><dd>{referralCurrency.format(referrals.pendingAdjustmentCents / 100)}</dd>
+              </div> : null}
+              {referrals.payoutAdjustments?.map(({ atMs, cents }, index) => <div key={index}>
+                <dt>{new Date(atMs).toLocaleDateString("en-CA", { timeZone: "America/Vancouver" })}</dt>
+                <dd>{referralCurrency.format(-cents / 100)}</dd>
+              </div>)}
+            </dl>
+          </section>}
+      </div>}
+      <button type="button" className="rd-btn rd-priority-resign" disabled={busy} onClick={() => void run(() => api.memberRequest(token, "/membership/priority/resign", {}), "Priority membership ended.")}>Resign from Priority</button>
     </> : <form onSubmit={event => {
       event.preventDefault();
-      void run(() => api.memberRequest(token, "/membership/priority/apply", { code }), "Priority and complimentary Plus activated.");
+      void run(() => api.memberRequest(token, "/membership/priority/apply", { code }), "Priority membership activated.");
     }}>
       <label className="rd-field"><span>Priority invitation code</span><input className="rd-input" autoComplete="off" maxLength={80} value={code} onChange={event => setCode(event.target.value)} required /></label>
       <button className="rd-btn" disabled={busy || !code.trim()}>Redeem Priority code</button>

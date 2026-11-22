@@ -1,3 +1,4 @@
+import { AdminAnalytics } from "./AdminAnalytics";
 import { CustomerImport } from "./CustomerImport";
 import { PrivateAlbumsSettings, RequestPrivateAlbum } from "./PrivateAlbums";
 import { GrowthDashboard, MarketingPreferences } from "./GrowthPanels";
@@ -16,8 +17,7 @@ import { permittedLocation } from "./location";
 import { AdminLaunchChecks } from "./AdminLaunchChecks";
 import { BillingSettings, PromoCodeForm } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
-import { POSTING_BOARDS, isPostingBoard, type PostingBoard } from "../../../shared/postingBoard";
-import { MemberEditor, MemberProfileLinks, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, useMember } from "./MemberPanels";
+import { MemberProfileLinks, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, useMember } from "./MemberPanels";
 import type { PublicMember } from "../../../shared/member";
 import { queueReply } from "./replyDraft";
 import { PlusMembershipCard } from "./PlusShowcase";
@@ -110,7 +110,7 @@ function cardStyle(): React.CSSProperties {
 }
 
 function buttonPrimary(disabled: boolean): React.CSSProperties {
-  return { background: disabled ? "#303034" : "var(--accent-deep)", border: "1px solid transparent", color: "#fff", padding: "12px 18px", minHeight: 44, borderRadius: 12, fontSize: 14, fontWeight: 650, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1 };
+  return { background: disabled ? "#303034" : "var(--rd-metal-red)", border: "1px solid transparent", color: "#fff", padding: "12px 18px", minHeight: 44, borderRadius: 12, fontSize: 14, fontWeight: 650, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1 };
 }
 
 function buttonSecondary(disabled: boolean): React.CSSProperties {
@@ -1102,7 +1102,7 @@ function CruiseSurface({
 
   async function handleTravelLocationSelected(coords: { lat: number; lng: number }): Promise<void> {
     if (!travelPickerArmed) return;
-    if (!hasPlus(session)) { openPlus("travel"); return; }
+    if (!hasPlus(session)) { if (!session.userId) setLastError("Create an account to use travel mode."); else openPlus("travel"); return; }
     const lat = Number(coords.lat.toFixed(6));
     const lng = Number(coords.lng.toFixed(6));
     const confirmed = window.confirm(
@@ -1218,7 +1218,7 @@ function CruiseSurface({
       height="100%"
       visible={mobileTab === "map"}
       travelPickerArmed={travelPickerArmed}
-      onToggleTravelPicker={() => { if (!hasPlus(session)) { openPlus("travel"); return; } setTravelPickerArmed((prev) => !prev); }}
+      onToggleTravelPicker={() => { if (!hasPlus(session)) { if (!session.userId) setLastError("Create an account to use travel mode."); else openPlus("travel"); return; } setTravelPickerArmed((prev) => !prev); }}
       onTravelLocationSelected={(coords) => void handleTravelLocationSelected(coords)}
     />
   );
@@ -2474,7 +2474,7 @@ function CruiseChat({
                   </label>
                 </div>
               </div>
-              <fieldset disabled={!hasPlus(session)} style={{ border: 0, padding: 0, margin: 0, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, opacity: hasPlus(session) ? 1 : .45 }}><legend className="rd-label">Advanced filters · Plus</legend>
+              <fieldset disabled={!hasPlus(session)} style={{ border: 0, padding: 0, margin: 0, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, opacity: hasPlus(session) ? 1 : .45 }}><legend className="rd-label">Advanced filters{session.freePlus === false ? " · Plus" : ""}</legend>
                 <input style={fieldStyle()} placeholder="Min age" value={filterMinAge} onChange={(e) => setFilterMinAge(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Max age" value={filterMaxAge} onChange={(e) => setFilterMaxAge(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Race" value={filterRace} onChange={(e) => setFilterRace(e.target.value)} />
@@ -3270,7 +3270,7 @@ function ThreadsPanel({
     const next = new Set(pinnedKeys);
     if (next.has(key)) next.delete(key);
     else {
-      if (next.size >= limits(session).pins) { openPlus("chats"); return; }
+      if (next.size >= limits(session).pins) { if (session.freePlus === false) openPlus("chats"); else setLastError(`You can pin up to ${limits(session).pins} chats.`); return; }
       next.add(key);
     }
     void api.savePlusPreferences(session.sessionToken, { pinnedKeys: [...next] }).then(() => setPinnedKeys(next)).catch(e => setLastError(normalizeErrorMessage(e)));
@@ -3507,7 +3507,6 @@ function PublicPostings({
   const [spotThreadMessages, setSpotThreadMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [spotThreadLoading, setSpotThreadLoading] = useState<boolean>(false);
   const [createPanelOpen, setCreatePanelOpen] = useState<boolean>(!compact);
-  const [postingBoard, setPostingBoard] = useState<PostingBoard>("general");
   const [boardPosting, setBoardPosting] = useState<boolean>(false);
   const [boardProfileUserId, setBoardProfileUserId] = useState<string | null>(null);
   const [presenceByKey, setPresenceByKey] = useState<Record<string, { lat: number; lng: number }>>({});
@@ -3519,8 +3518,7 @@ function PublicPostings({
   const canCreateSpots = true;
   const gridColumns = isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))";
   const myActorKey = actorKey(session);
-  const boardAds = useMemo(() => ads.filter(post => (post.board ?? "general") === postingBoard), [ads, postingBoard]);
-  const selectedAd = boardAds.find(ad => ad.postingId === selectedAdId) ?? null;
+  const selectedAd = ads.find(ad => ad.postingId === selectedAdId) ?? null;
   const selectedGroup = useMemo(() => events.find((event) => event.postingId === selectedGroupId) ?? null, [events, selectedGroupId]);
   const selectedSpot = useMemo(() => spots.find((spot) => spot.spotId === selectedSpotId) ?? null, [selectedSpotId, spots]);
   const selectedAdThreadKey = selectedAd?.authorUserId ? `user:${selectedAd.authorUserId}` : "";
@@ -3699,8 +3697,8 @@ function PublicPostings({
 
   useEffect(() => {
     if (isMobile || screen !== "ads") return;
-    setSelectedAdId((prev) => (prev && boardAds.some(item => item.postingId === prev) ? prev : boardAds[0]?.postingId ?? null));
-  }, [boardAds, isMobile, screen]);
+    setSelectedAdId((prev) => (prev && ads.some(item => item.postingId === prev) ? prev : ads[0]?.postingId ?? null));
+  }, [ads, isMobile, screen]);
 
   useEffect(() => {
     if (isMobile || screen !== "groups") return;
@@ -3983,7 +3981,7 @@ function PublicPostings({
   const adBoardRows = useMemo(() => {
     const maxAgeMs = 12 * 60 * 60 * 1000;
     const now = Date.now();
-    const recentAds = boardAds
+    const recentAds = ads
       .filter((row) => now - row.createdAtMs <= maxAgeMs)
       .sort((a, b) => a.createdAtMs - b.createdAtMs);
     const grouped = new Map<
@@ -4008,7 +4006,7 @@ function PublicPostings({
       existing.latestAtMs = Math.max(existing.latestAtMs, row.createdAtMs);
     }
     return Array.from(grouped.values()).sort((a, b) => a.latestAtMs - b.latestAtMs);
-  }, [boardAds]);
+  }, [ads]);
 
   async function submitBoardAd(): Promise<void> {
     if (!canPostAds) { openPlus(); return; }
@@ -4021,7 +4019,7 @@ function PublicPostings({
         type: "ad",
         title,
         body: "",
-        board: postingBoard
+        board: "general"
       });
       setAdTitle("");
       await refresh();
@@ -4143,17 +4141,13 @@ function PublicPostings({
 
   const postingToolbar = (
     <form className="rd-posting-toolbar" onSubmit={event => { event.preventDefault(); void submitBoardAd(); }}>
-      <select className="rd-input" aria-label="Message board" value={postingBoard} disabled={boardPosting}
-        onChange={event => { if (isPostingBoard(event.target.value)) setPostingBoard(event.target.value); }}>
-        {Object.entries(POSTING_BOARDS).map(([board, label]) => <option key={board} value={board}>{label}</option>)}
-      </select>
       {canPostAds ? <>
         <input className="rd-input" aria-label="Posting headline" placeholder="Headline" value={adTitle}
           required maxLength={120} disabled={boardPosting} onChange={event => setAdTitle(event.target.value)} />
         <button type="submit" className="rd-btn primary" disabled={boardPosting || !adTitle.trim()}>
           {boardPosting ? "Posting…" : "Post"}
         </button>
-      </> : <button type="button" className="rd-btn" onClick={() => openPlus()}>Get Plus to post</button>}
+      </> : session.freePlus === false ? <button type="button" className="rd-btn" onClick={() => openPlus()}>Get Plus to post</button> : <p className="rd-caption">Create an account to post.</p>}
     </form>
   );
 
@@ -4574,11 +4568,10 @@ function PublicPostings({
     return (
       <div style={{ display: "grid", gap: 10 }}>
         <div className="rd-board-panel">
-          <h1 className="rd-postings-heading">Postings</h1>
           {postingToolbar}
           <div className="rd-board-feed">
             {adBoardRows.length === 0 ? (
-              <p className="rd-caption">No recent posts on this board.</p>
+              <p className="rd-caption">No recent posts.</p>
             ) : (
               adBoardRows.map((row) => {
                 const profile = publicProfilesByUserId[row.authorUserId];
@@ -4695,8 +4688,8 @@ function PublicPostings({
       return (
         <div style={shellStyle}>
           <div style={gridStyle}>
-            {boardAds.length === 0 ? <p className="rd-caption">No posts on this board.</p> : null}
-            {boardAds.map((p) => (
+            {ads.length === 0 ? <p className="rd-caption">No posts yet.</p> : null}
+            {ads.map((p) => (
               <button
                 key={p.postingId}
                 type="button"
@@ -4718,7 +4711,7 @@ function PublicPostings({
             ))}
           </div>
           <div style={{ display: "grid", gap: 10 }}>
-            <div className="rd-board-panel"><h1 className="rd-postings-heading">Postings</h1>{postingToolbar}</div>
+            <div className="rd-board-panel">{postingToolbar}</div>
             {selectedAd ? (
               <div style={{ ...cardStyle(), display: "grid", gap: 10 }}>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedAd.title}</div>
@@ -5753,34 +5746,7 @@ function SettingsProfile({ api, session, setLastError, section }: Readonly<{ api
 
   return (
     <div className="rd-profile-settings-stack">
-      {section === "profile" && <section className="rd-card rd-settings-body">
-        <div style={{ display: "grid", gap: 10 }}>
-          <h2>Your profile</h2>
-
-          {session.userType === "guest" ? (
-            <div style={{ color: "#b9bec9", fontSize: 13 }}>
-              Guest profile data is temporary and clears on logout.
-            </div>
-          ) : null}
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button type="button" onClick={() => void saveProfile()} className="rd-btn primary" disabled={saving}>
-              Save profile
-            </button>
-            <button type="button" onClick={() => void refreshProfile()} className="rd-btn" disabled={loading}>
-              Refresh
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowMyProfile((v) => !v)}
-              style={buttonSecondary(false)}
-              disabled={!profile}
-            >
-              {showMyProfile ? "Hide my profile" : "View my profile"}
-            </button>
-          </div>
-        </div>
-      </section>}
-      {status && <p className="rd-caption" role="status">{status}</p>}
+      {section === "photos" && status && <p className="rd-caption" role="status">{status}</p>}
 
       {section === "photos" && <section className="rd-card rd-settings-body">
         <div style={{ display: "grid", gap: 12 }}>
@@ -5822,8 +5788,8 @@ function SettingsProfile({ api, session, setLastError, section }: Readonly<{ api
                 disabled={saving}
                 onSelect={setVideoFile}
               />
-              <button type="button" className="rd-btn primary" disabled={saving} onClick={() => { if (!hasPlus(session)) { openPlus("profile"); return; } void upload("video", videoFile); }}>
-                {hasPlus(session) ? "Upload video" : "Unlock profile video with Plus"}
+              <button type="button" className="rd-btn primary" disabled={saving} onClick={() => { if (!hasPlus(session)) { if (!session.userId) setLastError("Create an account to upload a profile video."); else openPlus("profile"); return; } void upload("video", videoFile); }}>
+                {hasPlus(session) ? "Upload video" : session.freePlus === false ? "Unlock profile video with Plus" : "Create an account to upload video"}
               </button>
             </div>
           </div>
@@ -5956,6 +5922,33 @@ function SettingsProfile({ api, session, setLastError, section }: Readonly<{ api
         </div>
       </section>}
 
+      {section === "profile" && <MemberProfileLinks api={api} session={session} />}
+      {section === "profile" && <section className="rd-card rd-settings-body">
+        <div style={{ display: "grid", gap: 10 }}>
+          {status && <p className="rd-caption" role="status">{status}</p>}
+          {session.userType === "guest" ? (
+            <div style={{ color: "#b9bec9", fontSize: 13 }}>
+              Guest profile data is temporary and clears on logout.
+            </div>
+          ) : null}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => void saveProfile()} className="rd-btn primary" disabled={saving}>
+              Save profile
+            </button>
+            <button type="button" onClick={() => void refreshProfile()} className="rd-btn" disabled={loading}>
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowMyProfile((v) => !v)}
+              className="rd-btn"
+              disabled={!profile}
+            >
+              {showMyProfile ? "Hide my profile" : "View my profile"}
+            </button>
+          </div>
+        </div>
+      </section>}
       {section === "profile" && showMyProfile && profile ? (
         <div style={cardStyle()}>
           <div style={{ display: "grid", gap: 10 }}>
@@ -6824,6 +6817,7 @@ export function Router({
   const [exploreThreadKey, setExploreThreadKey] = useState<string | null>(null);
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
   const [rememberedThread, setRememberedThread] = useState<string | null>(null);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("profile");
   useEffect(() => {
     function update(event: Event) {
@@ -6882,8 +6876,7 @@ export function Router({
   const setPromotedError = useMemo(() => makeScopedSetLastError("promoted"), [makeScopedSetLastError]);
 
   const unifiedSettingsSurface = (
-    <div className="rd-settings-page rd-settings-hub">
-      <header className="rd-settings-title"><h1>Settings</h1></header>
+    <section className="rd-settings-page rd-settings-hub" aria-label="Settings">
       <div className="rd-settings-tabs" role="tablist" aria-label="Settings sections">
         {SETTINGS_SECTIONS.map(({ id, label, icon }, index) => (
           <button key={id} id={`settings-tab-${id}`} type="button" role="tab"
@@ -6909,10 +6902,6 @@ export function Router({
         className="rd-profile-settings-stack" tabIndex={0}>
         {(settingsSection === "profile" || settingsSection === "photos") &&
           <SettingsProfile section={settingsSection} api={api} session={session} setLastError={setProfileError} />}
-        {settingsSection === "profile" && <>
-          <MemberEditor api={api} session={session} />
-          <MemberProfileLinks api={api} session={session} />
-        </>}
         {settingsSection === "photos" && <>
           <PrivateAlbumsSettings api={api} session={session} />
           <PhotoVerificationPanel api={api} session={session} />
@@ -6926,18 +6915,28 @@ export function Router({
           <MarketingPreferences api={api} session={session} />
           <SafetyReportQueue api={api} session={session} />
           <SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} />
-          <a className="rd-btn rd-settings-policy" href="./legal/">Policies</a>
+          <div className="rd-row">
+            <a className="rd-btn" href="./legal/">Policies</a>
+            <a className="rd-btn" href="./thebackroom/">The Backroom</a>
+            <a className="rd-btn" href="https://badehausx.com/store/">Store</a>
+            <button type="button" className="rd-btn" onClick={() => setActiveTab("submissions")}>Submissions</button>
+            {session.role === "admin" && <button type="button" className="rd-btn" onClick={() => setAnalyticsOpen(true)}>
+              Activity dashboard
+            </button>}
+          </div>
+          {analyticsOpen && session.role === "admin" &&
+            <AdminAnalytics api={api} session={session} onClose={() => setAnalyticsOpen(false)} />}
         </>}
         {settingsSection === "plan" && <>
-          <PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} />
+          {session.freePlus === false && <PlusMembershipCard active={hasPlus(session)} onOpen={() => openPlus()} />}
           <MembershipPrograms api={api} session={session} />
           <BillingSettings api={api} session={session} />
-          <PromoCodeForm api={api} session={session} />
+          {session.freePlus === false && <PromoCodeForm api={api} session={session} />}
           <GrowthDashboard api={api} session={session} />
           <AdminLaunchChecks api={api} session={session} />
         </>}
       </div>
-    </div>
+    </section>
   );
   const scopedError = scopedErrors[currentErrorScope] ?? null;
   const inlineErrorBanner = scopedError ? (
@@ -6963,7 +6962,7 @@ export function Router({
       {!hideModeCard ? null : null}
       {!isMobileInboxOpen && !isMobileAdsOpen && activeTab !== "discover" && inlineErrorBanner}
 
-      <div className="rd-discover-container" style={{ display: activeTab === "discover" || isMobileInboxOpen || isMobileAdsOpen ? "block" : "none" }}>
+      <div className="rd-discover-container" style={{ display: activeTab === "discover" || isMobileAdsOpen ? "block" : "none" }}>
         <CruiseSurface
           api={api}
           session={session}
@@ -7036,7 +7035,7 @@ export function Router({
             <button type="button" className="rd-btn rd-icon-only-btn" aria-label="Close inbox"
               onClick={() => setActiveTab("discover")}>✕</button>
           </header>
-          <div style={{ overflowY: "auto", minHeight: 0, padding: 8 }}>
+          <div style={{ overflowY: "auto", overscrollBehaviorY: "contain", minHeight: 0, padding: 8 }}>
             {inlineErrorBanner}
             {mobileInboxTab === "chat-grid" ? (
               <CruiseSurface

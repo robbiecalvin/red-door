@@ -2419,7 +2419,7 @@ function requireSession(state: LocalState, sessionToken: string): Session {
     throw { code: "SESSION_NOT_FOUND", message: "Session not found." } as ServiceError;
   }
   const user = session.userId ? state.usersById[session.userId] : undefined;
-  return user ? { ...session, tier: hasPlus(user) ? "premium" : "free", plusExpiresAtMs: user.plusExpiresAtMs } : session;
+  return user ? { ...session, freePlus: true, tier: hasPlus(user) ? "premium" : "free", plusExpiresAtMs: user.plusExpiresAtMs } : session;
 }
 
 function requireUserSession(state: LocalState, sessionToken: string): Session {
@@ -2856,6 +2856,7 @@ function createLocalApiClient(): Readonly<{
       const session: Session = {
         sessionToken,
         userType: verifiedUser.userType,
+        freePlus: true,
         tier: hasPlus(verifiedUser) ? "premium" : "free",
         plusExpiresAtMs: verifiedUser.plusExpiresAtMs,
         role: roleForLocalEmail(normalizedEmail),
@@ -2903,6 +2904,7 @@ function createLocalApiClient(): Readonly<{
       const session: Session = {
         sessionToken,
         userType: user.userType,
+        freePlus: true,
         tier: hasPlus(user) ? "premium" : "free",
         plusExpiresAtMs: user.plusExpiresAtMs,
         role: roleForLocalEmail(normalizedEmail),
