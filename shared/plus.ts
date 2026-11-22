@@ -12,7 +12,7 @@ export const PROMO_CODES = [LAUNCH_CODE, PROVIDER_LAUNCH_CODE, MEMBER_LAUNCH_COD
 export function promoCode(value:unknown):string { if(typeof value!=="string" || !(PROMO_CODES as readonly string[]).includes(value.trim().toUpperCase()))throw new Error("Invalid promotion code.");return value.trim().toUpperCase(); }
 // Midnight January 1, 2027 in America/Vancouver. End is exclusive.
 export const LAUNCH_END_MS = Date.parse("2027-01-01T00:00:00-07:00");
-export type PlusIdentity = { userType: string; tier?: string; plusExpiresAtMs?: number; plusData?: PlusData };
+export type PlusIdentity = { userType: string; tier?: string; freePlus?: boolean; plusExpiresAtMs?: number; plusData?: PlusData };
 export function effectivePlusExpiry(identity: PlusIdentity): number | undefined {
   const data = identity.plusData;
   if (data?.priorityApprovedAtMs !== undefined) return undefined;
@@ -21,6 +21,7 @@ export function effectivePlusExpiry(identity: PlusIdentity): number | undefined 
 }
 export function hasPlus(identity: PlusIdentity, now = Date.now()): boolean {
   if (identity.userType === "guest") return false;
+  if (identity.freePlus === true) return true;
   if (identity.plusData?.priorityApprovedAtMs !== undefined) return true;
   if ((identity.plusData?.founderTrialEndsAtMs ?? 0) > now) return true;
   return identity.tier === "premium" && (identity.plusExpiresAtMs === undefined || identity.plusExpiresAtMs > now);

@@ -66,6 +66,7 @@ export type StoredUser = Readonly<{
 
 export type Session = Readonly<{
   sessionToken: string;
+  freePlus?: boolean;
   userType: UserType;
   tier: SubscriptionTier;
   plusExpiresAtMs?: number;
@@ -129,6 +130,7 @@ export type AuthStateSnapshot = Readonly<{
 
 export type AuthServiceDeps = Readonly<{
   jwtSecret: string;
+  freePlus?: boolean;
   nowMs?: () => number;
   guestSessionLifetimeMinutes?: number;
   userStoreFilePath?: string;
@@ -447,6 +449,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     const session: Session = {
       sessionToken,
       userType: user.userType,
+      freePlus: deps.freePlus || undefined,
       tier: hasPlus(user, issuedAtMs) ? "premium" : "free",
       plusExpiresAtMs: effectivePlusExpiry(user),
       role: normalizeRole(user.role),
@@ -512,8 +515,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         return banned as Result<Session>;
       }
       const tier = hasPlus(user, now) ? "premium" : "free";
-      if (existing.tier !== tier || existing.plusExpiresAtMs !== effectivePlusExpiry(user) || normalizeRole(existing.role) !== normalizeRole(user.role)) {
-        const refreshed: Session = { ...existing, tier, plusExpiresAtMs: effectivePlusExpiry(user), role: normalizeRole(user.role) };
+      const freePlus = deps.freePlus || undefined;
+      if (existing.freePlus !== freePlus || existing.tier !== tier || existing.plusExpiresAtMs !== effectivePlusExpiry(user) || normalizeRole(existing.role) !== normalizeRole(user.role)) {
+        const refreshed: Session = { ...existing, tier, freePlus, plusExpiresAtMs: effectivePlusExpiry(user), role: normalizeRole(user.role) };
         sessionsByToken.set(sessionToken, refreshed);
         return ok(refreshed);
       }

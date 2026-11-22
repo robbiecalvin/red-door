@@ -7,9 +7,10 @@ import { InstallApp } from "./Pwa";
 import { AccountNotices } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { useLiveInbox } from "./useLiveInbox";
+import { useMessageSound } from "./useMessageSound";
 import { disablePush } from "./pushNotifications";
 import { isPlusFeature, type PlusFeature } from "./PlusShowcase";
-import { NOTIFICATION_ENABLED, NOTIFICATION_DISCREET } from "./NotificationSettings";
+import { NOTIFICATION_ENABLED, NOTIFICATION_DISCREET, NotificationPrompt } from "./NotificationSettings";
 import afterDark from "../assets/after-dark.png";
 import { PasswordRecovery } from "./PasswordRecovery";
 import { GoogleSignInButton, type GoogleCredential } from "./GoogleSignInButton";
@@ -383,6 +384,7 @@ export function App(): React.ReactElement {
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [promoCode, setPromoCode] = useState("");
   const liveInboxStatus=useLiveInbox(session,resolveApiBasePath());
+  useMessageSound(session?.ageVerified ? actorKey(session) : null);
   const [plusFeature, setPlusFeature] = useState<PlusFeature | undefined>();
   const [loginSequence,setLoginSequence]=useState(0);
   const [plusOpen, setPlusOpen] = useState(false);
@@ -1128,6 +1130,9 @@ export function App(): React.ReactElement {
               </div>
             )}
           </div>
+          {session?.userId && (
+            <NotificationPrompt key={session.userId} api={api} session={session} ready={showBottomNav} />
+          )}
         </header>
       {session && session.ageVerified === true && topMenuOpen ? (
         <div className="rd-top-collapse" role="dialog" aria-label="Account functions">

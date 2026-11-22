@@ -62,9 +62,9 @@ async function webhook(type: string, id: string, valid = true, livemode = false)
 let admin: { token: string; id: string }, alice: { token: string; id: string }, bob: { token: string; id: string };
 let backendCwd: string | undefined;
 const sheetsToken = "fixture-only-priority-sheets-passphrase";
-async function startBackend(referralEmail = false){
+async function startBackend(referralEmail = false, freePlus = false){
   backend = spawn(process.execPath, ["--import", require.resolve("tsx"), "--import", path.resolve(__dirname, "fixtures/stripe-fetch.mjs"), path.resolve(__dirname, "../backend/src/server.ts")], {
-    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", NODE_EXTRA_CA_CERTS:mail.ca, SMTP_HOST: "127.0.0.1", SMTP_PORT:String(mail.port), SMTP_SECURE:"true", SMTP_USER:"fixture-user", SMTP_PASS:"fixture-pass", SMTP_FROM:"noreply@example.com", MARKETING_SEND_ENABLED:"true", MARKETING_FROM:"news@example.com", MARKETING_CONTACT_ADDRESS:"Badehaus X fixture postal address", MARKETING_PUBLIC_API_URL:"https://example.com", REFERRAL_EMAIL_ENABLED:String(referralEmail), PRIORITY_SHEETS_SYNC_TOKEN:sheetsToken, TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", STRIPE_FOUNDER_PRICE_ID: founderPrice.id, STRIPE_PRIORITY_RENEWAL_PRICE_ID: referralPrice.id, STRIPE_PRIORITY_INTRO_PRICE_ID: introPrice.id, PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
+    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, FREE_PLUS_ENABLED: String(freePlus), PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", NODE_EXTRA_CA_CERTS:mail.ca, SMTP_HOST: "127.0.0.1", SMTP_PORT:String(mail.port), SMTP_SECURE:"true", SMTP_USER:"fixture-user", SMTP_PASS:"fixture-pass", SMTP_FROM:"noreply@example.com", MARKETING_SEND_ENABLED:"true", MARKETING_FROM:"news@example.com", MARKETING_CONTACT_ADDRESS:"Badehaus X fixture postal address", MARKETING_PUBLIC_API_URL:"https://example.com", REFERRAL_EMAIL_ENABLED:String(referralEmail), PRIORITY_SHEETS_SYNC_TOKEN:sheetsToken, TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", STRIPE_FOUNDER_PRICE_ID: founderPrice.id, STRIPE_PRIORITY_RENEWAL_PRICE_ID: referralPrice.id, STRIPE_PRIORITY_INTRO_PRICE_ID: introPrice.id, PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
   });
   let startup = ""; backend.stderr?.on("data", chunk => { startup += chunk; });
   let ready = false;
@@ -945,6 +945,37 @@ describe("Core API and payment lifecycle smoke checks", () => {
       expect(await ledger.recordPayout("owner", ["next"], "admin", "offset", nextCutoff, 0)).toBe(0);
       expect((await ledger.list())[0]?.chargeback?.applied).toEqual({ atMs: nextCutoff, reference: "offset" });
     } finally { clock.mockRestore(); }
+  });
+
+  it("grants registered members free Plus and pauses Stripe enrollment only while enabled", async () => {
+    const existing = await account("free-plus-existing");
+    expect(await request("/plus", undefined, existing.token)).toMatchObject({ active: false });
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    await startBackend(false, true);
+    async function signIn(name: string) {
+      const login = await request("/auth/login", { email: `${name}@example.com`, password: "Smoke-test123!" });
+      const token = login.session.sessionToken;
+      await request("/auth/verify-age", { sessionToken: token, ageYears: 25 });
+      return token;
+    }
+    const member = await account("free-plus-new");
+    for (const token of [await signIn("free-plus-existing"), member.token]) {
+      expect(await request("/plus", undefined, token)).toMatchObject({
+        freePlus: true, active: true, billingConfigured: false, limits: { favorites: 100 }
+      });
+    }
+    await request("/plus/preferences", { savedSearches: [{ name: "Launch", filters: {} }] }, member.token, "PUT");
+    const priorRequests = upstreamRequests;
+    for (const route of ["/billing/checkout", "/billing/enroll"]) {
+      await request(route, { acceptRenewal: true }, member.token, "POST", 409);
+    }
+    expect(upstreamRequests).toBe(priorRequests);
+
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    await startBackend();
+    expect(await request("/plus", undefined, await signIn("free-plus-new"))).toMatchObject({ freePlus: false, active: false });
   });
 
 });

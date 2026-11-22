@@ -16,6 +16,19 @@ export function BillingSettings({api,session}:Props){const [status,setStatus]=us
   const billDate = founderTrial ? new Date(trialEnd).toLocaleString("en-CA", { timeZone: "America/Vancouver", dateStyle: "medium", timeStyle: "short" }) + " Pacific" : "";
   const promotional=!founder && !referral && status?.active && status.expiresAtMs===LAUNCH_END_MS,existing=Boolean(status?.subscriptionStatus && !["canceled","incomplete_expired"].includes(status.subscriptionStatus));
   async function run(action:()=>Promise<void>){setBusy(true);setError("");try{await action();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  if (status?.freePlus ?? session.freePlus) return <section className="rd-card rd-settings-body" id="rd-billing-settings">
+    <h2>Plus is free during launch</h2>
+    <p>Your account already has Plus access. No payment method is needed to use it.</p>
+    {status?.renewalScheduled ? <button className="rd-btn" disabled={busy} onClick={() => void run(async () => {
+      await api.memberRequest(session.sessionToken, "/billing/enrollment/cancel", {});
+      await refresh();
+    })}>Cancel scheduled renewal</button> : null}
+    {status?.hasBillingAccount ? <button className="rd-btn" disabled={busy} onClick={() => void run(async () => {
+      const portal = await api.manageSubscription(session.sessionToken);
+      window.location.assign(portal.url);
+    })}>Manage existing subscription in Stripe</button> : null}
+    {error ? <p role="alert" className="rd-error">{error}</p> : null}
+  </section>;
   return <section className="rd-card rd-settings-body" id="rd-billing-settings"><div className="rd-eyebrow">KEEP YOUR CONNECTIONS OPEN</div><h2>Plus billing</h2><p className="rd-muted">Payment details are entered and stored securely by Stripe. Badehaus X never receives your full card number.</p><dl className="rd-billing-summary"><div><dt>Payment method</dt><dd>{status?.hasPaymentMethod?"Saved in Stripe":"Not saved"}</dd></div><div><dt>Monthly renewal</dt><dd>{status?.autoRenew?"Enabled":"Not enrolled"}</dd></div>{status?.nextBillingAtMs && status.autoRenew?<div><dt>Next scheduled billing</dt><dd>{new Date(status.nextBillingAtMs).toLocaleString("en-CA",{timeZone:"America/Vancouver",dateStyle:"medium",timeStyle:"short"})} Pacific</dd></div>:null}</dl>
     {referral ? <p>Priority referral offer · CAD $14.99 today for three months, then CAD $9.99/month.</p> : null}
     {founderTrial ? <p>Your Founding Member free period ends {billDate}. Enroll to continue at {price}/month.</p> : promotional?<p>Your complimentary Plus lasts through December 31, 2026. Enroll below to schedule CAD $7.99/month starting January 1, 2027, Pacific time.</p>:!status?.active && status?.redeemedPromoCodes?.length?<p>Your complimentary Plus has ended. Subscribe to reactivate it.</p>:null}
@@ -30,7 +43,7 @@ export function AccountNotices({api,session,ready,loginSequence}:{api:Props["api
   const [status,setStatus]=useState<PlusStatus|null>(null),[dismissed,setDismissed]=useState(false);const seen=useRef(0);
   useEffect(()=>{let active=true;setStatus(null);if(!session?.userId)return;void api.getPlus(session.sessionToken).then(s=>{if(active)setStatus(s);}).catch(()=>{});const update=()=>void api.getPlus(session.sessionToken).then(s=>{if(active){setStatus(s);setDismissed(false);}}).catch(()=>{});window.addEventListener("rd:plus-changed",update);return()=>{active=false;window.removeEventListener("rd:plus-changed",update);};},[api,session?.sessionToken,loginSequence]);
   useEffect(()=>{if(loginSequence>seen.current)setDismissed(false);},[loginSequence]);
-  if(!session?.userId || !ready || !status)return null;
+  if(!session?.userId || !ready || !status || status.freePlus)return null;
   const promotional=status.active&&status.expiresAtMs===LAUNCH_END_MS;
   const expired=!status.active && Boolean(status.redeemedPromoCodes?.length) && Date.now()>=LAUNCH_END_MS;
   const reminder=!status.priority && !status.founderRateEligible && !status.referralOffer && loginSequence>seen.current && !dismissed && (!status.hasPaymentMethod||expired);
