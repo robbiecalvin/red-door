@@ -34,13 +34,16 @@ export function writeBackroomArticles(articles, baseUrl) {
     fs.writeFileSync(`dist/thebackroom/${slug}/index.html`, `<!doctype html>
 <html lang="en-CA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} · The Backroom</title><meta name="description" content="${esc(synopsis)}">
-<link rel="canonical" href="${esc(canonical)}"><link rel="stylesheet" href="../../legal/policy.css">
+<link rel="canonical" href="${esc(canonical)}"><link rel="stylesheet" href="../../site-theme.css">
 <meta property="og:type" content="article"><meta property="og:site_name" content="Badehaus X">
 <meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(synopsis)}">
 <meta property="og:url" content="${esc(canonical)}"><meta property="og:image" content="${esc(image)}"><meta property="og:image:alt" content="${esc(alt)}">
 <meta property="article:published_time" content="${published}"><meta name="twitter:card" content="summary_large_image">
 <script type="application/ld+json">${schema}</script></head>
-<body><main><nav aria-label="Breadcrumb"><a href="../">The Backroom</a> · <a href="../../">Badehaus X</a></nav>
+<body class="site-page site-article"><header class="site-header"><div class="site-header-inner">
+<a class="site-brand" href="../../"><img src="../../icons/icon-192.png" width="36" height="36" alt="">Badehaus X</a>
+<nav aria-label="Site navigation"><a href="../">The Backroom</a><a href="../../store/">Shop</a></nav>
+</div></header><main>
 <article><header><h1>${esc(title)}</h1><p>${esc(synopsis)}</p><p>By Badehaus X · <time datetime="${date}">${date}</time></p></header>
 <img width="382" height="510" style="width:min(100%,382px);height:auto" src="../covers/${slug}.jpg" alt="${esc(alt)}">
 ${content}

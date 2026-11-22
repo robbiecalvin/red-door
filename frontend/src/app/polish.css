@@ -8,7 +8,6 @@ h1,h2,h3,p { margin-top:0; } button,input,select,textarea { font-family:var(--ui
 .rd-home-hero .rd-card-body,.rd-main.mobile .rd-home-hero .rd-card-body { padding:25px; display:flex; flex-direction:column; height:100%; }
 .rd-home-hero .rd-eyebrow { color:#e5afb5; font-size:10px; letter-spacing:2px; }
 .rd-home-copy { max-width:310px; color:#d2c9cc; font-size:14px; }.rd-welcome-features { margin-top:18px; font-size:10px; gap:12px; }
-.rd-auth-hero .rd-card-head { padding-bottom:16px; }
 /* Google Identity Services caps its embedded button at 400px. */
 .rd-auth-hero .rd-card-body { padding-inline: max(16px, calc((100% - 400px) / 2)); }
 .rd-main.mobile .rd-auth-hero .rd-card-body { padding-inline: max(12px, calc((100% - 400px) / 2)); }
