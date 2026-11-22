@@ -6962,7 +6962,7 @@ export function Router({
       {!hideModeCard ? null : null}
       {!isMobileInboxOpen && !isMobileAdsOpen && activeTab !== "discover" && inlineErrorBanner}
 
-      <div className="rd-discover-container" style={{ display: activeTab === "discover" || isMobileAdsOpen ? "block" : "none" }}>
+      <div className="rd-discover-container" style={{ display: activeTab === "discover" ? "block" : "none" }}>
         <CruiseSurface
           api={api}
           session={session}
@@ -7102,7 +7102,7 @@ export function Router({
             overflowX: "hidden"
           }}
         >
-          <div style={{ gridRow: "1 / -1", overflowY: "auto", minHeight: 0, padding: 8 }}>
+          <div style={{ gridRow: "1 / -1", overflowY: "auto", overscrollBehaviorY: "contain", minHeight: 0, padding: 8 }}>
             {inlineErrorBanner}
             <PublicPostings
               api={api}
