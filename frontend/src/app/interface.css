@@ -1,0 +1,185 @@
+.rd-art-icon {
+  display: inline-block;
+  flex: none;
+  object-fit: contain;
+  vertical-align: middle;
+}
+.rd-app-brand-mark { width: 28px; height: 38px; object-fit: contain; }
+.rd-app-bars.has-bottom-nav {
+  --rd-app-bar-background: linear-gradient(105deg, #281c1c, #090707 48%, #281c1c);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.rd-app-bars.has-bottom-nav > .rd-main {
+  grid-column: 1;
+  grid-row: 2;
+  position: relative;
+}
+.rd-app-bars > .rd-topbar {
+  grid-row: 1;
+  background: var(--rd-app-bar-background);
+}
+.rd-app-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  position: relative;
+}
+.rd-app-toolbar-side { display: flex; align-items: center; gap: clamp(2px, 2vw, 18px); }
+.rd-app-toolbar-end { justify-content: flex-end; }
+.rd-app-bars .rd-topbar-inner,
+.rd-app-bars .rd-topbar.mobile .rd-topbar-inner {
+  padding: calc(3px + env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) 3px max(10px, env(safe-area-inset-left, 0px));
+}
+.rd-app-bars .rd-app-avatar {
+  grid-column: 2;
+  width: 66px;
+  height: 66px;
+  margin: 0 0 -22px;
+  background: var(--surface-raised);
+  overflow: visible;
+  position: relative;
+  z-index: 1;
+}
+.rd-app-avatar .rd-mobile-avatar-img { width: 100%; height: 100%; border-radius: 50%; }
+.rd-app-avatar .rd-mobile-avatar-dot { top: 2px; left: 0; right: auto; bottom: auto; border-color: #fff; background: #ff2936; }
+.rd-app-toolbar .rd-btn.rd-app-tool,
+.rd-app-toolbar .rd-btn.rd-install-app,
+.rd-app-dock .rd-btn.rd-app-tool,
+.rd-app-dock-context .rd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.rd-app-toolbar .rd-art-icon,
+.rd-app-dock .rd-art-icon { width: 32px; height: 32px; }
+.rd-app-dock {
+  grid-column: 1;
+  grid-row: 3;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(44px, 1fr)) auto repeat(2, minmax(44px, 1fr));
+  justify-items: center;
+  align-items: center;
+  position: relative;
+  z-index: 9;
+  min-height: 54px;
+  padding: 3px max(0px, env(safe-area-inset-right, 0px)) calc(3px + env(safe-area-inset-bottom, 0px)) max(0px, env(safe-area-inset-left, 0px));
+  background: var(--rd-app-bar-background);
+}
+.rd-app-dock .rd-app-tool { position: relative; }
+.rd-app-dock-views {
+  display: flex;
+  gap: clamp(0px, 1vw, 12px);
+  transform: translateY(-18px);
+}
+.rd-app-dock-context {
+  position: absolute;
+  bottom: 100%;
+  left: max(4px, env(safe-area-inset-left, 0px));
+  display: flex;
+  align-items: center;
+}
+.rd-app-inbox-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  color: #fff;
+  background: #1b1012;
+  border-radius: 1em;
+  padding-inline: 4px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.rd-app-bars .rd-top-collapse { grid-column: 1; grid-row: 1; justify-self: end; flex-wrap: wrap; }
+.rd-maplibre .maplibregl-ctrl-top-right { top: auto; bottom: 8px; right: 4px; }
+.rd-maplibre .maplibregl-ctrl-group { background: #121012c9; }
+.rd-maplibre .maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon {
+  background: center / 24px 24px no-repeat url("../assets/interface/zoomin.webp");
+}
+.rd-maplibre .maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
+  background: center / 24px 24px no-repeat url("../assets/interface/zoomout.webp");
+}
+@media (max-width: 900px) {
+  html[data-keyboard-open=true] .rd-app-dock { visibility: hidden; }
+}
+
+.rd-explore-surface .rd-discover-grid { padding: 0 !important; }
+.rd-explore-surface .rd-people-grid { gap: 1px; }
+.rd-people-grid .rd-person-card {
+  position: relative;
+  aspect-ratio: 1;
+  border: 1px solid #aa222a !important;
+  border-radius: 9px !important;
+  background: #030303 !important;
+  isolation: isolate;
+}
+.rd-people-grid .rd-person-card:hover { transform: none; }
+.rd-people-grid .rd-person-card.has-unread {
+  border: 2px solid #ff343c !important;
+}
+.rd-people-grid .rd-person-card > .rd-person-photo {
+  position: absolute;
+  inset: 0;
+  aspect-ratio: 1 !important;
+}
+.rd-person-photo .rd-person-silhouette { opacity: .31; }
+.rd-people-grid .rd-person-card > .rd-person-online-dot {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10c87a;
+}
+.rd-person-distance {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  color: #fff;
+  font-size: clamp(11px, 1.7vw, 20px);
+  font-weight: 750;
+  text-shadow: 0 1px 4px #000;
+}
+.rd-people-grid .rd-person-info {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  align-items: end;
+  gap: 3px;
+  padding: 18px 5px 5px;
+  background: linear-gradient(transparent, #0008);
+}
+.rd-people-grid .rd-person-info strong {
+  color: #fff;
+  font-size: clamp(11px, 1.7vw, 20px);
+  line-height: 1.2;
+  margin-inline-end: auto;
+  text-shadow: 0 1px 4px #000;
+}
+.rd-person-indicators { display: inline-flex; align-items: end; gap: 2px; }
+.rd-person-indicators .rd-art-icon {
+  width: clamp(13px, 2vw, 24px);
+  height: clamp(13px, 2vw, 24px);
+}
+.rd-person-unread { position: relative; }
+.rd-person-unread > span {
+  position: absolute;
+  top: -7px;
+  right: -1px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  text-shadow: 0 1px 3px #000;
+}
+.rd-people-grid .rd-profile-skeleton { aspect-ratio: 1; }

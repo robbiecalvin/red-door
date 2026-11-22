@@ -1,3 +1,4 @@
+import { Icon } from "../../app/Icon";
 import React, { useEffect, useMemo, useState } from "react";
 
 import { useCruisePresence } from "./CruisePresence";
@@ -216,7 +217,7 @@ export function CruiseMap({
               cursor: "pointer"
             }}
           >
-            ✈
+            <Icon name="travel" active={travelPickerArmed} />
           </button>
         ) : null}
         {travelPickerArmed ? (

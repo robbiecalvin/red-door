@@ -22,8 +22,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .rd-topbar-session { grid-template-columns: 1fr auto auto; gap: 14px; }
 .rd-brand { align-items: center; gap: 9px; }
 .rd-brand .rd-name { font-size: 16px; letter-spacing: -.6px; font-weight: 800; white-space: nowrap; }
-.rd-door-mark { display: inline-block; flex: 0 0 auto; width: 19px; height: 26px; border: 2px solid var(--accent); border-bottom: 0; position: relative; }
-.rd-door-mark::after { content: ""; position: absolute; inset: 3px 3px 0 4px; background: var(--accent); transform: skewY(-12deg); transform-origin: bottom; }
 .rd-top-avatar { width: 38px; height: 38px; border: 1px solid #ffffff30; background: var(--surface-raised); }
 .rd-top-actions { flex-wrap: nowrap; gap: 4px; }
 .rd-top-actions .rd-btn, .rd-top-actions .rd-icon-only-btn { min-width: 44px; min-height: 44px; }

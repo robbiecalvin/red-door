@@ -2,6 +2,12 @@
 
 Plus costs **CAD $7.99 per month**, using Stripe-hosted Checkout and the customer billing portal. The frontend never receives Stripe secret keys. A browser return from Checkout does not grant privileges: a signed Stripe webhook retrieves canonical subscription state and validates the configured CAD 799-cent monthly price before updating the account.
 
+## Free launch access
+
+Set `FREE_PLUS_ENABLED=true` on the backend to grant Plus features to all registered members without an expiry date or promo code. Account and age requirements still apply. Free access pauses new paid Checkout and deferred enrollment. Disable the flag to restore access based on each account's original entitlements.
+
+Existing subscriptions and schedules remain in Stripe and can still renew. Review them in Stripe before announcing free access to all members. Members with an existing billing account can still manage their Stripe subscription through Settings.
+
 ## Features and limits
 
 | Capability | Free registered account | Plus |

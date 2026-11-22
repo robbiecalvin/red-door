@@ -83,7 +83,7 @@ export function PwaProvider({children}:{children:React.ReactNode}) {
       reload();
     }
   }
-  return <PwaContext.Provider value={{installed,prompt,error,online,update,updating,activate,install}}>{children}{!online || (update && !installed)?<aside className="rd-pwa-status" aria-label="App connection and updates"><div role="status">{!online?'You’re offline. Messages and changes need a connection.': error || 'A Badehaus X update is ready. Finish your message before reloading.'}</div>{online && update?<button className="rd-btn" disabled={updating} onClick={activate}>{updating?'Updating…':'Reload app'}</button>:null}</aside>:null}</PwaContext.Provider>;
+  return <PwaContext.Provider value={{installed,prompt,error,online,update,updating,activate,install}}>{children}{!online || (update && !installed)?<aside className="rd-pwa-status" aria-label="App connection and updates"><div role="status">{!online?'You’re offline. Messages and changes need a connection.': error || 'A Badehaus X update is ready. Finish your message before reloading.'}</div>{online && update?<button className="rd-btn" disabled={updating} onClick={activate}><Icon name="update" /> {updating?'Updating…':'Reload app'}</button>:null}</aside>:null}</PwaContext.Provider>;
 }
 export function InstallApp({ iconOnly = false }: { iconOnly?: boolean } = {}) {
   const {installed,prompt,error,online,update,updating,activate,install}=useContext(PwaContext),[open,setOpen]=useState(false),[busy,setBusy]=useState(false);
@@ -92,7 +92,7 @@ export function InstallApp({ iconOnly = false }: { iconOnly?: boolean } = {}) {
     const label = updating ? "Updating…" : update ? "Update app" : "App installed";
     return <button type="button" className={buttonClass} aria-label={label} title={iconOnly ? label : undefined}
       disabled={!online || !update || updating} onClick={activate}>
-      {iconOnly ? <Icon name={update || updating ? "download" : "check"} /> : label}
+      {iconOnly ? <Icon name={update || updating ? "update" : "check"} /> : label}
     </button>;
   }
   const apple=isAppleMobile();

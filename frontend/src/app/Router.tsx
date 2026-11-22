@@ -261,7 +261,7 @@ function displayMessageText(text: string): string {
   if (trimmed.startsWith(GROUP_INVITE_DECLINE_PREFIX)) return "Chat Invite Declined";
   const status = parseGroupInviteStatus(trimmed);
   if (status) return status.outcome === "accepted" ? "Chat Invite Accepted" : "Chat Invite Declined";
-  return isFireSignalText(trimmed) ? "🔥 I'm into you" : text;
+  return isFireSignalText(trimmed) ? "I'm into you" : text;
 }
 
 function parseGroupInviteStatus(text: string): {
@@ -1327,12 +1327,12 @@ function CruiseSurface({
               {!isSelf ? <div className="rd-member-profile-actions">
                 {profile ? <>
                   <button className="rd-btn" type="button" aria-label="Favorite" aria-pressed={favorites.has(profile.userId)}
-                    onClick={() => void toggleFavoriteFromProfile(profile.userId)}>{favorites.has(profile.userId) ? "★" : "☆"}</button>
+                    onClick={() => void toggleFavoriteFromProfile(profile.userId)}><Icon name="star" active={favorites.has(profile.userId)} /></button>
                   <button className="rd-btn" type="button" aria-label="Send fire"
-                    onClick={() => void sendFireFromProfile(chatKeyFromProfileUserId(profile.userId))}>🔥</button>
+                    onClick={() => void sendFireFromProfile(chatKeyFromProfileUserId(profile.userId))}><Icon name="flame" /></button>
                 </> : null}
                 <button className="rd-btn" type="button" aria-label={blockedKeys.has(selectedProfileKey) ? "Unblock" : "Block"}
-                  onClick={() => void toggleBlockFromProfile(selectedProfileKey)}>⊘</button>
+                  onClick={() => void toggleBlockFromProfile(selectedProfileKey)}><Icon name="block" /></button>
                 <button className="rd-btn primary rd-member-message" type="button" onClick={message}>
                   Message{unreadCount > 0 ? <span className="rd-member-unread" aria-label={`${unreadCount} unread`}>{unreadCount}</span> : null}
                 </button>
@@ -2422,7 +2422,7 @@ function CruiseChat({
               </label>
               <label className="rd-right-now-filter">
                 <input type="checkbox" checked={rightNowOnly} onChange={event => setRightNowOnly(event.target.checked)} />
-                <span className="rd-right-now-badge"><Icon name="lightning" />Right Now only</span>
+                <span className="rd-right-now-badge"><Icon name="lightning" active />Right Now only</span>
               </label>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2500,29 +2500,42 @@ function CruiseChat({
             {loading ? Array.from({length:6}, (_,i) => <div key={i} className="rd-profile-skeleton" aria-label="Loading profile" />) : gridCards.length === 0 ? (
               <div className="rd-empty-state"><span className="rd-empty-icon"><Icon name="user" /></span><h2>A little quiet here.</h2><p>No one matches your filters right now.<br />Try opening things up to find more connections.</p><div className="rd-row"><button type="button" className="rd-btn" onClick={clearGridFilters}>Clear filters</button><a className="rd-btn" href="#/groups">Browse private groups</a></div></div>
             ) : (
-              gridCards.map((p) => (
-                <button
-                  key={p.key}
-                  className={`rd-person-card ${(unreadByPeerKey[p.key] ?? 0) > 0 ? "has-unread" : ""}`}
-                  aria-label={`View ${displayNameForIdentity(p.key, p.displayName)}’s profile`}
-                  type="button"
-                  onClick={() => onOpenProfile(p.key)}
-                >
-                  <div className="rd-person-photo">
-                    <img
-                      src={p.avatarUrl ?? avatarForKey(p.key)}
-                      onError={() => {
-                        if (typeof p.mainPhotoMediaId === "string" && p.mainPhotoMediaId.trim() && onAvatarLoadError) {
-                          onAvatarLoadError(p.mainPhotoMediaId);
-                        }
-                      }}
-                      alt=""
-                    />
-                    {p.isOnline ? <span className="rd-person-online-dot" aria-hidden="true" /> : null}
-                  </div>
-                  <div className="rd-person-info"><strong>{displayNameForIdentity(p.key, p.displayName)}{p.age ? <span>, {p.age}</span> : null}</strong>{liveKeys.has(p.key) && !p.recentlyActive ? <span className="rd-live-badge">Live now</span> : null}{p.foundingMember ? <span className="rd-live-badge">Founding Member</span> : null}<RightNowBadge expiresAtMs={p.member?.rightNowExpiresAtMs} /><IntentBadge member={p.member}/><VerifiedBadge verified={p.member?.photoVerified}/><small><span className={p.isOnline ? "rd-online" : ""}>{p.isOnline ? "Online now" : p.recentlyActive ? "Recently active" : "Offline"}</span>{p.meters !== null ? ` · ${formatDistanceLabel(p.meters)}` : ""}</small></div>
-                </button>
-              ))
+              gridCards.map((p) => {
+                const name = displayNameForIdentity(p.key, p.displayName);
+                const unread = unreadByPeerKey[p.key] ?? 0;
+                const distance = p.meters === null ? null : formatDistanceLabel(p.meters);
+                const rightNow = isRightNow(p.member?.rightNowExpiresAtMs, discoveryNow);
+                const live = liveKeys.has(p.key) && !p.recentlyActive;
+                const presence = p.isOnline ? "Online now" : p.recentlyActive ? "Recently active" : "Offline";
+                const profileLabel = [
+                  `View ${name}’s profile`, p.age, distance, presence, rightNow && "Right Now",
+                  live && "Live now", unread > 0 && `${unread} unread`, p.foundingMember && "Founding Member"
+                ].filter(Boolean).join(", ");
+                return (
+                  <button key={p.key} className={`rd-person-card ${unread > 0 ? "has-unread" : ""}`}
+                    aria-label={profileLabel} type="button" onClick={() => onOpenProfile(p.key)}>
+                    <div className="rd-person-photo">
+                      <img src={p.avatarUrl ?? placeholderC} className={p.avatarUrl ? undefined : "rd-person-silhouette"}
+                        alt="" loading="lazy" onError={() => {
+                          if (p.mainPhotoMediaId && onAvatarLoadError) onAvatarLoadError(p.mainPhotoMediaId);
+                        }} />
+                    </div>
+                    {p.isOnline && <span className="rd-person-online-dot" aria-hidden="true" />}
+                    {distance && <span className="rd-person-distance" title={distance}>{distance.replace(/^Within | away$/g, "")}</span>}
+                    <div className="rd-person-info">
+                      <strong>{name}{p.age ? `, ${p.age}` : ""}</strong>
+                      <span className="rd-person-indicators">
+                        {rightNow && <Icon name="lightning" active />}
+                        {live && <Icon name="live" active />}
+                        {unread > 0 && <span className="rd-person-unread">
+                          <Icon name="message" active />
+                          <span>{unread > 99 ? "99+" : unread}</span>
+                        </span>}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })
             )}
           </div>
       </div>
@@ -2710,7 +2723,7 @@ function DateSurface({
                 return (
                   <div key={m.matchId} style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <button type="button" onClick={() => void toggleFavorite(peer)} style={buttonSecondary(false)} aria-label="Toggle favorite">
-                      {fav ? "★" : "☆"}
+                      <Icon name="star" active={fav} />
                     </button>
                     <button type="button" onClick={() => setSelectedMatchPeer(peer)} style={buttonSecondary(false)} aria-label={`Open chat with ${peer}`}>
                       CHAT: {peer}
@@ -3316,7 +3329,7 @@ function ThreadsPanel({
         }}
       >
         <div className="rd-thread-header" style={{ position: "sticky", top: 0, zIndex: 46, background: "#17171b", borderBottom: "1px solid var(--line)", padding: "12px", display: "flex", alignItems: "center", gap: 12 }}>
-          <button className="rd-btn" aria-label="Back to conversations" onClick={() => setSelectedPeerKey(null)}>←</button>
+          <button className="rd-btn" aria-label="Back to conversations" onClick={() => setSelectedPeerKey(null)}><Icon name="back" /></button>
           <button type="button" className="rd-thread-avatar rd-thread-avatar-mini" aria-label={`View ${displayName}’s profile`}
             onClick={() => onOpenProfile({ key: selectedPeerKey, displayName, chatKind: selectedChatKind, onMessage: () => {}, onError: setLastError })}>
             <img src={activeRow?.avatarUrl ?? avatarForKey(selectedPeerKey)} alt="" />
@@ -4964,11 +4977,11 @@ function SubmissionsPanel({ api, session, setLastError }: Readonly<{ api: Api; s
               <div style={{ color: "#b9bec9", fontSize: 13, marginTop: 8 }}>Views: {s.viewCount} | Rating: {avg} ({s.ratingCount})</div>
               <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                 <button type="button" style={buttonSecondary(false)} onClick={() => void view(s.submissionId)}>VIEW</button>
-                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 1)}>★1</button>
-                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 2)}>★2</button>
-                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 3)}>★3</button>
-                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 4)}>★4</button>
-                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 5)}>★5</button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 1)} aria-label="Rate 1 out of 5"><Icon name="star" />1</button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 2)} aria-label="Rate 2 out of 5"><Icon name="star" />2</button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 3)} aria-label="Rate 3 out of 5"><Icon name="star" />3</button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 4)} aria-label="Rate 4 out of 5"><Icon name="star" />4</button>
+                <button type="button" style={buttonSecondary(false)} onClick={() => void rate(s.submissionId, 5)} aria-label="Rate 5 out of 5"><Icon name="star" />5</button>
               </div>
             </div>
           );
@@ -5932,7 +5945,7 @@ function SettingsProfile({ api, session, setLastError }: Readonly<{ api: Api; se
               <span className="rd-label" style={{ margin: 0 }}>Discreet Mode</span>
             </label>
           </div>
-          <div style={{ color: "#b9bec9", fontSize: 13 }}>Travel mode is controlled from the Discover map via the ✈ picker.</div>
+          <div style={{ color: "#b9bec9", fontSize: 13 }}>Travel mode is controlled from the Discover map via the <Icon name="travel" /> picker.</div>
         </div>
       </div>
 
@@ -6923,12 +6936,9 @@ export function Router({
       {isMobileInboxOpen ? (
         <div className="rd-mobile-inbox"
           style={{
-            position: "fixed",
-            left: 0,
-            right: 0,
-            top: 0,
-            bottom: "calc(73px + env(safe-area-inset-bottom, 0px))",
-            zIndex: 51,
+            position: "absolute",
+            inset: 0,
+            zIndex: 5,
             borderTop: "1px solid rgba(255, 95, 104, 0.48)",
             background: "#111113",
             boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",
@@ -6950,7 +6960,7 @@ export function Router({
               ] as const).map(([id, label, icon]) => (
                 <button key={id} type="button" className="rd-btn rd-icon-only-btn" title={label}
                   aria-label={label} aria-pressed={mobileInboxTab === id} onClick={() => setMobileInboxTab(id)}>
-                  <Icon name={icon} />
+                  <Icon name={icon} active={mobileInboxTab === id} />
                 </button>
               ))}
             </nav>
@@ -7013,12 +7023,9 @@ export function Router({
       {isMobileAdsOpen ? (
         <div
           style={{
-            position: "fixed",
-            left: 0,
-            right: 0,
-            top: 0,
-            bottom: "calc(73px + env(safe-area-inset-bottom, 0px))",
-            zIndex: 51,
+            position: "absolute",
+            inset: 0,
+            zIndex: 5,
             borderTop: "1px solid rgba(255, 95, 104, 0.48)",
             background: "#111113",
             boxShadow: "0 -14px 34px rgba(0,0,0,0.55)",

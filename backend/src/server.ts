@@ -445,8 +445,10 @@ async function main(): Promise<void> {
     console.log("[Badehaus X] Persistence mode: local file storage");
   }
 
+  const freePlus = process.env.FREE_PLUS_ENABLED === "true";
   const rawAuthService = createAuthService({
     jwtSecret,
+    freePlus,
     emailOnlyVerification: true,
     adminEmails: parseAdminEmails(process.env.ADMIN_EMAILS),
     onVerificationCodeIssued: verificationCodeSender,
@@ -660,6 +662,7 @@ async function main(): Promise<void> {
     next();
   });
   async function finishRenewalSetup(checkoutId:string){
+    if (freePlus) return;
     const checkout=await stripeRequest(`checkout/sessions/${encodeURIComponent(checkoutId)}`);
     if(checkout.mode!=="setup" || checkout.status!=="complete" || checkout.metadata?.flow!=="launch-renewal")throw new Error("Invalid renewal setup.");
     const user=authService.getUser(checkout.metadata?.userId);if(user && user.plusData?.stripeCheckoutSessionId!==checkout.id)return;
@@ -995,7 +998,7 @@ async function main(): Promise<void> {
   app.get("/plus", (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const data = actor.user.plusData ?? {};
-    return res.json({ active: hasPlus(actor.session), expiresAtMs: actor.session.plusExpiresAtMs, founderTrialEndsAtMs: data.founderTrialEndsAtMs, founderRateEligible: data.founderRateEligible === true, priority: data.priorityApprovedAtMs !== undefined, priorityInvited: data.priorityInvited === true, referralOffer: !data.founderRateEligible && Boolean(data.priorityReferralOwnerId && !data.referralIntroInvoiceId), priorityPending: data.priorityRequestedAtMs !== undefined && data.priorityApprovedAtMs === undefined, priorityReferralCode: data.priorityApprovedAtMs !== undefined ? data.priorityReferralCode : undefined, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: billingConfiguration().configured && (!data.founderRateEligible || Boolean(process.env.STRIPE_FOUNDER_PRICE_ID?.trim()))
+    return res.json({ freePlus, active: hasPlus(actor.session), expiresAtMs: actor.session.plusExpiresAtMs, founderTrialEndsAtMs: data.founderTrialEndsAtMs, founderRateEligible: data.founderRateEligible === true, priority: data.priorityApprovedAtMs !== undefined, priorityInvited: data.priorityInvited === true, referralOffer: !data.founderRateEligible && Boolean(data.priorityReferralOwnerId && !data.referralIntroInvoiceId), priorityPending: data.priorityRequestedAtMs !== undefined && data.priorityApprovedAtMs === undefined, priorityReferralCode: data.priorityApprovedAtMs !== undefined ? data.priorityReferralCode : undefined, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: !freePlus && billingConfiguration().configured && (!data.founderRateEligible || Boolean(process.env.STRIPE_FOUNDER_PRICE_ID?.trim()))
       && (!(data.priorityReferralOwnerId && !data.referralIntroInvoiceId && !data.founderRateEligible) ||
         Boolean(process.env.STRIPE_PRIORITY_INTRO_PRICE_ID?.trim() && process.env.STRIPE_PRIORITY_RENEWAL_PRICE_ID?.trim())), hasBillingAccount: Boolean(data.stripeCustomerId), hasPaymentMethod:data.stripePaymentMethodSaved===true, autoRenew:data.stripeAutoRenew===true,nextBillingAtMs:data.stripeNextBillingAtMs,redeemedPromoCodes:data.redeemedPromoCodes ?? [],providerTutorialPending:false,renewalScheduled:Boolean(data.stripeScheduleId && !["canceled","aborted","completed","released"].includes(data.stripeScheduleStatus ?? "")),subscriptionStatus:data.stripeSubscriptionStatus });
   });
@@ -1288,6 +1291,7 @@ async function main(): Promise<void> {
   const checkoutInProgress = new Set<string>();
   const checkoutHandler:express.RequestHandler = async (req,res) => {
     const actor = plusUser(req, res); if (!actor) return;
+    if (freePlus) return res.status(409).json({ message: "Plus is free right now. Paid enrollment is paused." });
     if (checkoutInProgress.has(actor.user.id)) return res.status(409).json({ message: "Checkout is already opening. Try again shortly." });
     checkoutInProgress.add(actor.user.id);
     try {

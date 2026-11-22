@@ -1,3 +1,4 @@
+import brandMark from "../assets/interface/brand.webp";
 import { Backroom } from "./Backroom";
 import { ReferralToolbar } from "./ReferralToolbar";
 import type { RegistrationPolicy } from "../../../shared/registrationPolicy";
@@ -7,9 +8,10 @@ import { InstallApp } from "./Pwa";
 import { AccountNotices } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
 import { useLiveInbox } from "./useLiveInbox";
+import { useMessageSound } from "./useMessageSound";
 import { disablePush } from "./pushNotifications";
 import { isPlusFeature, type PlusFeature } from "./PlusShowcase";
-import { NOTIFICATION_ENABLED, NOTIFICATION_DISCREET } from "./NotificationSettings";
+import { NOTIFICATION_ENABLED, NOTIFICATION_DISCREET, NotificationPrompt } from "./NotificationSettings";
 import afterDark from "../assets/after-dark.png";
 import { PasswordRecovery } from "./PasswordRecovery";
 import { GoogleSignInButton, type GoogleCredential } from "./GoogleSignInButton";
@@ -383,6 +385,7 @@ export function App(): React.ReactElement {
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [promoCode, setPromoCode] = useState("");
   const liveInboxStatus=useLiveInbox(session,resolveApiBasePath());
+  useMessageSound(session?.ageVerified ? actorKey(session) : null);
   const [plusFeature, setPlusFeature] = useState<PlusFeature | undefined>();
   const [loginSequence,setLoginSequence]=useState(0);
   const [plusOpen, setPlusOpen] = useState(false);
@@ -970,15 +973,6 @@ export function App(): React.ReactElement {
     window.dispatchEvent(new CustomEvent("rd:tab-select", { detail: { tab } }));
   }, [discoverScreen, sessionToken]);
 
-  const setDiscoverScreenAndRoute = useCallback((next: DiscoverScreen): void => {
-    setDiscoverScreen(next);
-    if (activeTab !== "discover") return;
-    const nextHash = hashForTab("discover", next);
-    if (window.location.hash !== nextHash) {
-      window.history.pushState(null, "", nextHash);
-    }
-  }, [activeTab]);
-
   const openSelfProfilePreview = useCallback((): void => {
     setTabAndRoute("discover", "chat");
     window.setTimeout(() => {
@@ -1048,6 +1042,12 @@ export function App(): React.ReactElement {
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
   const showBottomNav = Boolean(session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking);
   const desktopWideSession = Boolean(session && session.ageVerified === true && !isMobile);
+  const [filtersActive, setFiltersActive] = useState(false);
+  useEffect(() => {
+    const update = (event: Event) => setFiltersActive((event as CustomEvent<{ keys: string[] | null }>).detail.keys !== null);
+    window.addEventListener("rd:people-filter", update);
+    return () => window.removeEventListener("rd:people-filter", update);
+  }, []);
   if (/\/thebackroom\/?$/.test(window.location.pathname)) return <Backroom api={api} session={session} />;
 
   const showExploreShortcuts = showBottomNav && activeTab === "discover";
@@ -1064,7 +1064,7 @@ export function App(): React.ReactElement {
   );
 
   return (
-    <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav" : ""}`}>
+    <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav rd-app-bars" : ""}`}>
       {recoveryOpen ? <PasswordRecovery api={api} token={recoveryToken} onClose={() => { setRecoveryOpen(false); setRecoveryToken(""); }} onComplete={() => { onLogout(); setRecoveryOpen(false); setRecoveryToken(""); setAuthView("login"); setAuthInfo("Password updated. Sign in with your new password."); }} /> : null}
       {analyticsOpen && session?.role === "admin" ? <AdminAnalytics api={api} session={session} onClose={() => setAnalyticsOpen(false)} /> : null}
       <AccountNotices api={api} session={session} ready={Boolean(session?.ageVerified && !profileSetupChecking && !profileSetupRequired && !plusOpen)} loginSequence={loginSequence}/>
@@ -1072,65 +1072,58 @@ export function App(): React.ReactElement {
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
             {session?.ageVerified === true ? (
-              <div className="rd-topbar-session">
-                <div className="rd-brand" aria-label="Badehaus X">
-                  <span className="rd-door-mark" aria-hidden="true" />
-                  <div className="rd-name">Badehaus X</div>
-                  <button type="button" className="rd-btn rd-topbar-icon rd-plus-badge"
-                    onClick={() => { setPlusFeature(undefined); setPlusOpen(true); }}
-                    aria-label="Open Badehaus X Plus" title={hasPlus(session) ? "Badehaus X Plus is active" : "Badehaus X Plus"}>
-                    <Icon name={hasPlus(session) ? "check" : "plus"} />
+              <div className="rd-app-toolbar">
+                <div className="rd-app-toolbar-side">
+                  <button type="button" className="rd-btn rd-app-tool" aria-label="Badehaus X Explore" title="Explore"
+                    onClick={() => setTabAndRoute("discover", discoverScreen)}>
+                    <img src={brandMark} className="rd-app-brand-mark" alt="" />
                   </button>
-                  {publicToolbarActions}
+                  <InstallApp iconOnly />
                 </div>
-                <div className="rd-explore-shortcuts">
-                  {showExploreShortcuts ? <div className="rd-explore-views">
-                    <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label="Map" title="Map"
-                      aria-pressed={discoverScreen === "map"} onClick={() => setDiscoverScreenAndRoute("map")}>
-                      <Icon name="map" className="rd-ui-icon" />
-                    </button>
-                    <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label="People" title="People"
-                      aria-pressed={discoverScreen === "chat"} onClick={() => setDiscoverScreenAndRoute("chat")}>
-                      <Icon name="groups" className="rd-ui-icon" />
-                    </button>
-                  </div> : null}
-                  <button
-                    type="button"
-                    className="rd-top-avatar"
-                    aria-label="Open my profile preview"
-                    onClick={openSelfProfilePreview}
-                  >
-                    <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
-                    <span className="rd-mobile-avatar-dot" />
+                <button type="button" className="rd-top-avatar rd-app-avatar" aria-label="Open my profile preview"
+                  onClick={openSelfProfilePreview}>
+                  <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
+                  <span className="rd-mobile-avatar-dot" />
+                </button>
+                <div className="rd-app-toolbar-side rd-app-toolbar-end">
+                  {session.userId && <button type="button" className="rd-btn rd-app-tool" aria-label="Live" title="Live"
+                    aria-current={activeTab === "live" ? "page" : undefined} onClick={() => setTabAndRoute("live")}>
+                    <Icon name="live" active={activeTab === "live" || liveState.broadcasts.some(room => room.live)} />
+                  </button>}
+                  <button type="button" className="rd-btn rd-app-tool" aria-label="Open account functions" title="Settings"
+                    aria-expanded={topMenuOpen} onClick={() => setTopMenuOpen(open => !open)}>
+                    <Icon name="settings" active={topMenuOpen || activeTab === "settings"} />
                   </button>
-                  <div className="rd-explore-actions">
-                    {showExploreShortcuts ? <RightNowControl key={session.userId} api={api} session={session} /> : null}
-                    <div className="rd-top-actions">
-                      <button type="button" className="rd-btn rd-icon-only-btn" onClick={toggleTopFilterPanel} aria-label="Open filter controls">
-                        <Icon name="filter" className="rd-ui-icon" />
-                      </button>
-                      <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => setTopMenuOpen((prev) => !prev)} aria-label="Open account functions">
-                        <Icon name="settings" className="rd-ui-icon" />
-                      </button>
-                    </div>
-                  </div>
                 </div>
-                <ReferralToolbar api={api} session={session} onOpen={() => {
-                  setTabAndRoute("settings");
-                  window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "membership" }));
-                }} />
               </div>
             ) : (
               <div className="rd-brand">
-                <span className="rd-door-mark" aria-hidden="true" />
+                <img src={brandMark} className="rd-app-brand-mark" alt="" />
                 <div className="rd-name">Badehaus X</div>
                 {publicToolbarActions}
               </div>
             )}
           </div>
+          {session?.userId && (
+            <NotificationPrompt key={session.userId} api={api} session={session} ready={showBottomNav} />
+          )}
         </header>
       {session && session.ageVerified === true && topMenuOpen ? (
         <div className="rd-top-collapse" role="dialog" aria-label="Account functions">
+          <button type="button" className="rd-btn rd-icon-only-btn" onClick={toggleTopFilterPanel} aria-label="Open filter controls">
+            <Icon name="filter" active={filtersActive} />
+          </button>
+          <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setPlusFeature(undefined); setPlusOpen(true); }} aria-label="Open Badehaus X Plus">
+            <Icon name={hasPlus(session) ? "check" : "plus"} />
+          </button>
+          <a className="rd-btn rd-icon-only-btn" href="./thebackroom/" aria-label="The Backroom"><Icon name="book" /></a>
+          <a className="rd-btn rd-icon-only-btn" href="https://badehausx.com/store/" aria-label="Store"><Icon name="shopping-bag" /></a>
+          <ReferralToolbar api={api} session={session} onOpen={() => {
+            setTopMenuOpen(false);
+            setTabAndRoute("settings");
+            window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "membership" }));
+          }} />
+
           {session.role === "admin" ? <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); setAnalyticsOpen(true); }} aria-label="Open activity dashboard"><Icon name="board" className="rd-ui-icon" /></button> : null}
           <button type="button" className="rd-btn rd-icon-only-btn" onClick={() => { setTopMenuOpen(false); openSelfProfilePreview(); }} aria-label="Open profile preview">
             <Icon name="user" className="rd-ui-icon" />
@@ -1147,15 +1140,10 @@ export function App(): React.ReactElement {
         </div>
       ) : null}
 
-      {showBottomNav ? <nav className="rd-desktop-nav" aria-label="Main navigation">{([
-        ["discover", "map", "Explore"], ["threads", "message", "Inbox"], ["ads", "book", "Postings"], ["groups", "groups", "Groups"], ["live", "live", "Live"], ["settings", "settings", "Settings"]] as const).filter(([tab]) => tab !== "live" || Boolean(session?.userId)).map(([tab, icon, label]) => <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setTabAndRoute(tab)}><Icon name={icon} /><span>{label}</span></button>)}{session?.userId ? <button type="button" onClick={() => {
-        setTabAndRoute("settings");
-        window.dispatchEvent(new CustomEvent("rd:settings-section", { detail: "membership" }));
-      }}><span aria-hidden="true" style={{ fontSize: 23 }}>+</span><span>Membership</span></button> : null}</nav> : null}
-      <div className="rd-inbox-live-status" role="status" hidden={isMobile || activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
       <main
         className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
       >
+        <div className="rd-inbox-live-status" role="status" hidden={isMobile || activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
         <div className="rd-grid">
           {!session ? (
             <>
@@ -1550,51 +1538,48 @@ export function App(): React.ReactElement {
       </main>
 
       {showBottomNav ? (
-        <nav className={`rd-mobile-nav ${session?.userId ? "has-live" : ""}`} aria-label="Primary navigation">
-          <button
-            type="button"
-            className={`rd-mobile-nav-btn ${activeTab === "discover" ? "is-active" : ""}`}
-            onClick={() => setTabAndRoute("discover", "map")}
-            aria-label="Discover map"
+        <nav className="rd-app-dock" aria-label="Primary navigation">
+          {showExploreShortcuts && <div className="rd-app-dock-context">
+            <RightNowControl key={session?.userId} api={api} session={session!} />
+            {discoverScreen !== "map" && <button type="button" className="rd-btn rd-app-tool"
+              onClick={toggleTopFilterPanel} aria-label="Open filter controls" title="Filters">
+              <Icon name="filter" active={filtersActive} />
+            </button>}
+          </div>}
+          <button type="button" className="rd-btn rd-app-tool" aria-label="Explore" title="Explore"
             aria-current={activeTab === "discover" ? "page" : undefined}
-          >
-            <Icon name="map" className="rd-ui-icon rd-mobile-nav-image" /><span>Explore</span>
+            onClick={() => setTabAndRoute("discover", discoverScreen)}>
+            <Icon name="explore" active={activeTab === "discover"} />
           </button>
-          <button
-            type="button"
-            className={`rd-mobile-nav-btn ${activeTab === "threads" ? "is-active" : ""}`}
-            onClick={() => {
-              if (activeTab === "threads") {
-                setTabAndRoute("discover", "map");
-                return;
-              }
-              setTabAndRoute("threads");
-            }}
-            aria-label="Inbox overlay"
+          <button type="button" className="rd-btn rd-app-tool" aria-label="Inbox overlay" title="Inbox"
             aria-current={activeTab === "threads" ? "page" : undefined}
-          >
-            <Icon name="message" className="rd-ui-icon rd-mobile-nav-image" /><span>Inbox</span>
-            {unreadChatCount > 0 ? <span className="rd-mobile-nav-badge">{unreadChatCount > 99 ? "99+" : unreadChatCount}</span> : null}
+            onClick={() => activeTab === "threads" && isMobile ? setTabAndRoute("discover", "map") : setTabAndRoute("threads")}>
+            <Icon name="message" active={activeTab === "threads"} />
+            {unreadChatCount > 0 && <span className="rd-app-inbox-badge" aria-label={`${unreadChatCount} unread`}>
+              {unreadChatCount > 99 ? "99+" : unreadChatCount}
+            </span>}
           </button>
-          <div className="rd-mobile-nav-spacer" aria-hidden="true" />
-          <button
-            type="button"
-            className={`rd-mobile-nav-btn ${activeTab === "ads" ? "is-active" : ""}`}
-            onClick={() => {
-              if (activeTab === "ads") {
-                setTabAndRoute("discover", "map");
-                return;
-              }
-              setTabAndRoute("ads");
-            }}
-            aria-label="Postings"
+          <div className="rd-app-dock-views" aria-label="Explore views">
+            <button type="button" className="rd-btn rd-app-tool" aria-label="People" title="People"
+              aria-pressed={activeTab === "discover" && discoverScreen === "chat"}
+              onClick={() => setTabAndRoute("discover", "chat")}>
+              <Icon name="grid" active={activeTab === "discover" && discoverScreen === "chat"} />
+            </button>
+            <button type="button" className="rd-btn rd-app-tool" aria-label="Map" title="Map"
+              aria-pressed={activeTab === "discover" && discoverScreen === "map"}
+              onClick={() => setTabAndRoute("discover", "map")}>
+              <Icon name="map" active={activeTab === "discover" && discoverScreen === "map"} />
+            </button>
+          </div>
+          <button type="button" className="rd-btn rd-app-tool" aria-label="Groups" title="Groups"
+            aria-current={activeTab === "groups" ? "page" : undefined} onClick={() => setTabAndRoute("groups")}>
+            <Icon name="groups" active={activeTab === "groups"} />
+          </button>
+          <button type="button" className="rd-btn rd-app-tool" aria-label="Postings" title="Postings"
             aria-current={activeTab === "ads" ? "page" : undefined}
-          >
-            <Icon name="board" className="rd-ui-icon rd-mobile-nav-image" /><span>Postings</span>
+            onClick={() => activeTab === "ads" && isMobile ? setTabAndRoute("discover", "map") : setTabAndRoute("ads")}>
+            <Icon name="postings" active={activeTab === "ads"} />
           </button>
-          <button className={`rd-mobile-nav-btn ${activeTab === "groups" ? "is-active" : ""}`} aria-label="Groups" aria-current={activeTab === "groups" ? "page" : undefined} onClick={()=>setTabAndRoute("groups")}><Icon name="groups" className="rd-ui-icon"/><span>Groups</span></button>
-          {session?.userId ? <button type="button" className={`rd-mobile-nav-btn ${activeTab === "live" ? "is-active" : ""}`}
-            aria-current={activeTab === "live" ? "page" : undefined} onClick={() => setTabAndRoute("live")}><Icon name="live" className="rd-ui-icon"/><span>Live</span></button> : null}
         </nav>
       ) : null}
     </div>

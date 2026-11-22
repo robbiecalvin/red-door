@@ -19,6 +19,7 @@ export type ServiceError = Readonly<{
 
 export type Session = Readonly<{
   publicKey?: string;
+  freePlus?: boolean;
   sessionToken: string;
   userType: "guest" | "registered" | "subscriber";
   tier: "free" | "premium";
@@ -57,6 +58,7 @@ export type BillingHealth = {
   stripeConnection: "unconfigured" | "ok" | "error"; priceValid: boolean; mode?: "test" | "live"; issue?: string;
 };
 export type PlusStatus = {
+  freePlus?: boolean;
   priorityInvited?:boolean;referralOffer?:boolean;founderTrialEndsAtMs?:number;founderRateEligible?:boolean;priority?:boolean;priorityPending?:boolean;priorityReferralCode?:string;
   renewalScheduled?:boolean;subscriptionStatus?:string;hasPaymentMethod?:boolean;autoRenew?:boolean;nextBillingAtMs?:number;redeemedPromoCodes?:string[];providerTutorialPending?:boolean;
   active: boolean; expiresAtMs?: number; limits: ReturnType<typeof limits>;
