@@ -11,6 +11,7 @@ import "./app/community.css";
 import "./app/discovery-ui.css";
 import "./features/map/map.css";
 import "maplibre-gl/dist/maplibre-gl.css";
+import "./app/interface.css";
 
 type ErrorBoundaryState = Readonly<{ error: Error | null }>;
 

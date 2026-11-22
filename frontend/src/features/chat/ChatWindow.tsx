@@ -1,3 +1,4 @@
+import { Icon } from "../../app/Icon";
 import { peekReply, clearReply } from "../../app/replyDraft";
 import { Sheet } from "../../app/Sheet";
 import { displayNameForIdentity, isAnonymousIdentity } from "../../../../shared/identity";
@@ -30,11 +31,12 @@ function parseLocationPayload(text: string): { lat: number; lng: number; link: s
 
 function displayMessageText(text: string): string {
   const visibleText = text.replace(/^Automatic replies are on for this conversation\.\r?\n\r?\n/, "");
-  return visibleText.trim() === FIRE_SIGNAL_TEXT ? "🔥 I'm into you" : visibleText;
+  return visibleText.trim() === FIRE_SIGNAL_TEXT ? "I'm into you" : visibleText;
 }
 
 function renderMessageText(text: string): React.ReactNode {
   const visibleText = displayMessageText(text);
+  if (text.trim() === FIRE_SIGNAL_TEXT) return <><Icon name="flame" active /> {visibleText}</>;
   const match = /^Photo: (https:\/\/\S+)$/.exec(visibleText);
   if (!match) return displayMessageText(text);
   try {

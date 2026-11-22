@@ -25,7 +25,7 @@ function useRightNow(expiresAtMs?: number): boolean {
 
 export function RightNowBadge({ expiresAtMs }: { expiresAtMs?: number }) {
   return useRightNow(expiresAtMs)
-    ? <span className="rd-right-now-badge"><Icon name="lightning" />Right Now</span>
+    ? <span className="rd-right-now-badge"><Icon name="lightning" active />Right Now</span>
     : null;
 }
 
@@ -70,7 +70,7 @@ export function RightNowControl(props: Props) {
   return <>
     <button type="button" className="rd-btn rd-icon-only-btn rd-explore-icon" aria-label={active ? "Right Now is active" : "Right Now"}
       title="Right Now" aria-haspopup="dialog" aria-expanded={open} data-active={active} onClick={() => setOpen(true)}>
-      <Icon name="lightning" className="rd-ui-icon" />
+      <Icon name="lightning" className="rd-ui-icon" active={active} />
     </button>
     {open ? <Sheet title="Right Now" onClose={close}>
       <div className="rd-right-now-menu">

@@ -1,3 +1,4 @@
+import { Icon } from "../../app/Icon";
 import React, { useMemo, useState } from "react";
 
 import type { DatingProfile, ServiceError } from "./dating.types";
@@ -169,7 +170,7 @@ export function DatingFeed({
                     cursor: "pointer"
                   }}
                 >
-                  {favoriteUserIds?.has(current.id) ? "★" : "☆"}
+                  <Icon name="star" active={favoriteUserIds?.has(current.id)} />
                 </button>
               ) : null}
             </div>
