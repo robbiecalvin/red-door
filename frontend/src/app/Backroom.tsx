@@ -55,19 +55,23 @@ export function Backroom({ api, session }: Props) {
       setWorking(false);
     }
   }
-  return <main className="rd-settings-body" style={{ maxWidth: 760, margin: "auto", padding: "clamp(18px, 5vw, 64px)" }}>
-    <header><a href="../">Badehaus X{session?.userId ? "" : " · Sign in"}</a><h1>The Backroom</h1></header>
-    {!article ? <section aria-label="Launch articles">
-      {[...editorialArticles.slice().reverse(), ...backroomLaunch].map(entry => <article className="rd-card rd-settings-body" key={entry.slug}>
+  return <div className="site-page rd-backroom">
+    <header className="site-header"><div className="site-header-inner">
+      <a className="site-brand" href="../"><img src="../icons/icon-192.png" width={36} height={36} alt="" />Badehaus X</a>
+      <nav aria-label="Site navigation"><a href="./" aria-current="page">The Backroom</a><a href="../store/">Shop</a></nav>
+    </div></header>
+    <main className="rd-backroom-content">
+    {!article ? <><h1>The Backroom</h1><section className="rd-backroom-grid" aria-label="Launch articles">
+      {[...editorialArticles.slice().reverse(), ...backroomLaunch].map(entry => <article className="rd-backroom-card" key={entry.slug}>
         <a href={`./${entry.slug}/`}>
-          <img style={{ width: "100%", height: "auto" }} width={"alt" in entry ? 382 : 1200} height={"alt" in entry ? 510 : 600} loading="lazy" src={`./covers/${entry.slug}.${"alt" in entry ? "jpg" : "png"}`} alt={"alt" in entry ? entry.alt : ""} />
-          <h2>{entry.title}</h2>
-        </a><p>{entry.synopsis}</p>
+          <img width={"alt" in entry ? 382 : 1200} height={"alt" in entry ? 510 : 600} loading="lazy" src={`./covers/${entry.slug}.${"alt" in entry ? "jpg" : "png"}`} alt={"alt" in entry ? entry.alt : ""} />
+          <div className="rd-backroom-card-copy"><h2>{entry.title}</h2><p>{entry.synopsis}</p></div>
+        </a>
       </article>)}
-    </section> : null}
-    {article ? <article className="rd-card rd-settings-body">
+    </section></> : null}
+    {article ? <article className="rd-card rd-settings-body rd-backroom-reading">
       <a href="#">All articles</a>
-      <h2>{article.title}</h2>
+      <h1>{article.title}</h1>
       <p>{article.byline} · {new Date(article.publishedAtMs!).toLocaleDateString("en-CA", { timeZone: "America/Vancouver" })}</p>
       <p>{article.synopsis}</p>
       <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{article.body}</div>
@@ -100,5 +104,6 @@ export function Backroom({ api, session }: Props) {
       </form>
     </section> : null}
     {notice ? <p role="status">{notice}</p> : null}
-  </main>;
+    </main>
+  </div>;
 }

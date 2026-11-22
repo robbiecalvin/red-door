@@ -1112,10 +1112,6 @@ export function App(): React.ReactElement {
           {!session ? (
             <>
               <section className="rd-card rd-auth-hero" aria-label="Authentication">
-                <div className="rd-card-head">
-                  <h1 className="rd-card-title">{authView === "login" ? "Log in" : authView === "register" ? "Create an account" : "Browse anonymously"}</h1>
-                </div>
-
                 <div className="rd-tabs" role="tablist" aria-label="Authentication tabs">
                   <button
                     type="button"
