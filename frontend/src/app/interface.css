@@ -407,3 +407,42 @@
 .rd-backroom-card-copy h2 { margin: 0; font-size: 1.1rem; line-height: 1.3; }
 .rd-backroom-card-copy p { margin: .5rem 0 0; color: var(--site-muted); font-size: .95rem; }
 .rd-backroom-reading { width: min(100%, 48rem); justify-self: center; }
+
+.rd-groups-surface,
+.rd-group-list,
+.rd-group-create-form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.rd-group-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+}
+.rd-group-list-card {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid #76252d;
+  border-radius: 14px;
+}
+.rd-group-list-cover {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #0b090b;
+}
+.rd-group-list-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.rd-group-create-footer {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 12px;
+}
+@media (max-width: 900px) {
+  .rd-group-list { grid-template-columns: minmax(0, 1fr); }
+  .rd-group-create-footer .rd-btn { width: 100%; }
+}
