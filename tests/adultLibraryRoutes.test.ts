@@ -10,6 +10,12 @@ import type { AdultVideo } from "../shared/adultLibrary";
 
 it("limits profile favorites to three catalog videos and restricts catalog editing to administrators", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "badehaus-video-library-"));
+  const previousCatalog = process.env.ADULT_CATALOG_DIR;
+  const category = "sample-abcdef1234";
+  fs.mkdirSync(path.join(directory, category));
+  fs.writeFileSync(path.join(directory, "manifest.json"), JSON.stringify([{ name: "Sample", slug: category, pages: 1 }]));
+  fs.writeFileSync(path.join(directory, category, "1.json"), JSON.stringify([{ watchUrl: "https://example.com/watch", thumbnailUrl: "" }]));
+  process.env.ADULT_CATALOG_DIR = directory;
   const repository = await createCommunityRepository(null, path.join(directory, "community.json"));
   const app = express();
   app.use(express.json());
@@ -42,6 +48,12 @@ it("limits profile favorites to three catalog videos and restricts catalog editi
     });
   }
   try {
+    const catalogRoute = `/adult-library/catalog?category=${category}&page=1`;
+    expect((await request(catalogRoute, "guest")).status).toBe(403);
+    expect((await request(catalogRoute.replace("page=1", "page=2"))).status).toBe(404);
+    const catalogResponse = await request(catalogRoute);
+    expect(catalogResponse.headers.get("cache-control")).toBe("private, no-store");
+    expect(await catalogResponse.json()).toMatchObject({ page: 1, videos: [{ thumbnailUrl: "" }] });
     const draft = { title: "Sample video", creator: "Fixture studio", category: "solo",
       watchUrl: "https://example.com/watch", thumbnailUrl: "https://example.com/preview.jpg" };
     expect((await request("/adult-library", "guest")).status).toBe(403);
@@ -74,6 +86,8 @@ it("limits profile favorites to three catalog videos and restricts catalog editi
     expect(remaining.map(video => video.id)).toEqual([ids[2], ids[1]]);
     expect(remaining[0]).not.toHaveProperty("thumbnailUrl");
   } finally {
+    if (previousCatalog === undefined) delete process.env.ADULT_CATALOG_DIR;
+    else process.env.ADULT_CATALOG_DIR = previousCatalog;
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     fs.rmSync(directory, { recursive: true, force: true });
   }

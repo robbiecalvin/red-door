@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { isAdultVideoCategory, type AdultVideo, type AdultVideoFavorite } from "../../../shared/adultLibrary";
@@ -60,6 +62,30 @@ export function installAdultLibraryRoutes(app: Express, deps: {
     const day = new Date().toISOString().slice(0, 10);
     const offset = createHash("sha256").update(day).digest().readUInt32BE() % videos.length;
     return res.json({ videos: Array.from({ length: 3 }, (_, index) => videos[(offset + index) % videos.length]) });
+  }));
+
+  app.get("/adult-library/catalog", route(async (req, res) => {
+    if (!deps.member(req, res)) return;
+    const { category, page } = req.query;
+    const directory = process.env.ADULT_CATALOG_DIR;
+    if (!directory) return res.status(404).json({ message: "The bulk catalog is unavailable." });
+    if (typeof category !== "string" || !/^[a-z0-9][a-z0-9-]{0,90}-[a-f0-9]{10}$/.test(category) ||
+        typeof page !== "string" || !/^[1-9][0-9]{0,5}$/.test(page)) {
+      return res.status(400).json({ message: "Choose a catalog category and page." });
+    }
+    try {
+      const manifest: { name: string; slug: string; pages: number }[] =
+        JSON.parse(await readFile(path.join(directory, "manifest.json"), "utf8"));
+      const entry = manifest.find(item => item.slug === category);
+      if (!entry || Number(page) > entry.pages) return res.status(404).json({ message: "Catalog page not found." });
+      const videos = JSON.parse(await readFile(path.join(directory, category, `${page}.json`), "utf8"));
+      return res.json({ ...entry, page: Number(page), videos });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return res.status(404).json({ message: "Catalog page not found." });
+      }
+      throw error;
+    }
   }));
 
   app.put("/adult-library/favorites", route(async (req, res) => {

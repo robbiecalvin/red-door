@@ -26,7 +26,7 @@ export function AdultProfileFavorites({ videos }: { videos: readonly AdultVideoF
   </section>;
 }
 
-export function AdultLibrary({ api, session, onRegister }: { api: Api; session: Session; onRegister?(): void }) {
+function CuratedAdultLibrary({ api, session, onRegister }: { api: Api; session: Session; onRegister?(): void }) {
   const [library, setLibrary] = useState<Library | null>(null);
   const [category, setCategory] = useState("");
   const [error, setError] = useState("");
@@ -196,4 +196,62 @@ export function AdultClassifiedPreviews({ api, token }: { api: Api; token: strin
       <a href="#/adult-library">Browse the directory</a>
     </div>
   </section>;
+}
+
+
+type CatalogPage = { name: string; slug: string; page: number; pages: number; videos: { watchUrl: string; thumbnailUrl: string }[] };
+
+function CatalogThumbnail({ url }: { url: string }) {
+  const [unavailable, setUnavailable] = useState(false);
+  return url && !unavailable
+    ? <img src={url} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setUnavailable(true)} />
+    : <span className="rd-caption">Thumbnail unavailable</span>;
+}
+
+function BulkAdultPage({ api, session, category, page }: { api: Api; session: Session; category: string; page: string }) {
+  const [result, setResult] = useState<CatalogPage | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (session.userType === "guest" || !session.ageVerified) return;
+    let active = true;
+    const params = new URLSearchParams({ category, page });
+    void api.memberRequest<CatalogPage>(session.sessionToken, `/adult-library/catalog?${params}`).then(data => {
+      if (active) setResult(data);
+    }, failure => {
+      if (active) setError(errorText(failure));
+    });
+    return () => { active = false; };
+  }, [api, category, page, session.ageVerified, session.sessionToken, session.userType]);
+
+  const publicPage = (number: number) => `./gay-porn/cat/${encodeURIComponent(category)}/${number === 1 ? "" : `page/${number}/`}`;
+  return <section className="rd-card rd-adult-library">
+    <div className="rd-card-body">
+      <p><a href="./gay-porn/">Adult video categories</a></p>
+      <h1>{result?.name ?? "Adult video directory"} · 18+</h1>
+      {session.userType === "guest" ? <p>Sign in with an age-verified Badehaus X account to see video previews.</p>
+        : error ? <p role="alert">{error}</p> : !result ? <p role="status">Loading previews…</p> : <>
+          <div className="rd-adult-video-grid">
+            {result.videos.map((video, index) => <article key={index} className="rd-card">
+              <a href={video.watchUrl} target="_blank" rel="noopener noreferrer">
+                <CatalogThumbnail url={video.thumbnailUrl} />
+                <span>Open video {(result.page - 1) * 20 + index + 1}</span>
+              </a>
+            </article>)}
+          </div>
+          <nav aria-label="Video results pages">
+            {result.page > 1 && <a href={publicPage(result.page - 1)}>Previous page</a>}
+            {" · "}Page {result.page} of {result.pages}{" · "}
+            {result.page < result.pages && <a href={publicPage(result.page + 1)}>Next page</a>}
+          </nav>
+        </>}
+    </div>
+  </section>;
+}
+
+export function AdultLibrary(props: { api: Api; session: Session; onRegister?(): void }) {
+  const query = new URLSearchParams(window.location.search);
+  const category = query.get("videoCategory");
+  const page = query.get("videoPage");
+  return category && page ? <BulkAdultPage key={`${category}/${page}`} api={props.api} session={props.session} category={category} page={page} />
+    : <CuratedAdultLibrary {...props} />;
 }
