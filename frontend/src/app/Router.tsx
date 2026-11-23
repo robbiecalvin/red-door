@@ -1,3 +1,4 @@
+import { PrivateInbox } from "./PrivateInbox";
 import { ProfileLike } from "./ProfileLike";
 import classifiedExamples from "../../../shared/classifiedExamples.json";
 import { AdultClassifiedPreviews, AdultLibrary, AdultProfileFavorites } from "./AdultLibrary";
@@ -78,7 +79,7 @@ type Settings = Readonly<{
   defaultCenterLng: number;
 }>;
 
-type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "adult-library" | "promoted" | "md";
+type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "adult-library" | "private-inbox" | "promoted" | "md";
 type DiscoverFilter = "all" | "online" | "favorites";
 type MobileCruiseTab = "map" | "chat";
 type DiscoverScreen = MobileCruiseTab;
@@ -1352,6 +1353,7 @@ function CruiseSurface({
                 <button className="rd-btn primary rd-member-message" type="button" onClick={message}>
                   {browseOnly ? "Create an account to message" : "Message"}{unreadCount > 0 ? <span className="rd-member-unread" aria-label={`${unreadCount} unread`}>{unreadCount}</span> : null}
                 </button>
+                {!googlePlayEdition && !browseOnly && profile?.userId && session.userId && <a className="rd-btn" href={`#/private-inbox/${encodeURIComponent(profile.userId)}`}>Send private message</a>}
               </div> : null}
               <div className="rd-member-profile-details">
                 {!googlePlayEdition && isSelf && profile && <ProfileLike key={profile.userId} api={api} token={session.sessionToken} userId={profile.userId} own />}
@@ -7290,6 +7292,7 @@ export function Router({
       ) : null}
       {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
+      {!googlePlayEdition && activeTab === "private-inbox" && <PrivateInbox api={api} session={session} />}
       {!googlePlayEdition && activeTab === "adult-library" ? <AdultLibrary api={api} session={session} onRegister={onRegister} /> : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setSubmissionsError} /> : null}
       {activeTab === "promoted" || activeTab === "md" ? <p role="status">This feature is unavailable. Open Explore or Inbox to continue.</p> : null}

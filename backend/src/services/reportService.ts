@@ -30,7 +30,7 @@ export type ReportTarget = Readonly<
   | { kind: "message"; messageId: string; targetKey?: string; text?: string }
   | { kind: "group-message"; messageId: string; targetKey: string; postingId: string; text: string }
   | { kind: "broadcast"; broadcastId: string; targetKey: string }
-  | { kind: "group-dm-message"; messageId: string; targetKey: string; conversationId: string; text: string }
+  | { kind: "group-dm-message" | "private-inbox-message"; messageId: string; targetKey: string; conversationId: string; text: string }
 >;
 
 export type ReportRecord = Readonly<{
@@ -51,7 +51,7 @@ export type ReportServiceDeps = Readonly<{
 export type ReportService = Readonly<{
   reportUser(session: Session, targetKey: string, reason: string): Result<ReportRecord>;
   reportMessage(session: Session, messageId: string, reason: string, targetKey?: string, text?: string): Result<ReportRecord>;
-  reportGroupMessage(session: Session, target: Extract<ReportTarget, { kind: "group-message" | "group-dm-message" }>, reason: unknown): Result<ReportRecord>;
+  reportGroupMessage(session: Session, target: Extract<ReportTarget, { kind: "group-message" | "group-dm-message" | "private-inbox-message" }>, reason: unknown): Result<ReportRecord>;
   reportMedia(session: Session, target: Extract<ReportTarget, { mediaId: string }>, reason: unknown): Result<ReportRecord>;
   reportLive(session: Session, broadcastId: string, targetKey: string, reason: string): Result<ReportRecord>;
   listReports(): ReadonlyArray<ReportRecord>;

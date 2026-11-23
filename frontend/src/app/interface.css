@@ -488,3 +488,11 @@
   .rd-app-bars .rd-topbar-inner:has(.rd-app-toolbar-with-inbox) { padding-inline: 3px; }
   .rd-app-bars .rd-app-toolbar-with-inbox .rd-app-avatar { width: 42px; height: 42px; margin-bottom: -8px; }
 }
+.rd-private-inbox { width: min(100%, 65rem); margin-inline: auto; }
+.rd-private-inbox textarea { resize: vertical; }
+.rd-private-inbox nav { margin-block: .75rem; }
+.rd-private-inbox-list, .rd-private-inbox-messages { padding: 0; list-style: none; display: grid; gap: .5rem; }
+.rd-private-inbox-list button { width: 100%; text-align: left; }
+.rd-private-inbox-messages li { padding: .8rem; border: 1px solid var(--line); border-radius: 8px; }
+.rd-private-inbox-messages small { margin-inline-start: .65rem; }
+.rd-private-inbox-messages p { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -1,3 +1,4 @@
+import { erasePrivateInboxUser, installPrivateInboxRoutes } from "./routes/privateInboxRoutes";
 import { configureAdultCatalog } from "./repositories/adultCatalog";
 import { adultProfileFavorites, installAdultLibraryRoutes } from "./routes/adultLibraryRoutes";
 import { childSafetyPriority } from "../../shared/childSafety";
@@ -793,6 +794,7 @@ async function main(): Promise<void> {
   });
   app.use("/admin/customer-import", express.json({ limit: "512kb" }));
   app.use("/backroom/editor", express.json({ limit: "100kb" }));
+  app.use("/private-inbox", express.json({ limit: "16kb" }));
   const bulkCatalogPage = !googlePlayEdition && postgresPool ? await configureAdultCatalog(app, postgresPool) : undefined;
   app.use(express.json({ limit: "8kb", verify:(req,_res,buffer)=>{(req as Request & {rawBody?:Buffer}).rawBody=Buffer.from(buffer);} }));
   app.use((req, _res, next) => {
@@ -2578,6 +2580,32 @@ async function main(): Promise<void> {
     }
   });
 
+  const cleanPrivateInbox = googlePlayEdition ? undefined : installPrivateInboxRoutes(app, {
+    repository: communityRepository,
+    session: (req, res) => plusUser(req, res)?.session ?? null,
+    canContact(left, right) {
+      const recipient = authService.getUser(right);
+      return Boolean(recipient?.ageVerified && !recipient.bannedAtMs && !blockService.isBlocked(`user:${left}`, `user:${right}`));
+    },
+    async findName(id) {
+      const profile = await profileService.getPublicByUserId(id).catch(() => null);
+      return profile?.ok ? profile.value.displayName : undefined;
+    },
+    restricted: flaggedTextMessage,
+    async report(session, conversationId, message, reason) {
+      const result = reportService.reportGroupMessage(session, {
+        kind: "private-inbox-message", conversationId, messageId: message.id, targetKey: `user:${message.sender}`, text: message.body
+      }, reason);
+      if (!result.ok) throw new MemberError(result.error.code, result.error.message);
+      await safetyPersistence;
+      if (safetyPersistenceError) throw new Error("Report persistence failed.");
+      return result.value.reportId;
+    }
+  });
+  const privateInboxCleanup = cleanPrivateInbox && setInterval(() => {
+    void cleanPrivateInbox().catch(() => console.error("[Badehaus X] Private inbox retention cleanup failed."));
+  }, 3600000);
+
   installGroupDmRoutes(app, {
     repository: communityRepository,
     session: (req, res) => plusUser(req, res)?.session ?? null,
@@ -3141,6 +3169,7 @@ async function main(): Promise<void> {
       favoritesService.eraseUser(userId);
       blockService.eraseActor(`user:${userId}`);
       await communityRepository.update(state => {
+        erasePrivateInboxUser(state.settings, userId);
         type Group = { creatorId: string; members: string[]; accepted: string[]; read: Record<string, number>; messages: { authorId: string }[] };
         const groups = state.settings.groupConversations as Group[] | undefined;
         if (groups) state.settings.groupConversations = groups.flatMap(group => {
@@ -3197,6 +3226,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     clearInterval(metricsCleanupTimer);
     clearInterval(chatCleanupTimer);
+    if (privateInboxCleanup) clearInterval(privateInboxCleanup);
     clearInterval(priorityCleanup);
     stopGrowth();
     clearInterval(autoReplyTimer);
