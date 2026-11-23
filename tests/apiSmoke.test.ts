@@ -39,7 +39,7 @@ async function account(name: string, consent = false, promoCode?: string, market
   const email = name === "admin" ? "smoke-admin@example.com" : `${name}@example.com`;
   if (name !== "admin") {
     const before=mail.messages.length;
-    await request("/auth/register", { email, password: "Smoke-test123!", phoneE164: "", age:25, analyticsConsent: consent, promoCode, marketingConsent });
+    await request("/auth/register", { ageDeclaration: true, email, password: "Smoke-test123!", phoneE164: "", age:25, analyticsConsent: consent, promoCode, marketingConsent });
     await request("/auth/login", {email,password:"Smoke-test123!"},undefined,undefined,403);
     const index = mail.messages.findIndex((message, index) =>
       index >= before && message.includes(`To: ${email}\r\n`) && message.includes("Subject: Badehaus X verification code"));
@@ -51,7 +51,7 @@ async function account(name: string, consent = false, promoCode?: string, market
   }
   const login = await request("/auth/login", { email, password: "Smoke-test123!" });
   const token = login.session.sessionToken, id = login.session.userId;
-  await request("/auth/verify-age", { sessionToken: token, ageYears: 25 });
+  await request("/auth/verify-age", { ageDeclaration: true, sessionToken: token, ageYears: 25 });
   return { token, id };
 }
 async function webhook(type: string, id: string, valid = true, livemode = false) {
@@ -145,7 +145,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
   it("Given a guest or invalid profile When core actions are attempted Then enforces age and profile rules", async () => {
     const guest = await request("/auth/guest", {});
     await request("/chat/send", { chatKind: "cruise", toKey: `user:${alice.id}`, text: "blocked by age gate" }, guest.session.sessionToken, undefined, 403);
-    await request("/auth/verify-age", { sessionToken: guest.session.sessionToken, ageYears: 28 });
+    await request("/auth/verify-age", { ageDeclaration: true, sessionToken: guest.session.sessionToken, ageYears: 28 });
     const guestProfile = await request("/profile/me", { displayName: "Custom guest nickname", age: 28, bio: "Hello", stats: {} }, guest.session.sessionToken, "PUT");
     expect(guestProfile.profile.displayName).toBe("Anon");
     const guestRead = await request("/profile/me", undefined, guest.session.sessionToken);
@@ -155,6 +155,16 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(bypass.code).toBe("INVALID_VERIFICATION_CODE");
     const profile = await request("/profile/me", { displayName: "Alice", age: 25, bio: "Hello" }, alice.token, "PUT");
     expect(profile.profile.displayName).toBe("Alice");
+  });
+  it("keeps profile likes idempotent and separate from chat", async () => {
+    const route = `/profile/${alice.id}/likes`;
+    const before = await request("/chat/threads?chatKind=cruise", undefined, bob.token);
+    await request(route, { liked: true }, alice.token, "PUT", 400);
+    expect(await request(route, { liked: true }, bob.token, "PUT")).toEqual({ count: 1, liked: true });
+    expect(await request(route, { liked: true }, bob.token, "PUT")).toEqual({ count: 1, liked: true });
+    expect(await request(route, undefined, alice.token)).toEqual({ count: 1, liked: false });
+    expect(await request("/chat/threads?chatKind=cruise", undefined, bob.token)).toEqual(before);
+    expect(await request(route, { liked: false }, bob.token, "PUT")).toEqual({ count: 0, liked: false });
   });
   it("Given opted-in accounts When exchanging messages Then keeps Cruise messages for 120 days and records one reply", async () => {
     const sent = await request("/chat/send", { chatKind: "cruise", toKey: `user:${bob.id}`, text: "Hello" }, alice.token);
@@ -280,7 +290,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
   it("Given a Badehaus flyer registration When completed Then grants the fixed promotion without contacting Checkout", async () => {
     const count = providerPosts;
     if (Date.now() >= LAUNCH_END_MS) {
-      await request("/auth/register", { email: "launch@example.com", password: "Smoke-test123!", promoCode: BADEHAUS_FLYER_CODE }, undefined, undefined, 400);
+      await request("/auth/register", { ageDeclaration: true, email: "launch@example.com", password: "Smoke-test123!", promoCode: BADEHAUS_FLYER_CODE }, undefined, undefined, 400);
       return;
     }
     const user = await account("launch", true, BADEHAUS_FLYER_CODE);
@@ -341,7 +351,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
   });
   it("Given community preferences When public discovery is requested Then exposes interests and expiring intent but no private settings",async()=>{
     await request("/members/me",undefined,undefined,undefined,401);
-    const guest=await request("/auth/guest",{});await request("/auth/verify-age",{sessionToken:guest.session.sessionToken,ageYears:25});
+    const guest=await request("/auth/guest",{});await request("/auth/verify-age",{ ageDeclaration: true,sessionToken:guest.session.sessionToken,ageYears:25});
     await request("/members/me",undefined,guest.session.sessionToken,undefined,403);
     const member=await request("/members/me",{intent:"chatting",intentHours:1,interests:["Coffee","Hiking"],prompts:[{prompt:"Ask me about…",answer:"My favorite trail"}]},alice.token,"PUT");
     expect(member.preferences.intentExpiresAtMs).toBeGreaterThan(Date.now());
@@ -430,7 +440,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
     expect(publicKey).toMatch(/^session:[a-f0-9]{64}$/);expect(publicKey).not.toContain(token);
     await request("/presence/active", undefined, token);
     expect((await request("/presence/active", undefined, bob.token)).guestKeys).not.toContain(publicKey);
-    expect((await request("/auth/verify-age",{sessionToken:token,ageYears:25})).session.publicKey).toBe(publicKey);
+    expect((await request("/auth/verify-age",{ ageDeclaration: true,sessionToken:token,ageYears:25})).session.publicKey).toBe(publicKey);
     const ownSnapshot = await request("/presence/active", undefined, token);
     expect(ownSnapshot.guestKeys).not.toContain(publicKey);
     const viewerSnapshot = await request("/presence/active", undefined, bob.token);
@@ -461,13 +471,16 @@ describe("Core API and payment lifecycle smoke checks", () => {
   });
   it("Given registration or guest entry When age is missing, invalid or under eighteen Then enforces the server boundary",async()=>{
     for(const age of [undefined,null,"18",17,18.5,121]){
-      const result=await request("/auth/register",{email:"age-check@example.com",password:"Smoke-test123!",age},undefined,undefined,400);
+      const result=await request("/auth/register",{ ageDeclaration: true,email:"age-check@example.com",password:"Smoke-test123!",age},undefined,undefined,400);
       expect(result.code).toBe("AGE_GATE_REQUIRED");
     }
+    const declaration = await request("/auth/register", { email: "age-check@example.com", password: "Smoke-test123!", age: 25 }, undefined, undefined, 400);
+    expect(declaration.code).toBe("AGE_GATE_REQUIRED");
     const guest=await request("/auth/guest",{});
     await request("/chat/send",{chatKind:"cruise",toKey:`user:${alice.id}`,text:"Missing age declaration"},guest.session.sessionToken,undefined,403);
-    for(const ageYears of [undefined,null,"18",17,18.5,121])await request("/auth/verify-age",{sessionToken:guest.session.sessionToken,ageYears},undefined,undefined,ageYears===17?403:400);
-    expect((await request("/auth/verify-age",{sessionToken:guest.session.sessionToken,ageYears:18})).session.ageVerified).toBe(true);
+    await request("/auth/verify-age", { sessionToken: guest.session.sessionToken, ageYears: 25 }, undefined, undefined, 400);
+    for(const ageYears of [undefined,null,"18",17,18.5,121])await request("/auth/verify-age",{ ageDeclaration: true,sessionToken:guest.session.sessionToken,ageYears},undefined,undefined,ageYears===17?403:400);
+    expect((await request("/auth/verify-age",{ ageDeclaration: true,sessionToken:guest.session.sessionToken,ageYears:18})).session.ageVerified).toBe(true);
   });
 
   it("Given the standalone release When any MD boundary is requested Then denies all methods without upstream calls or data mutation",async()=>{
@@ -791,7 +804,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
     await request("/admin/membership", { action: "revoke-priority", email: "priority-owner@example.com" }, admin.token);
     expect(await request("/plus", undefined, priority.token)).toMatchObject({ active: false, priority: false });
     await request("/membership/priority/apply", { code: "PRIORITY X90" }, priority.token, undefined, 403);
-    await request("/auth/register", { email: "revoked-referral@example.com", password: "Smoke-test123!", age: 25, promoCode: awarded.priorityReferralCode }, undefined, undefined, 400);
+    await request("/auth/register", { ageDeclaration: true, email: "revoked-referral@example.com", password: "Smoke-test123!", age: 25, promoCode: awarded.priorityReferralCode }, undefined, undefined, 400);
   });
 
   it("sends scheduled marketing only with explicit consent and honors one-click unsubscribe", async () => {
@@ -970,7 +983,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
     async function signIn(name: string) {
       const login = await request("/auth/login", { email: `${name}@example.com`, password: "Smoke-test123!" });
       const token = login.session.sessionToken;
-      await request("/auth/verify-age", { sessionToken: token, ageYears: 25 });
+      await request("/auth/verify-age", { ageDeclaration: true, sessionToken: token, ageYears: 25 });
       return token;
     }
     const member = await account("free-plus-new");
@@ -1025,7 +1038,7 @@ describe("Core API and payment lifecycle smoke checks", () => {
     const guest = await request("/auth/guest", {});
     const token = guest.session.sessionToken;
     const guestKey = guest.session.publicKey;
-    await request("/auth/verify-age", { sessionToken: token, ageYears: 25 });
+    await request("/auth/verify-age", { ageDeclaration: true, sessionToken: token, ageYears: 25 });
     const member = await account("play-chat-member");
     const peer = await account("play-chat-peer");
     const memberKey = `user:${member.id}`;

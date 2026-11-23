@@ -1173,6 +1173,13 @@ async function main(): Promise<void> {
       bulkCatalogPage,
       repository: communityRepository,
       member: plusUser,
+      async changeFavorite(userId, update) {
+        const user = authService.getUser(userId);
+        if (!user) throw new Error("Account no longer exists.");
+        const ids = update(user.plusData?.adultVideoFavorites ?? []);
+        await membershipChange(userId, { ...user.plusData, adultVideoFavorites: ids });
+        return ids;
+      },
       async saveFavorites(userId, ids) {
         const user = authService.getUser(userId);
         if (!user) throw new Error("Account no longer exists.");
@@ -1654,6 +1661,9 @@ async function main(): Promise<void> {
     }
     const age = req.body?.age;
     if (!Number.isInteger(age) || age < 18 || age > 120) return res.status(400).json({ code: "AGE_GATE_REQUIRED", message: "Declare an age between 18 and 120 to register." });
+    if (req.body?.ageDeclaration !== true) return res.status(400).json({
+      code: "AGE_GATE_REQUIRED", message: "Confirm that your age is truthful and you are at least 18."
+    });
     const email = (req.body as any)?.email;
     const password = (req.body as any)?.password;
     const phoneE164 = (req.body as any)?.phoneE164;
@@ -1754,6 +1764,9 @@ async function main(): Promise<void> {
   app.post("/auth/verify-age", (req, res) => {
     const sessionToken = (req.body as any)?.sessionToken ?? getSessionToken(req);
     const ageYears = (req.body as any)?.ageYears;
+    if (req.body?.ageDeclaration !== true) return res.status(400).json({
+      code: "AGE_GATE_REQUIRED", message: "Confirm that your age is truthful and you are at least 18."
+    });
     const result = authService.verifyAge(sessionToken, ageYears);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ session: clientSession(result.value) });
@@ -1789,7 +1802,7 @@ async function main(): Promise<void> {
     if (!result.ok) return sendError(res, result.error);
     const media = (await playMediaReview?.profileMediaByOwner())?.get(result.value.userId);
     const profile = enrichProfile({ ...result.value, ...media });
-    const favorites = googlePlayEdition ? [] : await adultProfileFavorites(communityRepository, authService.getUser(profile.userId)?.plusData?.adultVideoFavorites).catch(() => []);
+    const favorites = googlePlayEdition ? [] : await adultProfileFavorites(communityRepository, authService.getUser(profile.userId)?.plusData?.adultVideoFavorites, bulkCatalogPage).catch(() => []);
     return res.status(200).json({ profile: favorites.length ? { ...profile, adultVideoFavorites: favorites } : profile });
   });
 
@@ -1808,7 +1821,7 @@ async function main(): Promise<void> {
     const signedInAdult = viewer.ok && Boolean(viewer.value.userId) && viewer.value.ageVerified;
     const profile = enrichProfile({ ...result.value, ...media }, signedInAdult);
     const favorites = !googlePlayEdition && signedInAdult
-      ? await adultProfileFavorites(communityRepository, target?.plusData?.adultVideoFavorites).catch(() => []) : [];
+      ? await adultProfileFavorites(communityRepository, target?.plusData?.adultVideoFavorites, bulkCatalogPage).catch(() => []) : [];
     return res.status(200).json({ profile: favorites.length ? { ...profile, adultVideoFavorites: favorites } : profile });
   });
 
@@ -1825,6 +1838,51 @@ async function main(): Promise<void> {
         (visibleOnSchedule(profile.userId) || recentScheduledIds.has(profile.userId));
     }).map(profile => enrichProfile({ ...profile, ...mediaByOwner?.get(profile.userId) })) });
   });
+
+  if (!googlePlayEdition) {
+    const profileLikesKey = "profileLikes";
+    app.all("/profile/:userId/likes", async (req, res) => {
+      res.setHeader("Cache-Control", "private, no-store");
+      if (req.method !== "GET" && req.method !== "PUT") return res.sendStatus(405);
+      const actor = plusUser(req, res);
+      if (!actor) return;
+      const target = authService.getUser(req.params.userId);
+      if (!target || target.bannedAtMs || blockService.isBlocked(`user:${actor.user.id}`, `user:${target.id}`)) {
+        return res.status(404).json({ message: "Profile unavailable." });
+      }
+      try {
+        if (target.id !== actor.user.id && !(await profileService.getPublicByUserId(target.id)).ok) {
+          return res.status(404).json({ message: "Profile unavailable." });
+        }
+        const summarize = (ids: string[]) => {
+          const visible = ids.filter(id => {
+            const liker = authService.getUser(id);
+            return Boolean(liker && !liker.bannedAtMs && !blockService.isBlocked(`user:${id}`, `user:${target.id}`));
+          });
+          return { count: visible.length, liked: visible.includes(actor.user.id) };
+        };
+        if (req.method === "GET") {
+          const stored = await communityRepository.readSetting<Record<string, string[]>>(profileLikesKey);
+          return res.json(summarize(stored && Object.prototype.hasOwnProperty.call(stored, target.id) ? stored[target.id] : []));
+        }
+        if (actor.user.id === target.id || typeof req.body?.liked !== "boolean") {
+          return res.status(400).json({ message: "Choose whether to like another member’s profile." });
+        }
+        const liked: boolean = req.body.liked;
+        const result = await communityRepository.update(state => {
+          const stored = (state.settings[profileLikesKey] ?? {}) as Record<string, string[]>;
+          const ids = new Set(Object.prototype.hasOwnProperty.call(stored, target.id) ? stored[target.id] : []);
+          if (liked) ids.add(actor.user.id);
+          else ids.delete(actor.user.id);
+          state.settings[profileLikesKey] = { ...stored, [target.id]: Array.from(ids) };
+          return summarize(Array.from(ids));
+        });
+        return res.json(result);
+      } catch {
+        return res.status(503).json({ message: "Profile likes are temporarily unavailable." });
+      }
+    });
+  }
 
   app.put("/profile/me", async (req, res) => {
     const token = getSessionToken(req);
@@ -3097,6 +3155,12 @@ async function main(): Promise<void> {
       await Promise.all([chatPersistQueue, favoritesPersistence, safetyPersistence, metricsQueue]);
       if (chatPersistenceError || favoritesPersistenceError || safetyPersistenceError || metricsWriteError) throw new Error("Account data cleanup could not be persisted");
       await playMediaReview?.eraseOwner(userId);
+      await communityRepository.update(state => {
+        const likes = state.settings.profileLikes as Record<string, string[]> | undefined;
+        if (!likes) return;
+        delete likes[userId];
+        for (const id of Object.keys(likes)) likes[id] = likes[id].filter(liker => liker !== userId);
+      });
       authService.eraseUser(userId);
       await authPersistQueue;
       if (authPersistenceError) throw new Error("Account removal could not be persisted");

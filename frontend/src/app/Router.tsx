@@ -1,3 +1,4 @@
+import { ProfileLike } from "./ProfileLike";
 import classifiedExamples from "../../../shared/classifiedExamples.json";
 import { AdultClassifiedPreviews, AdultLibrary, AdultProfileFavorites } from "./AdultLibrary";
 import { adLifetimeMs, CLASSIFIED_CATEGORIES, isClassifiedCategory, type ClassifiedCategory } from "../../../shared/postingBoard";
@@ -1047,16 +1048,6 @@ function CruiseSurface({
     }
   }
 
-  async function sendFireFromProfile(targetKey: string): Promise<void> {
-    const normalizedTarget = normalizePeerKey(targetKey);
-    if (!normalizedTarget || normalizedTarget === meKey) return;
-    try {
-      await api.sendChat(session.sessionToken, threadProfileRequest?.chatKind ?? (session.mode === "date" ? "date" : "cruise"), normalizedTarget, FIRE_SIGNAL_TEXT);
-    } catch (e) {
-      setLastError(normalizeErrorMessage(e));
-    }
-  }
-
   async function toggleBlockFromProfile(profileChatKey: string): Promise<void> {
     if (!profileChatKey.trim() || profileChatKey === meKey) return;
     const wasBlocked = blockedKeys.has(profileChatKey);
@@ -1354,8 +1345,7 @@ function CruiseSurface({
                 {profile ? <>
                   <button className="rd-btn" type="button" aria-label="Favorite" aria-pressed={favorites.has(profile.userId)}
                     onClick={() => void toggleFavoriteFromProfile(profile.userId)}><Icon name="star" active={favorites.has(profile.userId)} /></button>
-                  {!browseOnly && <button className="rd-btn" type="button" aria-label="Send fire"
-                    onClick={() => void sendFireFromProfile(chatKeyFromProfileUserId(profile.userId))}><Icon name="flame" /></button>}
+                  {!googlePlayEdition && !browseOnly && <ProfileLike key={profile.userId} api={api} token={session.sessionToken} userId={profile.userId} own={false} />}
                 </> : null}
                 <button className="rd-btn" type="button" aria-label={blockedKeys.has(selectedProfileKey) ? "Unblock" : "Block"}
                   onClick={() => void toggleBlockFromProfile(selectedProfileKey)}><Icon name="block" /></button>
@@ -1364,6 +1354,7 @@ function CruiseSurface({
                 </button>
               </div> : null}
               <div className="rd-member-profile-details">
+                {!googlePlayEdition && isSelf && profile && <ProfileLike key={profile.userId} api={api} token={session.sessionToken} userId={profile.userId} own />}
                 {[basicStats, otherStats].map((row, index) => row.length ? (
                   <ul className="rd-member-stats" key={index}>
                     {row.map((value, valueIndex) => <li key={valueIndex}>{value}</li>)}

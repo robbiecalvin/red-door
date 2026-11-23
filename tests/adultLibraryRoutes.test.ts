@@ -33,6 +33,11 @@ it("limits profile favorites to three catalog videos and restricts catalog editi
         session: { role: identity === "admin" ? "admin" : "user" } as Session
       };
     },
+    async changeFavorite(userId, update) {
+      expect(userId).toBe("member");
+      favorites = update(favorites);
+      return favorites;
+    },
     async saveFavorites(userId, ids) {
       expect(userId).toBe("member");
       favorites = ids;
@@ -53,7 +58,9 @@ it("limits profile favorites to three catalog videos and restricts catalog editi
     expect((await request(catalogRoute.replace("page=1", "page=2"))).status).toBe(404);
     const catalogResponse = await request(catalogRoute);
     expect(catalogResponse.headers.get("cache-control")).toBe("private, no-store");
-    expect(await catalogResponse.json()).toMatchObject({ page: 1, videos: [{ thumbnailUrl: "" }] });
+    const catalog = await catalogResponse.json();
+    expect(catalog).toMatchObject({ page: 1, videos: [{ thumbnailUrl: "" }] });
+    const bulkId = catalog.videos[0].id;
     const draft = { title: "Sample video", creator: "Fixture studio", category: "solo",
       watchUrl: "https://example.com/watch", thumbnailUrl: "https://example.com/preview.jpg" };
     expect((await request("/adult-library", "guest")).status).toBe(403);
@@ -85,6 +92,15 @@ it("limits profile favorites to three catalog videos and restricts catalog editi
     const remaining = await adultProfileFavorites(repository, favorites);
     expect(remaining.map(video => video.id)).toEqual([ids[2], ids[1]]);
     expect(remaining[0]).not.toHaveProperty("thumbnailUrl");
+    const setSaved = (id: string, saved: boolean, member = "member") =>
+      request("/adult-library/favorite", member, "PUT", { id, saved });
+    expect((await setSaved(bulkId, true, "guest")).status).toBe(403);
+    expect((await setSaved("unknown", true)).status).toBe(404);
+    expect(await (await setSaved(bulkId, true)).json()).toMatchObject({ favorites: [ids[2], ids[1], bulkId] });
+    expect((await setSaved(ids[3], true)).status).toBe(409);
+    expect((await adultProfileFavorites(repository, favorites))[2]).toMatchObject({ id: bulkId, watchUrl: "https://example.com/watch" });
+    expect(await (await setSaved(bulkId, false)).json()).toMatchObject({ favorites: [ids[2], ids[1]] });
+
   } finally {
     if (previousCatalog === undefined) delete process.env.ADULT_CATALOG_DIR;
     else process.env.ADULT_CATALOG_DIR = previousCatalog;

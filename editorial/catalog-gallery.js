@@ -12,7 +12,43 @@ function httpsUrl(value) {
   }
 }
 
-function videoCard(video, number) {
+const saveButtons = new Map();
+let favorites = [];
+let saving = false;
+
+function updateSaveButtons() {
+  for (const [id, control] of saveButtons) {
+    const saved = favorites.includes(id);
+    control.textContent = saved ? "Remove saved video" : "Save video";
+    control.setAttribute("aria-pressed", String(saved));
+    control.disabled = saving || (!saved && favorites.length >= 3);
+  }
+}
+
+async function saveVideo(id, token) {
+  if (saving) return;
+  saving = true;
+  updateSaveButtons();
+  const saved = !favorites.includes(id);
+  try {
+    const url = new URL(`${gallery.dataset.api.replace(/\/$/, "")}/adult-library/favorite`, document.baseURI);
+    const response = await fetch(url, {
+      method: "PUT", headers: { "content-type": "application/json", "x-session-token": token },
+      credentials: "omit", cache: "no-store", redirect: "error", body: JSON.stringify({ id, saved })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || "Could not update saved videos.");
+    favorites = data.favorites ?? [];
+    status.textContent = `Video ${saved ? "saved to" : "removed from"} your profile. ${favorites.length} of 3 saved.`;
+  } catch (error) {
+    status.textContent = error.message || "Could not update saved videos.";
+  } finally {
+    saving = false;
+    updateSaveButtons();
+  }
+}
+
+function videoCard(video, number, token) {
   const item = document.createElement("li");
   const link = document.createElement("a");
   link.href = httpsUrl(video.watchUrl);
@@ -37,6 +73,13 @@ function videoCard(video, number) {
   title.textContent = `Open video ${number}`;
   link.append(title);
   item.append(link);
+  if (typeof video.id !== "string") return item;
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "site-action";
+  save.addEventListener("click", () => void saveVideo(video.id, token));
+  saveButtons.set(video.id, save);
+  item.append(save);
   return item;
 }
 
@@ -68,12 +111,16 @@ button.addEventListener("click", async () => {
       return;
     }
     if (!response.ok) throw new Error("Catalog request failed");
-    const { videos } = await response.json();
+    const data = await response.json();
+    const { videos } = data;
+    favorites = data.favorites ?? [];
+    saveButtons.clear();
     const start = (Number(page) - 1) * 20;
     grid.replaceChildren(...videos.slice(0, 20).flatMap((video, index) =>
-      httpsUrl(video.watchUrl) ? [videoCard(video, start + index + 1)] : []
+      httpsUrl(video.watchUrl) ? [videoCard(video, start + index + 1, token)] : []
     ));
-    status.textContent = grid.children.length ? "" : "No previews are available for this page.";
+    updateSaveButtons();
+    status.textContent = grid.children.length ? `Save up to three videos to show to age-verified members on your profile. ${favorites.length} of 3 saved.` : "No previews are available for this page.";
     if (grid.children.length) button.hidden = true;
   } catch {
     status.textContent = "Previews are temporarily unavailable. Try again.";
