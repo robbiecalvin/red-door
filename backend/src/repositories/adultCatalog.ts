@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import express, { type Express } from "express";
 import type { Pool } from "pg";
-import manifest from "../../../editorial/adult-catalog-manifest.json";
+import manifest from "../../../shared/adult-catalog-manifest.json";
 
 const entries = new Map(manifest.map(entry => [entry.slug, entry]));
 const total = manifest.reduce((sum, entry) => sum + entry.pages, 0);

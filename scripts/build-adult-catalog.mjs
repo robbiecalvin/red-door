@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 export function writeAdultCatalogPages(directory, baseUrl, escapeHtml) {
-  const manifestPath = directory ? path.join(directory, "manifest.json") : "editorial/adult-catalog-manifest.json";
+  const manifestPath = directory ? path.join(directory, "manifest.json") : "shared/adult-catalog-manifest.json";
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const landingPath = "dist/gay-porn/index.html";
   const list = manifest.map(({ name, slug, count }) =>
