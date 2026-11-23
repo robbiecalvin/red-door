@@ -27,6 +27,7 @@ function httpsUrl(value: unknown): string | undefined {
 
 export function installAdultLibraryRoutes(app: Express, deps: {
   repository: CommunityRepository;
+  bulkCatalogPage?(category: string, page: number): Promise<unknown>;
   member(req: Request, res: Response): { user: StoredUser; session: Session } | null;
   saveFavorites(userId: string, ids: string[]): Promise<void>;
 }) {
@@ -68,10 +69,13 @@ export function installAdultLibraryRoutes(app: Express, deps: {
     if (!deps.member(req, res)) return;
     const { category, page } = req.query;
     const directory = process.env.ADULT_CATALOG_DIR;
-    if (!directory) return res.status(404).json({ message: "The bulk catalog is unavailable." });
     if (typeof category !== "string" || !/^[a-z0-9][a-z0-9-]{0,90}-[a-f0-9]{10}$/.test(category) ||
         typeof page !== "string" || !/^[1-9][0-9]{0,5}$/.test(page)) {
       return res.status(400).json({ message: "Choose a catalog category and page." });
+    }
+    if (!directory) {
+      const result = await deps.bulkCatalogPage?.(category, Number(page));
+      return result ? res.json(result) : res.status(404).json({ message: "Catalog page not found." });
     }
     try {
       const manifest: { name: string; slug: string; pages: number }[] =

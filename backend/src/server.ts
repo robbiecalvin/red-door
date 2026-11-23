@@ -1,3 +1,4 @@
+import { configureAdultCatalog } from "./repositories/adultCatalog";
 import { adultProfileFavorites, installAdultLibraryRoutes } from "./routes/adultLibraryRoutes";
 import { childSafetyPriority } from "../../shared/childSafety";
 import { installAccountDeletionRoutes } from "./routes/accountDeletionRoutes";
@@ -793,6 +794,7 @@ async function main(): Promise<void> {
   });
   app.use("/admin/customer-import", express.json({ limit: "512kb" }));
   app.use("/backroom/editor", express.json({ limit: "100kb" }));
+  const bulkCatalogPage = !googlePlayEdition && postgresPool ? await configureAdultCatalog(app, postgresPool) : undefined;
   app.use(express.json({ limit: "8kb", verify:(req,_res,buffer)=>{(req as Request & {rawBody?:Buffer}).rawBody=Buffer.from(buffer);} }));
   app.use((req, _res, next) => {
     const token = getSessionToken(req);
@@ -1169,6 +1171,7 @@ async function main(): Promise<void> {
   };
   if (!googlePlayEdition) {
     installAdultLibraryRoutes(app, {
+      bulkCatalogPage,
       repository: communityRepository,
       member: plusUser,
       async saveFavorites(userId, ids) {
