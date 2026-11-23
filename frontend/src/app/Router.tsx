@@ -1,3 +1,4 @@
+import { PrivateInbox } from "./PrivateInbox";
 import { ProfileLike } from "./ProfileLike";
 import classifiedExamples from "../../../shared/classifiedExamples.json";
 import { AdultClassifiedPreviews, AdultLibrary, AdultProfileFavorites } from "./AdultLibrary";
@@ -78,7 +79,7 @@ type Settings = Readonly<{
   defaultCenterLng: number;
 }>;
 
-type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "adult-library" | "promoted" | "md";
+type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "adult-library" | "private-inbox" | "promoted" | "md";
 type DiscoverFilter = "all" | "online" | "favorites";
 type MobileCruiseTab = "map" | "chat";
 type DiscoverScreen = MobileCruiseTab;
@@ -123,6 +124,36 @@ function buttonPrimary(disabled: boolean): React.CSSProperties {
 
 function buttonSecondary(disabled: boolean): React.CSSProperties {
   return { ...buttonPrimary(disabled), background: "var(--surface-raised)", border: "1px solid var(--line)", color: "var(--ink)" };
+}
+
+function numericFilterOptions(min: number, max: number, step = 1): string[] {
+  return Array.from({ length: Math.floor((max - min) / step) + 1 }, (_, index) => String(min + index * step));
+}
+
+const ageFilterOptions = numericFilterOptions(18, 120);
+const heightFilterOptions = numericFilterOptions(36, 96);
+const weightFilterOptions = numericFilterOptions(60, 600, 5);
+const sizeFilterOptions = numericFilterOptions(1, 20, 0.5);
+
+function FilterDropdown({ label, value, options, onChange, numeric = false }: {
+  label: string;
+  value: string;
+  options: readonly (string | number | undefined)[];
+  onChange(value: string): void;
+  numeric?: boolean;
+}) {
+  const choices = new Map<string, string>();
+  for (const option of [...options, value]) {
+    if (option === undefined || option === "") continue;
+    const text = String(option);
+    const key = numeric ? text : text.toLowerCase();
+    if (!choices.has(key) || text === value) choices.set(key, text);
+  }
+  const sorted = [...choices.values()].sort((a, b) => numeric ? Number(a) - Number(b) : a.localeCompare(b));
+  return <select aria-label={label} style={fieldStyle()} value={value} onChange={event => onChange(event.target.value)}>
+    <option value="">{label}</option>
+    {sorted.map(option => <option key={option} value={option}>{option}</option>)}
+  </select>;
 }
 
 function fieldStyle(): React.CSSProperties {
@@ -1352,6 +1383,7 @@ function CruiseSurface({
                 <button className="rd-btn primary rd-member-message" type="button" onClick={message}>
                   {browseOnly ? "Create an account to message" : "Message"}{unreadCount > 0 ? <span className="rd-member-unread" aria-label={`${unreadCount} unread`}>{unreadCount}</span> : null}
                 </button>
+                {!googlePlayEdition && !browseOnly && profile?.userId && session.userId && <a className="rd-btn" href={`#/private-inbox/${encodeURIComponent(profile.userId)}`}>Send private message</a>}
               </div> : null}
               <div className="rd-member-profile-details">
                 {!googlePlayEdition && isSelf && profile && <ProfileLike key={profile.userId} api={api} token={session.sessionToken} userId={profile.userId} own />}
@@ -2502,21 +2534,21 @@ function CruiseChat({
                 </div>
               </div>
               <fieldset disabled={!hasPlus(session)} style={{ border: 0, padding: 0, margin: 0, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, opacity: hasPlus(session) ? 1 : .45 }}><legend className="rd-label">Advanced filters{session.freePlus === false ? " · Plus" : ""}</legend>
-                <input style={fieldStyle()} placeholder="Min age" value={filterMinAge} onChange={(e) => setFilterMinAge(e.target.value)} />
-                <input style={fieldStyle()} placeholder="Max age" value={filterMaxAge} onChange={(e) => setFilterMaxAge(e.target.value)} />
-                <input style={fieldStyle()} placeholder="Race" value={filterRace} onChange={(e) => setFilterRace(e.target.value)} />
-                {!googlePlayEdition && <><select style={fieldStyle()} value={filterCutStatus} onChange={(e) => setFilterCutStatus(e.target.value as "" | "cut" | "uncut")}>
+                <FilterDropdown label="Min age" value={filterMinAge} options={[...ageFilterOptions, ...baseCards.map(profile => profile.age)]} onChange={setFilterMinAge} numeric />
+                <FilterDropdown label="Max age" value={filterMaxAge} options={[...ageFilterOptions, ...baseCards.map(profile => profile.age)]} onChange={setFilterMaxAge} numeric />
+                <FilterDropdown label="Race" value={filterRace} options={baseCards.map(profile => profile.stats?.race)} onChange={setFilterRace} />
+                {!googlePlayEdition && <><select aria-label="Cut status" style={fieldStyle()} value={filterCutStatus} onChange={(e) => setFilterCutStatus(e.target.value as "" | "cut" | "uncut")}>
                   <option value="">Cut / Uncut</option>
                   <option value="cut">Cut</option>
                   <option value="uncut">Uncut</option>
                 </select></>}
-                <input style={fieldStyle()} placeholder="Min height (in)" value={filterMinHeight} onChange={(e) => setFilterMinHeight(e.target.value)} />
-                <input style={fieldStyle()} placeholder="Max height (in)" value={filterMaxHeight} onChange={(e) => setFilterMaxHeight(e.target.value)} />
-                <input style={fieldStyle()} placeholder="Min weight (lbs)" value={filterMinWeight} onChange={(e) => setFilterMinWeight(e.target.value)} />
-                <input style={fieldStyle()} placeholder="Max weight (lbs)" value={filterMaxWeight} onChange={(e) => setFilterMaxWeight(e.target.value)} />
-                {!googlePlayEdition && <><input style={fieldStyle()} placeholder="Min cock size (in)" value={filterMinCockSize} onChange={(e) => setFilterMinCockSize(e.target.value)} />
-                <input style={fieldStyle()} placeholder="Max cock size (in)" value={filterMaxCockSize} onChange={(e) => setFilterMaxCockSize(e.target.value)} />
-                <select style={fieldStyle()} value={filterPosition} onChange={(e) => setFilterPosition(e.target.value as "" | "top" | "bottom" | "side")}>
+                <FilterDropdown label="Min height (in)" value={filterMinHeight} options={[...heightFilterOptions, ...baseCards.map(profile => profile.stats?.heightInches)]} onChange={setFilterMinHeight} numeric />
+                <FilterDropdown label="Max height (in)" value={filterMaxHeight} options={[...heightFilterOptions, ...baseCards.map(profile => profile.stats?.heightInches)]} onChange={setFilterMaxHeight} numeric />
+                <FilterDropdown label="Min weight (lbs)" value={filterMinWeight} options={[...weightFilterOptions, ...baseCards.map(profile => profile.stats?.weightLbs)]} onChange={setFilterMinWeight} numeric />
+                <FilterDropdown label="Max weight (lbs)" value={filterMaxWeight} options={[...weightFilterOptions, ...baseCards.map(profile => profile.stats?.weightLbs)]} onChange={setFilterMaxWeight} numeric />
+                {!googlePlayEdition && <><FilterDropdown label="Min cock size (in)" value={filterMinCockSize} options={[...sizeFilterOptions, ...baseCards.map(profile => profile.stats?.cockSizeInches)]} onChange={setFilterMinCockSize} numeric />
+                <FilterDropdown label="Max cock size (in)" value={filterMaxCockSize} options={[...sizeFilterOptions, ...baseCards.map(profile => profile.stats?.cockSizeInches)]} onChange={setFilterMaxCockSize} numeric />
+                <select aria-label="Position" style={fieldStyle()} value={filterPosition} onChange={(e) => setFilterPosition(e.target.value as "" | "top" | "bottom" | "side")}>
                   <option value="">Position</option>
                   <option value="top">Top</option>
                   <option value="bottom">Bottom</option>
@@ -2724,16 +2756,16 @@ function DateSurface({
             <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} /> Favorites only
           </label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
-            <input style={fieldStyle()} placeholder="Min age" value={filterMinAge} onChange={(e) => setFilterMinAge(e.target.value)} />
-            <input style={fieldStyle()} placeholder="Max age" value={filterMaxAge} onChange={(e) => setFilterMaxAge(e.target.value)} />
-            <input style={fieldStyle()} placeholder="Race" value={filterRace} onChange={(e) => setFilterRace(e.target.value)} />
-            <input style={fieldStyle()} placeholder="Min height" value={filterMinHeight} onChange={(e) => setFilterMinHeight(e.target.value)} />
-            <input style={fieldStyle()} placeholder="Max height" value={filterMaxHeight} onChange={(e) => setFilterMaxHeight(e.target.value)} />
-            <input style={fieldStyle()} placeholder="Min weight" value={filterMinWeight} onChange={(e) => setFilterMinWeight(e.target.value)} />
-            <input style={fieldStyle()} placeholder="Max weight" value={filterMaxWeight} onChange={(e) => setFilterMaxWeight(e.target.value)} />
-            {!googlePlayEdition && <><input style={fieldStyle()} placeholder="Min cock size" value={filterMinCockSize} onChange={(e) => setFilterMinCockSize(e.target.value)} />
-            <input style={fieldStyle()} placeholder="Max cock size" value={filterMaxCockSize} onChange={(e) => setFilterMaxCockSize(e.target.value)} />
-            <select style={fieldStyle()} value={filterCutStatus} onChange={(e) => setFilterCutStatus(e.target.value as "" | "cut" | "uncut")}>
+            <FilterDropdown label="Min age" value={filterMinAge} options={[...ageFilterOptions, ...profiles.map(profile => profile.age)]} onChange={setFilterMinAge} numeric />
+            <FilterDropdown label="Max age" value={filterMaxAge} options={[...ageFilterOptions, ...profiles.map(profile => profile.age)]} onChange={setFilterMaxAge} numeric />
+            <FilterDropdown label="Race" value={filterRace} options={profiles.map(profile => profile.race)} onChange={setFilterRace} />
+            <FilterDropdown label="Min height" value={filterMinHeight} options={[...heightFilterOptions, ...profiles.map(profile => profile.heightInches)]} onChange={setFilterMinHeight} numeric />
+            <FilterDropdown label="Max height" value={filterMaxHeight} options={[...heightFilterOptions, ...profiles.map(profile => profile.heightInches)]} onChange={setFilterMaxHeight} numeric />
+            <FilterDropdown label="Min weight" value={filterMinWeight} options={[...weightFilterOptions, ...profiles.map(profile => profile.weightLbs)]} onChange={setFilterMinWeight} numeric />
+            <FilterDropdown label="Max weight" value={filterMaxWeight} options={[...weightFilterOptions, ...profiles.map(profile => profile.weightLbs)]} onChange={setFilterMaxWeight} numeric />
+            {!googlePlayEdition && <><FilterDropdown label="Min cock size" value={filterMinCockSize} options={[...sizeFilterOptions, ...profiles.map(profile => profile.cockSizeInches)]} onChange={setFilterMinCockSize} numeric />
+            <FilterDropdown label="Max cock size" value={filterMaxCockSize} options={[...sizeFilterOptions, ...profiles.map(profile => profile.cockSizeInches)]} onChange={setFilterMaxCockSize} numeric />
+            <select aria-label="Cut status" style={fieldStyle()} value={filterCutStatus} onChange={(e) => setFilterCutStatus(e.target.value as "" | "cut" | "uncut")}>
               <option value="">Cut or uncut</option>
               <option value="cut">Cut</option>
               <option value="uncut">Uncut</option>
@@ -7290,6 +7322,7 @@ export function Router({
       ) : null}
       {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
+      {!googlePlayEdition && activeTab === "private-inbox" && <PrivateInbox api={api} session={session} />}
       {!googlePlayEdition && activeTab === "adult-library" ? <AdultLibrary api={api} session={session} onRegister={onRegister} /> : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setSubmissionsError} /> : null}
       {activeTab === "promoted" || activeTab === "md" ? <p role="status">This feature is unavailable. Open Explore or Inbox to continue.</p> : null}

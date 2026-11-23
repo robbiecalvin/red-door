@@ -46,4 +46,6 @@ Authenticate every route, enforce participant access by default, and return priv
 3. Connect unread counts, discreet notifications, moderation, account erasure, and retention. Test cross-account access, blocked delivery, duplicate sends, concurrent drafts, offline recipients, and expired messages.
 4. Verify the new inbox side by side with existing Instant Chat before enabling it for members.
 
-This is a design draft. The new inbox has not been implemented or deployed.
+## Initial implementation
+
+The initial web implementation includes the toolbar entry, profile compose link, folders, first-message drafts, requests and preferences, participant-scoped conversation access, and 120-day retention. It uses the existing transactional community repository, backed by PostgreSQL in production. The draft’s dedicated tables, saved reply drafts, and background unread notifications are follow-up work. The release has not been deployed.

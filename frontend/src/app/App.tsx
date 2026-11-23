@@ -1,3 +1,5 @@
+import inboxToolbar from "../assets/interface/toolbar-inbox.webp";
+import inboxToolbarSelected from "../assets/interface/toolbar-inboxselected.webp";
 import videoPlay from "../assets/interface/play.webp";
 import videoPlaySelected from "../assets/interface/playselected.webp";
 import { createPortal } from "react-dom";
@@ -32,7 +34,7 @@ import { Icon } from "./Icon";
 import { RightNowControl } from "./MemberPanels";
 
 type AuthView = "guest" | "register" | "login";
-type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "adult-library" | "promoted" | "md";
+type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "adult-library" | "private-inbox" | "promoted" | "md";
 type DiscoverFilter = "all" | "online" | "favorites";
 type DiscoverScreen = "map" | "chat";
 type ProfilePosition = "" | "top" | "bottom" | "side";
@@ -51,7 +53,7 @@ type ProfileSetupDraft = Readonly<{
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
 const DEFAULT_SHARED_API_BASE = "https://red-door-api.onrender.com";
-const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "live", "cruise", "profile", "settings", "submissions", ...(googlePlayEdition ? [] : ["adult-library"] as const)]);
+const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "live", "cruise", "profile", "settings", "submissions", ...(googlePlayEdition ? [] : ["adult-library", "private-inbox"] as const)]);
 const DEFAULT_TAB: TopTab = "discover";
 const FULL_PAGE_TAB_NAV = false;
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
@@ -1313,7 +1315,7 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
             {session?.ageVerified === true ? (
-              <div className="rd-app-toolbar">
+              <div className={`rd-app-toolbar${!googlePlayEdition && session.userId ? " rd-app-toolbar-with-inbox" : ""}`}>
                 <div className="rd-app-toolbar-side">
                   <button type="button" className="rd-btn rd-app-tool" aria-label="Badehaus X Explore" title="Explore"
                     onClick={() => setTabAndRoute("discover", discoverScreen)}>
@@ -1332,6 +1334,10 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
                   <span className="rd-mobile-avatar-dot" />
                 </button>
                 <div className="rd-app-toolbar-side rd-app-toolbar-end">
+                  {!googlePlayEdition && session.userId && <button type="button" className="rd-btn rd-app-tool" aria-label="Open private inbox" title="Private inbox"
+                    aria-current={activeTab === "private-inbox" ? "page" : undefined} onClick={() => setTabAndRoute("private-inbox")}>
+                    <img src={activeTab === "private-inbox" ? inboxToolbarSelected : inboxToolbar} alt="" className="rd-app-brand-mark" />
+                  </button>}
                   {!googlePlayEdition && session.userId && <button type="button" className="rd-btn rd-app-tool" aria-label="Live" title="Live"
                     aria-current={activeTab === "live" ? "page" : undefined} onClick={() => setTabAndRoute("live")}>
                     <Icon name="live" active={activeTab === "live" || liveState.broadcasts.some(room => room.live)} />
