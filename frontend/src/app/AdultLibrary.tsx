@@ -166,3 +166,34 @@ export function AdultLibrary({ api, session, onRegister }: { api: Api; session: 
     </div>
   </section>;
 }
+
+export function AdultClassifiedPreviews({ api, token }: { api: Api; token: string }) {
+  const [videos, setVideos] = useState<AdultVideo[]>([]);
+  const [status, setStatus] = useState("Loading previews…");
+  useEffect(() => {
+    let active = true;
+    void api.memberRequest<{ videos: AdultVideo[] }>(token, "/adult-library/previews").then(result => {
+      if (!active) return;
+      setVideos(result.videos);
+      setStatus(result.videos.length ? "" : "No video previews are available yet.");
+    }, () => {
+      if (active) setStatus("Video previews are temporarily unavailable.");
+    });
+    return () => { active = false; };
+  }, [api, token]);
+  return <section className="rd-card rd-adult-library" aria-label="From the 18+ directory">
+    <div className="rd-card-body">
+      <h2>From the 18+ directory</h2>
+      {status && <p role="status">{status}</p>}
+      {videos.length > 0 && <div className="rd-adult-video-grid">
+        {videos.map(video => <article key={video.id}>
+          <a href={video.watchUrl} target="_blank" rel="noopener noreferrer">
+            <img src={video.thumbnailUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
+            {video.title}
+          </a>
+        </article>)}
+      </div>}
+      <a href="#/adult-library">Browse the directory</a>
+    </div>
+  </section>;
+}

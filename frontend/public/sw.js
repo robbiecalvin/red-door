@@ -32,7 +32,7 @@ self.addEventListener('fetch', event => {
     // Never persist navigations, query tokens or authenticated pages.
     const relative=url.pathname.slice(scope.pathname.length);
     const publicAppQuery = (relative === '' || relative === 'index.html') &&
-      /^\?(?:app=1|city=[a-z0-9]+(?:-[a-z0-9]+)*(?:&category=[a-z]+(?:-[a-z]+)*)?)$/.test(url.search);
+      /^\?(?:app=1|city=[a-z0-9]+(?:-[a-z0-9]+)*(?:&category=[a-z]+(?:-[a-z]+)*)?(?:&(?:example=(?:category|overview)|videos=1))?)$/.test(url.search);
     if (url.search && !publicAppQuery) return;
     if (relative !== '' && !/^(index|discover|threads|public|profile|settings|submissions|promoted)\.html$/.test(relative)) return;
     const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),8000);
