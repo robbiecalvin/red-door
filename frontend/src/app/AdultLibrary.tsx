@@ -6,7 +6,8 @@ import {
 import type { Session, apiClient } from "./api";
 
 type Api = ReturnType<typeof apiClient>;
-type Library = { videos: AdultVideo[]; favorites: string[] };
+type SavedVideos = { favorites: string[]; savedVideos: AdultVideoFavorite[] };
+type Library = { videos: AdultVideo[] } & SavedVideos;
 type VideoDraft = Omit<AdultVideo, "id"> & { id?: string };
 const emptyDraft: VideoDraft = { title: "", creator: "", category: "solo", watchUrl: "", thumbnailUrl: "" };
 
@@ -51,14 +52,14 @@ function CuratedAdultLibrary({ api, session, onRegister }: { api: Api; session: 
 
   async function updateFavorite(id: string) {
     if (busy || !library) return;
-    const ids = library.favorites.includes(id) ? library.favorites.filter(item => item !== id) : [...library.favorites, id];
-    if (ids.length > 3) return;
+    const saved = !library.favorites.includes(id);
+    if (saved && library.favorites.length >= 3) return;
     setBusy(true);
     setError("");
     setStatus("");
     try {
-      const { favorites } = await api.memberRequest<Pick<Library, "favorites">>(token, "/adult-library/favorites", { ids }, "PUT");
-      setLibrary({ ...library, favorites });
+      const update = await api.memberRequest<SavedVideos>(token, "/adult-library/favorite", { id, saved }, "PUT");
+      setLibrary({ ...library, ...update });
       setStatus("Profile favorites updated.");
     } catch (error) {
       setError(errorText(error));
@@ -92,7 +93,8 @@ function CuratedAdultLibrary({ api, session, onRegister }: { api: Api; session: 
       await api.memberRequest(token, `/admin/adult-library/${encodeURIComponent(video.id)}`, undefined, "DELETE");
       setLibrary({
         videos: library.videos.filter(entry => entry.id !== video.id),
-        favorites: library.favorites.filter(id => id !== video.id)
+        favorites: library.favorites.filter(id => id !== video.id),
+        savedVideos: (library.savedVideos ?? []).filter(entry => entry.id !== video.id)
       });
       if (draft.id === video.id) setDraft(emptyDraft);
       setStatus("Video removed.");
@@ -103,10 +105,7 @@ function CuratedAdultLibrary({ api, session, onRegister }: { api: Api; session: 
 
   const categories = Object.entries(ADULT_VIDEO_CATEGORIES).map(([id, name]) => <option key={id} value={id}>{name}</option>);
   const visible = library?.videos.filter(video => !category || video.category === category) ?? [];
-  const favorites = library?.favorites.flatMap(id => {
-    const video = library.videos.find(entry => entry.id === id);
-    return video ? [video] : [];
-  }) ?? [];
+  const favorites = library?.savedVideos ?? [];
 
   return <section className="rd-card rd-adult-library" aria-labelledby="adult-library-title">
     <div className="rd-card-body">
@@ -142,7 +141,7 @@ function CuratedAdultLibrary({ api, session, onRegister }: { api: Api; session: 
                 </a>
                 <p>{video.creator} · {ADULT_VIDEO_CATEGORIES[video.category]}</p>
                 <button type="button" className="rd-btn" disabled={busy || (!selected && library.favorites.length >= 3)} aria-pressed={selected}
-                  onClick={() => void updateFavorite(video.id)}>{selected ? "Remove from favorites" : "Add to profile favorites"}</button>
+                  onClick={() => void updateFavorite(video.id)}>{selected ? "Remove saved video" : "Save video"}</button>
                 {session.role === "admin" && <div className="rd-row">
                   <button type="button" className="rd-btn" onClick={() => setDraft(video)}>Edit video</button>
                   <button type="button" className="rd-btn" disabled={busy} onClick={() => void removeVideo(video)}>Remove video</button>
@@ -201,7 +200,7 @@ export function AdultClassifiedPreviews({ api, token }: { api: Api; token: strin
 }
 
 
-type CatalogPage = { name: string; slug: string; page: number; pages: number; videos: { watchUrl: string; thumbnailUrl: string }[] };
+type CatalogPage = { name: string; slug: string; page: number; pages: number; favorites: string[]; videos: { id: string; watchUrl: string; thumbnailUrl: string }[] };
 
 function CatalogThumbnail({ url }: { url: string }) {
   const [unavailable, setUnavailable] = useState(false);
@@ -213,6 +212,18 @@ function CatalogThumbnail({ url }: { url: string }) {
 function BulkAdultPage({ api, session, category, page }: { api: Api; session: Session; category: string; page: string }) {
   const [result, setResult] = useState<CatalogPage | null>(null);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState("");
+  async function setSaved(id: string, saved: boolean) {
+    setSaving(true);
+    setSaveStatus("");
+    try {
+      const { favorites } = await api.memberRequest<SavedVideos>(session.sessionToken, "/adult-library/favorite", { id, saved }, "PUT");
+      setResult(previous => previous && { ...previous, favorites });
+      setSaveStatus(saved ? "Video saved to your profile." : "Video removed from your profile.");
+    } catch (failure) { setSaveStatus(errorText(failure)); }
+    finally { setSaving(false); }
+  }
   useEffect(() => {
     if (session.userType === "guest" || !session.ageVerified) return;
     let active = true;
@@ -234,12 +245,19 @@ function BulkAdultPage({ api, session, category, page }: { api: Api; session: Se
       <h1>{result?.name ?? "Adult video directory"} · 18+</h1>
       {session.userType === "guest" ? <p>Sign in with an age-verified Badehaus X account to see video previews.</p>
         : error ? <p role="alert">{error}</p> : !result ? <p role="status">Loading previews…</p> : <>
+          <p>Save up to three videos to share on your profile with other age-verified members.</p>
+          <p role="status">{saveStatus || `${(result.favorites ?? []).length}/3 videos saved`}</p>
           <div className="rd-adult-video-grid">
-            {result.videos.map((video, index) => <article key={index} className="rd-card">
+            {result.videos.map((video, index) => <article key={video.id} className="rd-card">
               <a href={video.watchUrl} target="_blank" rel="noopener noreferrer">
                 <CatalogThumbnail url={video.thumbnailUrl} />
                 <span>Open video {(result.page - 1) * 20 + index + 1}</span>
               </a>
+              {video.id && <button type="button" className="rd-btn" aria-pressed={(result.favorites ?? []).includes(video.id)}
+                disabled={saving || (!(result.favorites ?? []).includes(video.id) && (result.favorites ?? []).length >= 3)}
+                onClick={() => void setSaved(video.id, !(result.favorites ?? []).includes(video.id))}>
+                {(result.favorites ?? []).includes(video.id) ? "Remove saved video" : "Save video"}
+              </button>}
             </article>)}
           </div>
           <nav aria-label="Video results pages">

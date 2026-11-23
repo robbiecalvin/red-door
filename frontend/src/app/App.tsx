@@ -1,3 +1,5 @@
+import videoPlay from "../assets/interface/play.webp";
+import videoPlaySelected from "../assets/interface/playselected.webp";
 import { createPortal } from "react-dom";
 import { AccountDeletion } from "./AccountDeletion";
 import { MediaReview } from "./MediaReview";
@@ -386,7 +388,8 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
     }).catch(() => { if (active) setPolicy({ status: "unavailable" }); });
     return () => { active = false; };
   }, [api, authView, policyRequest]);
-  const canRegister = policy?.status === "disabled" || (policy?.status === "required" && acceptedPolicy);
+  const [registerAgeDeclared, setRegisterAgeDeclared] = useState(false);
+  const canRegister = registerAgeDeclared && (policy?.status === "disabled" || (policy?.status === "required" && acceptedPolicy));
   useEffect(() => {
     if (authView !== "register") setGoogleRegistration(null);
   }, [authView]);
@@ -404,6 +407,7 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [authInfo, setAuthInfo] = useState<string>("");
   const [ageYears, setAgeYears] = useState<string>("");
+  const [ageDeclared, setAgeDeclared] = useState(false);
   const [profileSetupDraft, setProfileSetupDraft] = useState<ProfileSetupDraft>(() => emptyProfileSetupDraft());
   const [profileSetupRequired, setProfileSetupRequired] = useState<boolean>(false);
   const [profileSetupChecking, setProfileSetupChecking] = useState<boolean>(false);
@@ -645,6 +649,8 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
     setLoginPassword("");
     setRegisterEmail("");
     setRegisterPassword("");
+    setRegisterAgeDeclared(false);
+    setAgeDeclared(false);
     setPendingVerificationEmail(null);
     setVerificationCode("");
     setProfileSetupRequired(false);
@@ -671,20 +677,10 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
 
   async function autoVerifyAgeForRegisteredSession(nextSession: Session, preferredAge?: number): Promise<Session> {
     if (nextSession.userType === "guest" || nextSession.ageVerified === true) return nextSession;
-    let ageCandidate = Number.isFinite(preferredAge) ? Number(preferredAge) : NaN;
-    if (!Number.isFinite(ageCandidate) || !Number.isInteger(ageCandidate) || ageCandidate < 18 || ageCandidate > 120) {
-      try {
-        const me = await api.getMyProfile(nextSession.sessionToken);
-        ageCandidate = Number(me.profile.age);
-      } catch {
-        return nextSession;
-      }
-    }
-    if (!Number.isFinite(ageCandidate) || !Number.isInteger(ageCandidate) || ageCandidate < 18 || ageCandidate > 120) {
-      return nextSession;
-    }
+    if (!registerAgeDeclared || preferredAge !== Number(registerAge) ||
+        !Number.isInteger(preferredAge) || Number(preferredAge) < 18 || Number(preferredAge) > 120) return nextSession;
     try {
-      const verified = await api.verifyAge(nextSession.sessionToken, ageCandidate);
+      const verified = await api.verifyAge(nextSession.sessionToken, Number(preferredAge), true);
       return verified.session;
     } catch {
       return nextSession;
@@ -709,7 +705,7 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
     setBusy(true);
     setLastError(null);
     setAuthInfo("");
-    const profile = { displayName: normalizedDisplayName, age: registerAgeNumber, stats: {}, promoCode, analyticsConsent, marketingConsent, policyAcceptance };
+    const profile = { displayName: normalizedDisplayName, age: registerAgeNumber, ageDeclaration: registerAgeDeclared, stats: {}, promoCode, analyticsConsent, marketingConsent, policyAcceptance };
     try {
       const googleResult = googleRegistration
         ? await api.registerWithGoogle(googleRegistration.credential, googleRegistration.nonce, phoneE164, profile)
@@ -724,7 +720,7 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
       }));
       if (googleResult) {
         setGoogleRegistration(null);
-        await completeLogin(googleResult.session);
+        await completeLogin(googleResult.session, registerAgeNumber);
         return;
       }
       try {
@@ -836,12 +832,12 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
   }
 
   async function submitAgeGate(): Promise<void> {
-    if (!session) return;
+    if (!session || !ageDeclared) return;
     setBusy(true);
     setLastError(null);
     try {
       const age = Number(ageYears);
-      const res = await api.verifyAge(session.sessionToken, age);
+      const res = await api.verifyAge(session.sessionToken, age, ageDeclared);
       setSession(res.session);
     } catch (e) {
       setLastError(normalizeUiError(e, "Age declaration failed."));
@@ -1204,13 +1200,19 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
                 <input
                   className="rd-input"
                   value={registerAge}
-                  onChange={(e) => setRegisterAge(e.target.value)}
+                  onChange={(e) => { setRegisterAge(e.target.value); setRegisterAgeDeclared(false); }}
                   inputMode="numeric"
                   aria-label="Age"
                 />
               </label>
             ) : null}
 
+            {authView === "register" && <div className="rd-field">
+              <strong>Adults only (18+)</strong>
+              <p>Enter your real age. If you’re under 18, you cannot create an account or use Badehaus X.</p>
+              <label><input type="checkbox" required checked={registerAgeDeclared}
+                onChange={event => setRegisterAgeDeclared(event.target.checked)} /> I confirm that the age I entered is truthful and that I’m at least 18 years old.</label>
+            </div>}
             {authView === "register" ? (
               <label className="rd-field">
                 <span className="rd-label">Phone (E.164, optional)</span>
@@ -1318,6 +1320,11 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
                     <img src={brandMark} className="rd-app-brand-mark" alt="" />
                   </button>
                   <InstallApp iconOnly />
+                  {!googlePlayEdition && <button type="button" className="rd-btn rd-app-tool" aria-label="Adult video finder" title="Adult video finder"
+                    aria-current={activeTab === "adult-library" ? "page" : undefined} onClick={() => setTabAndRoute("adult-library")}>
+                    <img src={activeTab === "adult-library" ? videoPlaySelected : videoPlay} alt="" className="rd-app-brand-mark" />
+                  </button>}
+
                 </div>
                 <button type="button" className="rd-top-avatar rd-app-avatar" aria-label="Open my profile preview"
                   onClick={openSelfProfilePreview}>
@@ -1383,10 +1390,12 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
                 ) : null}
                 <label className="rd-field">
                   <span className="rd-label">Age (Years)</span>
-                  <input className="rd-input" value={ageYears} onChange={(e) => setAgeYears(e.target.value)} aria-label="Age in years" />
+                  <input className="rd-input" value={ageYears} onChange={(e) => { setAgeYears(e.target.value); setAgeDeclared(false); }} aria-label="Age in years" />
                 </label>
+                <label className="rd-field"><span><input type="checkbox" required checked={ageDeclared}
+                  onChange={event => setAgeDeclared(event.target.checked)} /> I confirm that the age I entered is truthful and that I’m at least 18 years old.</span></label>
                 <div className="rd-row">
-                  <button type="button" className="rd-btn primary" onClick={() => void submitAgeGate()} disabled={busy} aria-label="Confirm age">
+                  <button type="button" className="rd-btn primary" onClick={() => void submitAgeGate()} disabled={busy || !ageDeclared} aria-label="Confirm age">
                     Confirm
                   </button>
                 </div>

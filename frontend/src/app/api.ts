@@ -162,6 +162,7 @@ export type ProfileUpdatePayload = Readonly<{
 }>;
 
 export type RegistrationProfileInput = Readonly<{
+  ageDeclaration: boolean;
   analyticsConsent?: boolean;
   marketingConsent?: boolean;
   policyAcceptance?: PolicyAcceptance;
@@ -2595,7 +2596,7 @@ function createLocalApiClient(): Readonly<{
   verifyEmail(email: string, code: string): Promise<VerifyEmailOrLoginResponse>;
   resendVerification(email: string): Promise<RegisterResponse>;
   login(email: string, password: string): Promise<VerifyEmailOrLoginResponse>;
-  verifyAge(sessionToken: string, ageYears: number): Promise<{ session: Session }>;
+  verifyAge(sessionToken: string, ageYears: number, ageDeclaration: boolean): Promise<{ session: Session }>;
   getSession(sessionToken: string): Promise<{ session: Session }>;
   getMode(sessionToken: string): Promise<{ mode: Session["mode"] }>;
   setHybridOptIn(sessionToken: string, optIn: boolean): Promise<{ session: Session }>;
@@ -2819,6 +2820,7 @@ function createLocalApiClient(): Readonly<{
       }
       parseLocalDisplayName(profile.displayName);
       parseLocalAge(profile.age);
+      if (profile.ageDeclaration !== true) throw { code: "AGE_GATE_REQUIRED", message: "Confirm that your age is truthful and you are at least 18." };
       const state = readState();
       if (state.userIdByEmail[normalizedEmail]) {
         throw { code: "EMAIL_IN_USE", message: "Email already registered." } as ServiceError;
@@ -2930,10 +2932,11 @@ function createLocalApiClient(): Readonly<{
         session: clone(session)
       };
     },
-    async verifyAge(sessionToken: string, ageYears: number): Promise<{ session: Session }> {
+    async verifyAge(sessionToken: string, ageYears: number, ageDeclaration: boolean): Promise<{ session: Session }> {
       if (!Number.isFinite(ageYears) || ageYears < 18) {
         throw { code: "AGE_REJECTED", message: "You must be at least 18." } as ServiceError;
       }
+      if (ageDeclaration !== true) throw { code: "AGE_GATE_REQUIRED", message: "Confirm that your age is truthful and you are at least 18." };
       const state = readState();
       const session = requireSession(state, sessionToken);
       const nextSession: Session = { ...session, ageVerified: true };
@@ -4162,7 +4165,7 @@ export function apiClient(basePath = "/api"): Readonly<{
   verifyEmail(email: string, code: string): Promise<VerifyEmailOrLoginResponse>;
   resendVerification(email: string): Promise<RegisterResponse>;
   login(email: string, password: string): Promise<VerifyEmailOrLoginResponse>;
-  verifyAge(sessionToken: string, ageYears: number): Promise<{ session: Session }>;
+  verifyAge(sessionToken: string, ageYears: number, ageDeclaration: boolean): Promise<{ session: Session }>;
   getSession(sessionToken: string): Promise<{ session: Session }>;
   getMode(sessionToken: string): Promise<{ mode: Session["mode"] }>;
   setHybridOptIn(sessionToken: string, optIn: boolean): Promise<{ session: Session }>;
@@ -4369,7 +4372,7 @@ export function apiClient(basePath = "/api"): Readonly<{
       const res = await fetch(`${basePath}/auth/register`, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ email, password, phoneE164, promoCode: profile.promoCode, analyticsConsent: profile.analyticsConsent === true, marketingConsent: profile.marketingConsent === true, policyAcceptance: profile.policyAcceptance, displayName: profile.displayName, age: profile.age, stats: profile.stats ?? {} })
+        body: JSON.stringify({ email, password, phoneE164, promoCode: profile.promoCode, analyticsConsent: profile.analyticsConsent === true, marketingConsent: profile.marketingConsent === true, policyAcceptance: profile.policyAcceptance, displayName: profile.displayName, age: profile.age, ageDeclaration: profile.ageDeclaration, stats: profile.stats ?? {} })
       });
       return (await readJsonOrThrow(res)) as RegisterResponse;
     },
@@ -4397,11 +4400,11 @@ export function apiClient(basePath = "/api"): Readonly<{
       });
       return (await readJsonOrThrow(res)) as VerifyEmailOrLoginResponse;
     },
-    async verifyAge(sessionToken: string, ageYears: number): Promise<{ session: Session }> {
+    async verifyAge(sessionToken: string, ageYears: number, ageDeclaration: boolean): Promise<{ session: Session }> {
       const res = await fetch(`${basePath}/auth/verify-age`, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ sessionToken, ageYears })
+        body: JSON.stringify({ sessionToken, ageYears, ageDeclaration })
       });
       return (await readJsonOrThrow(res)) as { session: Session };
     },

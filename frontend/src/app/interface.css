@@ -465,3 +465,10 @@
 .rd-adult-video-grid h2 { font-size: 1.15rem; }
 .rd-adult-library :is(ol, .rd-row) button { margin: .2rem; }
 .rd-adult-editor { margin-top: 1.5rem; }
+
+.rd-profile-like { display: inline-flex; align-items: center; gap: .3rem; }
+.rd-profile-like img { width: 26px; height: 26px; object-fit: contain; }
+@media (max-width: 400px) {
+  .rd-app-toolbar { grid-template-columns: minmax(136px, 1fr) auto minmax(90px, 1fr); }
+  .rd-app-toolbar-side { gap: 2px; }
+}
