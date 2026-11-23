@@ -35,6 +35,10 @@ const server=http.createServer((req,res)=>{
   // No external services are contacted by this test.
   await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
   await page.goto(base);await page.getByRole('heading',{name:'Gay cruising, nightlife & culture'}).waitFor();
+  await page.getByRole('link',{name:'Log in',exact:true}).click();
+  await expectDefaultLogin();
+  await page.goBack();
+  await page.getByRole('heading',{name:'Gay cruising, nightlife & culture'}).waitFor();
   await page.getByRole('link',{name:'Open the app',exact:true}).click();await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
   await expectDefaultLogin();
   const authCard=await page.getByRole('region',{name:'Authentication'}).boundingBox();

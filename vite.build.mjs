@@ -59,14 +59,21 @@ async function main() {
     .replace('name="twitter:title" content="Badehaus X"', `name="twitter:title" content="${homeTitle}"`)
     .replaceAll('content="Explore nearby. Start a conversation. Connect your way."', `content="${homeDescription}"`)
     .replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/, (_, entry) => `<script type="module">
-      const openApp = () => {
-        if (location.hash || new URLSearchParams(location.search).has("st") || matchMedia("(display-mode: standalone)").matches || navigator.standalone === true) {
+      const shouldOpenApp = () => location.hash || new URLSearchParams(location.search).has("st") || matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+      if (shouldOpenApp()) {
+        import(${JSON.stringify(entry)});
+      } else {
+        const openApp = () => {
+          if (!shouldOpenApp()) return;
           window.removeEventListener("hashchange", openApp);
+          // React replaces the public homepage. Restore it when Back returns to its history entry.
+          window.addEventListener("popstate", () => {
+            if (!shouldOpenApp()) location.reload();
+          });
           import(${JSON.stringify(entry)});
-        }
-      };
-      window.addEventListener("hashchange", openApp);
-      openApp();
+        };
+        window.addEventListener("hashchange", openApp);
+      }
     </script>`)
     .replace(/<link rel="modulepreload"[^>]+>/g, "")
     .replace('<div id="root"></div>', () => fs.readFileSync("editorial/public-home.html", "utf8")));
