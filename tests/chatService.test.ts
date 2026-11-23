@@ -870,7 +870,7 @@ describe("Cruise retention after configuration correction", () => {
       ok: true, value: [{ messageId: "existing", expiresAtMs: createdAtMs + 120 * day }]
     });
     now += day;
-    expect(service.listMessages(member, "cruise", "user:b")).toEqual({ ok: true, value: [] });
+    expect(service.listMessages(member, "cruise", "user:b")).toMatchObject({ ok: false, error: { code: "CHAT_EXPIRED" } });
   });
 
   it("Given persisted Cruise messages with an overly long expiry When cleanup runs Then removes messages older than the current retention policy", () => {
