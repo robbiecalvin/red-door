@@ -3527,10 +3527,13 @@ function PublicPostings({
   onOpenThreadRequested?(key: string): void;
 }>): React.ReactElement {
   const [allAds, setAds] = useState<ReadonlyArray<PublicPosting>>([]);
-  const cityId = new URLSearchParams(window.location.search).get("city");
+  const classifiedsQuery = new URLSearchParams(window.location.search);
+  const cityId = classifiedsQuery.get("city");
+  const requestedCategory = classifiedsQuery.get("category");
   const city = googlePlayEdition || screen !== "ads" ? undefined : classifiedCities.find(entry => entry.id === cityId);
-  const [category, setCategory] = useState("");
-  const [adCategory, setAdCategory] = useState<ClassifiedCategory | "">("");
+  const initialCategory = city && isClassifiedCategory(requestedCategory) ? requestedCategory : "";
+  const [category, setCategory] = useState<string>(initialCategory);
+  const [adCategory, setAdCategory] = useState<ClassifiedCategory | "">(initialCategory);
   const [adBody, setAdBody] = useState("");
   const ads = useMemo(() => allAds.filter(posting =>
     posting.cityId === city?.id && (!city || !category || posting.board === category)

@@ -1,3 +1,4 @@
+import { writeClassifiedPages } from "./scripts/build-classifieds.mjs";
 import fs from "node:fs";
 import { availableBackroomArticles, writeBackroomArticles } from "./scripts/build-backroom.mjs";
 import { writePwaBuild } from "./scripts/build-pwa.mjs";
@@ -57,7 +58,7 @@ async function main() {
   const cityLinks = featured => cities.filter(city => city.id !== "vancouver" && Boolean(city.featured) === featured).map(({ id, name, region }) => {
     const art = fs.existsSync(`dist/home/${id}.webp`) ? ` style="--city-art: url('./home/${id}.webp')"` : "";
     const label = featured ? escapeHtml(name) : `${escapeHtml(name)} <small>${escapeHtml(region)}</small>`;
-    return `<li data-city="${escapeHtml(`${id} ${name} ${region}`)}"><a href="./?city=${id}#/ads"${art}>${label}</a></li>`;
+    return `<li data-city="${escapeHtml(`${id} ${name} ${region}`)}"><a href="./classifieds/${id}/"${art}>${label}</a></li>`;
   }).join("\n");
   const publicHome = fs.readFileSync("editorial/public-home.html", "utf8")
     .replace("<!-- CITY_LINKS -->", () => cityLinks(true))
@@ -124,6 +125,7 @@ async function main() {
   fs.writeFileSync("dist/thebackroom/index.html", backroom);
   const publicPages = [
     "gay-cruising",
+    "gay-porn",
     "vancouver",
     "thebackroom/first-gay-bathhouse-visit",
     "thebackroom/meet-gay-men-vancouver",
@@ -133,7 +135,8 @@ async function main() {
     fs.writeFileSync(`dist/${slug}/index.html`,
       fs.readFileSync(`editorial/${slug}.html`, "utf8").replaceAll("https://badehausx.com/", normalizedUrl));
   }
-  writeBackroomArticles(backroomArticles, normalizedUrl);
+  const classifiedsPaths = writeClassifiedPages(cities, normalizedUrl, escapeHtml);
+  writeBackroomArticles(backroomArticles, normalizedUrl, classifiedsPaths);
   writePwaBuild();
   if(!publicBase.hostname.endsWith("github.io"))fs.writeFileSync("dist/CNAME",publicBase.hostname+"\n");
 }
