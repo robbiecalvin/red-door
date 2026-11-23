@@ -53,6 +53,12 @@ it("limits profile favorites to three catalog videos and restricts catalog editi
       expect(response.status).toBe(200);
       videos.push((await response.json()).video);
     }
+    expect((await request("/adult-library/previews", "guest")).status).toBe(403);
+    const previewResponse = await request("/adult-library/previews");
+    expect(previewResponse.headers.get("cache-control")).toBe("private, no-store");
+    const previews: AdultVideo[] = (await previewResponse.json()).videos;
+    expect(new Set(previews.map(video => video.id)).size).toBe(3);
+    expect(previews.every(video => videos.some(entry => entry.id === video.id))).toBe(true);
     const ids = videos.map(video => video.id);
     for (const invalid of [ids, [ids[0], ids[0]], ["unknown"]]) {
       expect((await request("/adult-library/favorites", "member", "PUT", { ids: invalid })).status).toBe(400);

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { isAdultVideoCategory, type AdultVideo, type AdultVideoFavorite } from "../../../shared/adultLibrary";
 import type { CommunityRepository } from "../repositories/communityRepository";
@@ -51,6 +51,15 @@ export function installAdultLibraryRoutes(app: Express, deps: {
     const videos = await deps.repository.readSetting<AdultVideo[]>(libraryKey) ?? [];
     const favorites = (actor.user.plusData?.adultVideoFavorites ?? []).filter(id => videos.some(video => video.id === id));
     return res.json({ videos, favorites });
+  }));
+
+  app.get("/adult-library/previews", route(async (req, res) => {
+    if (!deps.member(req, res)) return;
+    const videos = await deps.repository.readSetting<AdultVideo[]>(libraryKey) ?? [];
+    if (videos.length <= 3) return res.json({ videos });
+    const day = new Date().toISOString().slice(0, 10);
+    const offset = createHash("sha256").update(day).digest().readUInt32BE() % videos.length;
+    return res.json({ videos: Array.from({ length: 3 }, (_, index) => videos[(offset + index) % videos.length]) });
   }));
 
   app.put("/adult-library/favorites", route(async (req, res) => {

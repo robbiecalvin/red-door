@@ -1,4 +1,5 @@
-import { AdultLibrary, AdultProfileFavorites } from "./AdultLibrary";
+import classifiedExamples from "../../../shared/classifiedExamples.json";
+import { AdultClassifiedPreviews, AdultLibrary, AdultProfileFavorites } from "./AdultLibrary";
 import { adLifetimeMs, CLASSIFIED_CATEGORIES, isClassifiedCategory, type ClassifiedCategory } from "../../../shared/postingBoard";
 import classifiedCities from "../../../shared/classifiedCities.json";
 import { deletionPage } from "./AccountDeletion";
@@ -3534,12 +3535,19 @@ function PublicPostings({
   const initialCategory = city && isClassifiedCategory(requestedCategory) ? requestedCategory : "";
   const [category, setCategory] = useState<string>(initialCategory);
   const [adCategory, setAdCategory] = useState<ClassifiedCategory | "">(initialCategory);
-  const [adBody, setAdBody] = useState("");
+  const exampleMode = classifiedsQuery.get("example");
+  const example = initialCategory && (exampleMode === "category" || (exampleMode === "overview" && initialCategory === "community"))
+    ? classifiedExamples[exampleMode === "overview" ? "overview" : initialCategory] : undefined;
+  const [adBody, setAdBody] = useState(() => example?.[2] ?? "");
   const ads = useMemo(() => allAds.filter(posting =>
     posting.cityId === city?.id && (!city || !category || posting.board === category)
   ), [allAds, city, category]);
   const [events, setEvents] = useState<ReadonlyArray<PublicPosting>>([]);
-  const [adTitle, setAdTitle] = useState<string>("");
+  const exampleLocation = city && classifiedCities.some(entry => entry.id !== city.id && entry.name === city.name)
+    ? `${city.name}, ${city.region}` : city?.name;
+  const exampleTitle = exampleLocation && example ? example[1].replace("{city}", exampleLocation) : "";
+  const [adTitle, setAdTitle] = useState(() => exampleTitle);
+  const needsExampleEdits = Boolean(example && (adTitle.trim() === exampleTitle || adBody.trim() === example[2]));
   const [eventTitle, setEventTitle] = useState<string>("");
   const [eventBody, setEventBody] = useState<string>("");
   const [eventGroupFormat, setEventGroupFormat] = useState<GroupFormat>("scheduled");
@@ -4103,7 +4111,7 @@ function PublicPostings({
   }, [ads]);
 
   async function submitBoardAd(): Promise<void> {
-    if (!canPostAds || (city && !adCategory)) return;
+    if (!canPostAds || needsExampleEdits || (city && !adCategory)) return;
     const title = adTitle.trim();
     if (!title) { setLastError("Enter a posting headline."); return; }
     setLastError(null);
@@ -4237,6 +4245,9 @@ function PublicPostings({
   }, [screen, selectedSpotId]);
 
   const cityCategories = Object.entries(CLASSIFIED_CATEGORIES).map(([id, name]) => <option key={id} value={id}>{name}</option>);
+  const adultPreviews = city && session.userType !== "guest" && session.ageVerified && classifiedsQuery.get("videos") === "1"
+    ? <AdultClassifiedPreviews api={api} token={session.sessionToken} /> : null;
+
   const classifiedsHeading = (
     <div className="rd-classifieds-heading">
       {city && <h1>{city.name} classifieds</h1>}
@@ -4254,6 +4265,7 @@ function PublicPostings({
   const postingToolbar = (
     <form className={`rd-posting-toolbar${city ? " rd-city-posting-form" : ""}`} onSubmit={event => { event.preventDefault(); void submitBoardAd(); }}>
       {canPostAds ? <>
+        {needsExampleEdits && <p className="rd-caption">Replace the fictional headline and details with your own before posting.</p>}
         <input className="rd-input" aria-label="Posting headline" placeholder="Headline" value={adTitle}
           required maxLength={120} disabled={boardPosting} onChange={event => setAdTitle(event.target.value)} />
         {city && <>
@@ -4265,7 +4277,7 @@ function PublicPostings({
           <textarea className="rd-input" aria-label="Posting details" placeholder="Details (optional)" maxLength={4000}
             value={adBody} disabled={boardPosting} onChange={event => setAdBody(event.target.value)} />
         </>}
-        <button type="submit" className="rd-btn primary" disabled={boardPosting || !adTitle.trim() || Boolean(city && !adCategory)}>
+        <button type="submit" className="rd-btn primary" disabled={boardPosting || needsExampleEdits || !adTitle.trim() || Boolean(city && !adCategory)}>
           {boardPosting ? "Posting…" : "Post"}
         </button>
       </> : !city && session.freePlus === false ? <button type="button" className="rd-btn" onClick={() => openPlus()}>Get Plus to post</button> : <p className="rd-caption">Sign in with a Badehaus X account to post.</p>}
@@ -4751,6 +4763,7 @@ function PublicPostings({
             )}
           </div>
         </div>
+        {adultPreviews}
         {boardProfileUserId ? (
           <div
             role="dialog"
@@ -4871,6 +4884,7 @@ function PublicPostings({
                 <div style={{ color: "#b9bec9", fontSize: 14 }}>Select an ad to view details and chat with the publisher.</div>
               </div>
             )}
+            {adultPreviews}
           </div>
         </div>
       );
