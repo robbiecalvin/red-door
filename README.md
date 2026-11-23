@@ -22,7 +22,7 @@ See [installation, privacy and testing details](docs/pwa.md). Actual iPhone/Andr
 ## UI refresh
 
 - Atmospheric red-door login artwork and a mobile-first black and red layout.
-- Map/People switch with shared filters, filter counts, readable profile cards, and approximate distance bands. The map defaults to a dark vector style, with bounded recovery and a People fallback.
+- Map/People switch with shared filters, filter counts, readable profile cards, and approximate numeric distances. The map defaults to a dark vector style, with bounded recovery and a People fallback.
 - Shared bottom sheets for profiles, filters, and conversation actions; desktop navigation and split discovery/conversation layouts.
 - Profile, Privacy, Notifications, Membership, and Account settings sections. Browser notifications are optional and work while the app is open in the background.
 - Guest screen names always show **Anon**, including legacy guest profiles. Guest sessions still keep separate identities and conversations.

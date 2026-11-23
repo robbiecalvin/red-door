@@ -2299,12 +2299,26 @@ async function main(): Promise<void> {
     return res.status(200).json({ presence: result.value });
   });
 
+  const activeGuests = new Map<string, number>();
+  const guestActivityMs = 45_000;
+
   app.get("/presence/active", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const banned = bannedUserIds();
     const viewerKey=sessionKeyFromSession(domainSession(sessionResult.value));
+    const now = Date.now();
+    // The authenticated presence poll also signals guest activity without GPS.
+    if (sessionResult.value.userType === "guest" && sessionResult.value.ageVerified) {
+      activeGuests.set(viewerKey, Math.min(now + guestActivityMs, sessionResult.value.expiresAtMs));
+    }
+    const guestKeys: string[] = [];
+    for (const [key, expiresAt] of activeGuests) {
+      if (expiresAt <= now) activeGuests.delete(key);
+      else if (key !== viewerKey && !blockService.isBlocked(viewerKey, key)) guestKeys.push(key);
+    }
+
     
     // Get active presence
     const activePresence = presenceService.listActivePresence().filter((row) => {
@@ -2360,7 +2374,7 @@ async function main(): Promise<void> {
       priority[key] = online ? 2 : 1;
     }
     res.set("Cache-Control", "private, no-store");
-    return res.status(200).json({ presence: Array.from(presenceMap.values()), priority });
+    return res.status(200).json({ presence: Array.from(presenceMap.values()), guestKeys, priority });
   });
 
   // Matching
