@@ -1,3 +1,5 @@
+import inboxToolbar from "../assets/interface/toolbar-inbox.webp";
+import inboxToolbarSelected from "../assets/interface/toolbar-inboxselected.webp";
 import videoPlay from "../assets/interface/play.webp";
 import videoPlaySelected from "../assets/interface/playselected.webp";
 import { createPortal } from "react-dom";
@@ -1313,7 +1315,7 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
             {session?.ageVerified === true ? (
-              <div className="rd-app-toolbar">
+              <div className={`rd-app-toolbar${!googlePlayEdition && session.userId ? " rd-app-toolbar-with-inbox" : ""}`}>
                 <div className="rd-app-toolbar-side">
                   <button type="button" className="rd-btn rd-app-tool" aria-label="Badehaus X Explore" title="Explore"
                     onClick={() => setTabAndRoute("discover", discoverScreen)}>
@@ -1332,6 +1334,10 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
                   <span className="rd-mobile-avatar-dot" />
                 </button>
                 <div className="rd-app-toolbar-side rd-app-toolbar-end">
+                  {!googlePlayEdition && session.userId && <button type="button" className="rd-btn rd-app-tool" aria-label="Open inbox" title="Inbox"
+                    aria-current={activeTab === "threads" ? "page" : undefined} onClick={() => setTabAndRoute("threads")}>
+                    <img src={activeTab === "threads" ? inboxToolbarSelected : inboxToolbar} alt="" className="rd-app-brand-mark" />
+                  </button>}
                   {!googlePlayEdition && session.userId && <button type="button" className="rd-btn rd-app-tool" aria-label="Live" title="Live"
                     aria-current={activeTab === "live" ? "page" : undefined} onClick={() => setTabAndRoute("live")}>
                     <Icon name="live" active={activeTab === "live" || liveState.broadcasts.some(room => room.live)} />

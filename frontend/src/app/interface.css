@@ -472,3 +472,19 @@
   .rd-app-toolbar { grid-template-columns: minmax(136px, 1fr) auto minmax(90px, 1fr); }
   .rd-app-toolbar-side { gap: 2px; }
 }
+
+.rd-adult-links, .rd-adult-video-actions { display: flex; gap: .5rem; align-items: stretch; }
+.rd-adult-links { flex-wrap: wrap; }
+.rd-adult-video-grid .rd-adult-video-actions { margin-top: .5rem; }
+.rd-adult-video-grid .rd-adult-video-actions .rd-btn { flex: 1 1 0; min-width: 0; }
+.rd-adult-links .rd-btn, .rd-adult-video-grid .rd-adult-video-actions .rd-btn {
+  display: inline-flex; align-items: center; justify-content: center; text-align: center; text-decoration: none;
+}
+@media (max-width: 400px) {
+  .rd-app-toolbar-with-inbox { grid-template-columns: minmax(136px, 1fr) auto minmax(136px, 1fr); }
+  .rd-app-bars .rd-app-toolbar-with-inbox .rd-app-avatar { width: 48px; height: 48px; margin-bottom: -12px; }
+}
+@media (max-width: 340px) {
+  .rd-app-bars .rd-topbar-inner:has(.rd-app-toolbar-with-inbox) { padding-inline: 3px; }
+  .rd-app-bars .rd-app-toolbar-with-inbox .rd-app-avatar { width: 42px; height: 42px; margin-bottom: -8px; }
+}
