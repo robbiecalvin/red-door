@@ -1,14 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export function writeAdultCatalogPages(directory, baseUrl, escapeHtml) {
+export function writeAdultCatalogPages(directory, baseUrl, escapeHtml, apiBasePath) {
   const manifestPath = directory ? path.join(directory, "manifest.json") : "shared/adult-catalog-manifest.json";
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  fs.copyFileSync("editorial/catalog-gallery.js", "dist/catalog-gallery.js");
   const landingPath = "dist/gay-porn/index.html";
   const list = manifest.map(({ name, slug, count }) =>
     `<li><a href="./cat/${slug}/">${escapeHtml(name)}</a> (${count})</li>`).join("");
   const landing = fs.readFileSync(landingPath, "utf8");
-  fs.writeFileSync(landingPath, landing.replace("</article>", () => `<h2>Video categories</h2><ul>${list}</ul></article>`));
+  fs.writeFileSync(landingPath, landing.replace("</article>", () => `<h2 id="video-categories">Video categories</h2><ul>${list}</ul></article>`));
 
   const catalogPaths = [];
   for (const { name, slug, count, pages } of manifest) {
@@ -30,10 +31,16 @@ export function writeAdultCatalogPages(directory, baseUrl, escapeHtml) {
 <meta name="description" content="${escapeHtml(description)}">
 <link rel="canonical" href="${escapeHtml(baseUrl + route)}">
 <link rel="stylesheet" href="${root}site-theme.css">
+<script type="module" src="${root}catalog-gallery.js"></script>
 </head><body class="site-page site-article">
 <main><article><p><a href="${root}gay-porn/">Adult video categories</a></p>
 <h1>${escapeHtml(title)}</h1>
 <p>Entries ${(number - 1) * 20 + 1}–${Math.min(number * 20, count)} of ${count}. For adults 18 and over.</p>
+<section data-catalog-gallery data-api="${escapeHtml(apiBasePath)}" data-category="${slug}" data-page="${number}" aria-label="Video gallery">
+<p><button type="button" class="site-action" hidden>Show 18+ previews</button></p>
+<p role="status"></p>
+<ul class="site-catalog-grid"></ul>
+</section>
 <p><a class="site-action" href="${root}?videoCategory=${slug}&amp;videoPage=${number}#/adult-library">Open this page in the directory</a></p>
 <nav aria-label="Video results pages">${previous} <span>Page ${number} of ${pages}</span> ${next}</nav>
 </article></main></body></html>`);

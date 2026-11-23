@@ -110,6 +110,7 @@ function CuratedAdultLibrary({ api, session, onRegister }: { api: Api; session: 
   return <section className="rd-card rd-adult-library" aria-labelledby="adult-library-title">
     <div className="rd-card-body">
       <h1 id="adult-library-title">Adult video directory · 18+</h1>
+      <p><a href="./gay-porn/#video-categories">Browse all video categories on the website</a></p>
       {session.userType === "guest" ? <>
         <p>Sign in with a Badehaus X account to browse adult videos and choose profile favorites.</p>
         <button type="button" className="rd-btn primary" onClick={onRegister}>Create an account</button>
@@ -223,10 +224,12 @@ function BulkAdultPage({ api, session, category, page }: { api: Api; session: Se
     return () => { active = false; };
   }, [api, category, page, session.ageVerified, session.sessionToken, session.userType]);
 
+  const appPage = (number: number) => `./?videoCategory=${encodeURIComponent(category)}&videoPage=${number}#/adult-library`;
   const publicPage = (number: number) => `./gay-porn/cat/${encodeURIComponent(category)}/${number === 1 ? "" : `page/${number}/`}`;
   return <section className="rd-card rd-adult-library">
     <div className="rd-card-body">
       <p><a href="./gay-porn/">Adult video categories</a></p>
+      <p><a href={publicPage(Number(page))}>View this page on the website</a></p>
       <h1>{result?.name ?? "Adult video directory"} · 18+</h1>
       {session.userType === "guest" ? <p>Sign in with an age-verified Badehaus X account to see video previews.</p>
         : error ? <p role="alert">{error}</p> : !result ? <p role="status">Loading previews…</p> : <>
@@ -239,9 +242,9 @@ function BulkAdultPage({ api, session, category, page }: { api: Api; session: Se
             </article>)}
           </div>
           <nav aria-label="Video results pages">
-            {result.page > 1 && <a href={publicPage(result.page - 1)}>Previous page</a>}
+            {result.page > 1 && <a href={appPage(result.page - 1)}>Previous page</a>}
             {" · "}Page {result.page} of {result.pages}{" · "}
-            {result.page < result.pages && <a href={publicPage(result.page + 1)}>Next page</a>}
+            {result.page < result.pages && <a href={appPage(result.page + 1)}>Next page</a>}
           </nav>
         </>}
     </div>
