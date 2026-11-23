@@ -2596,7 +2596,7 @@ function createLocalApiClient(): Readonly<{
   setHybridOptIn(sessionToken: string, optIn: boolean): Promise<{ session: Session }>;
   setMode(sessionToken: string, mode: Session["mode"]): Promise<{ session: Session }>;
   updatePresence(sessionToken: string, lat: number, lng: number, status?: string): Promise<any>;
-  listActivePresence(sessionToken: string): Promise<{ priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }>;
+  listActivePresence(sessionToken: string): Promise<{ guestKeys?: string[]; priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }>;
   getDatingFeed(sessionToken: string): Promise<FeedResponse>;
   swipe(sessionToken: string, toUserId: string, direction: "like" | "pass"): Promise<SwipeResponse>;
   sendChat(
@@ -2985,7 +2985,7 @@ function createLocalApiClient(): Readonly<{
       );
       return { ok: true, presence: clone(nextPresence) };
     },
-    async listActivePresence(): Promise<{ priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
+    async listActivePresence(): Promise<{ guestKeys?: string[]; priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
       const state = readState();
       const bannedUserIds = new Set(
         Object.values(state.usersById)
@@ -4152,7 +4152,7 @@ export function apiClient(basePath = "/api"): Readonly<{
   setHybridOptIn(sessionToken: string, optIn: boolean): Promise<{ session: Session }>;
   setMode(sessionToken: string, mode: Session["mode"]): Promise<{ session: Session }>;
   updatePresence(sessionToken: string, lat: number, lng: number, status?: string): Promise<any>;
-  listActivePresence(sessionToken: string): Promise<{ priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }>;
+  listActivePresence(sessionToken: string): Promise<{ guestKeys?: string[]; priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }>;
   getDatingFeed(sessionToken: string): Promise<FeedResponse>;
   swipe(sessionToken: string, toUserId: string, direction: "like" | "pass"): Promise<SwipeResponse>;
   sendChat(
@@ -4422,9 +4422,10 @@ export function apiClient(basePath = "/api"): Readonly<{
     },
     async listActivePresence(
       sessionToken: string
-    ): Promise<{ priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
+    ): Promise<{ guestKeys?: string[]; priority?: Record<string, number>; presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }> }> {
       const res = await fetch(`${basePath}/presence/active`, { method: "GET", headers: headers(sessionToken) });
       return (await readJsonOrThrow(res)) as {
+        guestKeys?: string[];
         priority?: Record<string, number>;
         presence: ReadonlyArray<{ key: string; userType: "guest" | "registered" | "subscriber"; lat: number; lng: number; status?: string; updatedAtMs: number }>;
       };

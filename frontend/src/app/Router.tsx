@@ -307,10 +307,8 @@ function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: 
 
 function formatDistanceLabel(distanceInMeters: number): string {
   if (!Number.isFinite(distanceInMeters) || distanceInMeters < 0) return "-";
-  if (distanceInMeters < 500) return "Within 500 m";
-  if (distanceInMeters < 1_000) return "Within 1 km";
-  if (distanceInMeters < 5_000) return "Within 5 km";
-  return "5+ km away";
+  const meters = Math.max(50, Math.round(distanceInMeters / 50) * 50);
+  return meters < 1_000 ? `≈${meters} m` : `≈${(meters / 1_000).toFixed(1)} km`;
 }
 
 function chatMessagesEqual(a: ReadonlyArray<ChatMessage>, b: ReadonlyArray<ChatMessage>): boolean {
@@ -471,6 +469,7 @@ function CruiseSurface({
   const [threadProfileRequest, setThreadProfileRequest] = useState<ThreadProfileRequest | null>(null);
   const [selfCoords, setSelfCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [priorityPlacement, setPriorityPlacement] = useState<Record<string, number>>({});
+  const [activeGuestKeys, setActiveGuestKeys] = useState<ReadonlyArray<string>>([]);
   const [snapshotPresence, setSnapshotPresence] = useState<ReadonlyArray<CruisePresenceUpdate>>([]);
   useEffect(()=>{const remove=(event:Event)=>{const detail=(event as CustomEvent<{key:string;hideProfile?:boolean}>).detail,key=detail?.key;setSnapshotPresence(prev=>prev.filter(p=>p.key!==key));if(detail?.hideProfile)setPublicProfiles(prev=>prev.filter(p=>`user:${p.userId}`!==key));};window.addEventListener("rd:presence-removed",remove);return()=>window.removeEventListener("rd:presence-removed",remove);},[]);
   const [peerProfileByKey, setPeerProfileByKey] = useState<Record<string, { displayName?: string; age?: number }>>({});
@@ -612,6 +611,10 @@ function CruiseSurface({
   }, []);
 
   const meKey = actorKey(session);
+  const visibleGuestKeys = useMemo(
+    () => activeGuestKeys.filter(key => key !== meKey && !blockedKeys.has(key)),
+    [activeGuestKeys, blockedKeys, meKey]
+  );
   const visiblePublicProfiles = useMemo(
     () => publicProfiles.filter((profile) => !blockedKeys.has(chatKeyFromProfileUserId(profile.userId))),
     [blockedKeys, publicProfiles]
@@ -684,8 +687,9 @@ function CruiseSurface({
         const rows = Array.isArray(res.presence) ? res.presence : [];
         setSnapshotPresence(rows as ReadonlyArray<CruisePresenceUpdate>);
         setPriorityPlacement(res.priority ?? {});
+        setActiveGuestKeys(res.guestKeys ?? []);
       } catch {
-        if (!cancelled) { setSnapshotPresence([]); setPriorityPlacement({}); }
+        if (!cancelled) { setSnapshotPresence([]); setPriorityPlacement({}); setActiveGuestKeys([]); }
       }
     }
     void refreshPresenceSnapshot();
@@ -935,6 +939,7 @@ function CruiseSurface({
       setSelectedPublicProfile(null);
       return;
     }
+    if (key !== meKey && isAnonymousIdentity(key)) return;
     try {
       if (key === meKey) {
         const meProfile = await api.getMyProfile(session.sessionToken);
@@ -1244,6 +1249,7 @@ function CruiseSurface({
       discoverFilter={discoverFilter}
       loading={profilesLoading}
       publicProfiles={visiblePublicProfiles}
+      guestKeys={visibleGuestKeys}
       favorites={favorites}
       mediaUrlById={mediaUrlById}
       onAvatarLoadError={invalidateMediaUrl}
@@ -1271,7 +1277,7 @@ function CruiseSurface({
         const isSelf = selectedProfileKey === meKey;
         const unreadCount = unreadByProfileKey[selectedProfileKey] ?? 0;
         const scheduled = visiblePublicProfiles.find(profile => chatKeyFromProfileUserId(profile.userId) === selectedProfileKey);
-        const isOnline = isSelf || (scheduled?.scheduledOnline ?? onlinePeers.some(peer => peer.key === selectedProfileKey));
+        const isOnline = isSelf || (scheduled?.scheduledOnline ?? (activeGuestKeys.includes(selectedProfileKey) || onlinePeers.some(peer => peer.key === selectedProfileKey)));
         const displayName = displayNameForIdentity(selectedProfileKey, profile?.displayName ?? threadProfileRequest?.displayName ?? peerProfileByKey[selectedProfileKey]?.displayName);
         const mediaIds = Array.from(new Set([
           profile?.mainPhotoMediaId, ...(profile?.galleryMediaIds ?? []), profile?.videoMediaId
@@ -1480,6 +1486,7 @@ function CruiseChat({
   peerProfileByKey,
   discoverFilter,
   publicProfiles,
+  guestKeys,
   favorites,
   mediaUrlById,
   onAvatarLoadError,
@@ -1504,6 +1511,7 @@ function CruiseChat({
   selfCoords: { lat: number; lng: number } | null;
   peerProfileByKey: Record<string, { displayName?: string; age?: number }>;
   discoverFilter: DiscoverFilter;
+  guestKeys: ReadonlyArray<string>;
   publicProfiles: ReadonlyArray<{
     userId: string;
     scheduledOnline?: boolean;
@@ -1511,7 +1519,7 @@ function CruiseChat({
     displayName: string;
     member?: PublicMember;
     foundingMember?: boolean;
-    age: number;
+    age?: number;
     bio: string;
     stats?: ProfileDetails & {
       race?: string;
@@ -1618,7 +1626,12 @@ function CruiseChat({
 
   const baseCards = useMemo(
     () =>
-      publicProfiles
+      publicProfiles.concat(guestKeys.map(key => ({
+        userId: `guest:${key.slice("session:".length)}`,
+        displayName: "Anon",
+        bio: "",
+        scheduledOnline: true
+      })))
         .filter((p) => p.userId !== (session.userId ?? ""))
         .map((p) => {
           const key = chatKeyFromProfileUserId(p.userId);
@@ -1639,7 +1652,7 @@ function CruiseChat({
             avatarUrl: p.mainPhotoMediaId ? mediaUrlById[p.mainPhotoMediaId] : undefined
           };
         }),
-    [mediaUrlById, onlinePeerByKey, publicProfiles, selfCoords, session.userId]
+    [guestKeys, mediaUrlById, onlinePeerByKey, publicProfiles, selfCoords, session.userId]
   );
 
   const gridCards = useMemo(() => {
@@ -2528,7 +2541,7 @@ function CruiseChat({
                         }} />
                     </div>
                     {p.isOnline && <span className="rd-person-online-dot" aria-hidden="true" />}
-                    {distance && <span className="rd-person-distance" title={distance}>{distance.replace(/^Within | away$/g, "")}</span>}
+                    {distance && <span className="rd-person-distance" title={distance}>{distance}</span>}
                     <div className="rd-person-info">
                       <strong>{name}{p.age ? `, ${p.age}` : ""}</strong>
                       <span className="rd-person-indicators">

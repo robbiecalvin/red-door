@@ -424,13 +424,22 @@ describe("Core API and payment lifecycle smoke checks", () => {
   it("Given a guest When appearing in presence, messages, or attachment paths Then never publishes the login credential",async()=>{
     const created=await request("/auth/guest",{}),token=created.session.sessionToken,publicKey=created.session.publicKey;
     expect(publicKey).toMatch(/^session:[a-f0-9]{64}$/);expect(publicKey).not.toContain(token);
+    await request("/presence/active", undefined, token);
+    expect((await request("/presence/active", undefined, bob.token)).guestKeys).not.toContain(publicKey);
     expect((await request("/auth/verify-age",{sessionToken:token,ageYears:25})).session.publicKey).toBe(publicKey);
+    const ownSnapshot = await request("/presence/active", undefined, token);
+    expect(ownSnapshot.guestKeys).not.toContain(publicKey);
+    const viewerSnapshot = await request("/presence/active", undefined, bob.token);
+    expect(viewerSnapshot.guestKeys).toContain(publicKey);
+    expect(viewerSnapshot.presence.some((row: { key: string }) => row.key === publicKey)).toBe(false);
+    expect(JSON.stringify(viewerSnapshot)).not.toContain(token);
     const presence=await request("/presence",{lat:49.28,lng:-123.12},token);expect(presence.presence.key).toBe(publicKey);expect(JSON.stringify(presence)).not.toContain(token);
     await request("/session",undefined,publicKey.slice(8),undefined,401);
     const sent=await request("/chat/send",{chatKind:"cruise",toKey:`user:${bob.id}`,text:"Guest hello"},token);expect(sent.message.fromKey).toBe(publicKey);expect(JSON.stringify(sent)).not.toContain(token);
     await request("/chat/send",{chatKind:"cruise",toKey:publicKey,text:"Reply to Anon"},bob.token);expect((await request(`/chat/messages?chatKind=cruise&otherKey=user:${bob.id}`,undefined,token)).messages).toHaveLength(2);
     const upload=await request("/chat/media/initiate",{mimeType:"image/png",sizeBytes:1},token);expect(upload.objectKey).not.toContain(token);
     await request("/block",{targetKey:`user:${bob.id}`},token);await request("/chat/send",{chatKind:"cruise",toKey:publicKey,text:"Blocked reply"},bob.token,undefined,403);
+    expect((await request("/presence/active", undefined, bob.token)).guestKeys).not.toContain(publicKey);
   });
 
   it("Given gift codes When redeemed during or after registration Then records one use per account without provider tutorials",async()=>{
