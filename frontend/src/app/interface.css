@@ -496,3 +496,6 @@
 .rd-private-inbox-messages li { padding: .8rem; border: 1px solid var(--line); border-radius: 8px; }
 .rd-private-inbox-messages small { margin-inline-start: .65rem; }
 .rd-private-inbox-messages p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.rd-adult-saved-slots { display: grid; gap: .5rem; padding-inline-start: 1.5rem; }
+.rd-adult-saved-slots .rd-btn { margin-inline-start: .5rem; }
