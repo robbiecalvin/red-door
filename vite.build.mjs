@@ -1,3 +1,4 @@
+import { writeAdultCatalogPages } from "./scripts/build-adult-catalog.mjs";
 import { writeClassifiedPages } from "./scripts/build-classifieds.mjs";
 import fs from "node:fs";
 import { availableBackroomArticles, writeBackroomArticles } from "./scripts/build-backroom.mjs";
@@ -135,6 +136,7 @@ async function main() {
     fs.writeFileSync(`dist/${slug}/index.html`,
       fs.readFileSync(`editorial/${slug}.html`, "utf8").replaceAll("https://badehausx.com/", normalizedUrl));
   }
+  writeAdultCatalogPages(process.env.ADULT_CATALOG_DIR, normalizedUrl, escapeHtml);
   const classifiedsPaths = writeClassifiedPages(cities, normalizedUrl, escapeHtml);
   writeBackroomArticles(backroomArticles, normalizedUrl, classifiedsPaths);
   writePwaBuild();
