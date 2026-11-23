@@ -861,4 +861,36 @@ describe("Cruise retention after configuration correction", () => {
     svc.purgeExpired();
     expect(svc.snapshotState().threads).toHaveLength(0);
   });
+  it.each(["file", "callback"])("erases a member's conversations and read cursors with %s persistence", (persistence) => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "reddoor-chat-erasure-"));
+    const file = path.join(temp, "chat.json");
+    try {
+      const onStateChanged = jest.fn();
+      const service = createChatService({
+        nowMs: () => 1_700_000_000_000,
+        persistenceFilePath: persistence === "file" ? file : undefined,
+        onStateChanged
+      });
+      const session = (id: string) => ({
+        sessionToken: `session-${id}`, userId: id, userType: "registered" as const,
+        mode: "cruise" as const, ageVerified: true
+      });
+      for (const [from, to] of [["deleted", "peer"], ["peer", "deleted"], ["peer", "other"]]) {
+        expect(service.sendMessage(session(from), { chatKind: "cruise", toKey: `user:${to}`, text: "Fixture" }).ok).toBe(true);
+        expect(service.markRead(session(to), "cruise", `user:${from}`).ok).toBe(true);
+      }
+      service.eraseActor("user:deleted");
+      const snapshot = service.snapshotState();
+      expect(snapshot.threads).toHaveLength(1);
+      expect(snapshot.threads[0].messages[0]).toMatchObject({ fromKey: "user:peer", toKey: "user:other" });
+      expect(snapshot.readCursors).toHaveLength(1);
+      expect(snapshot.readCursors[0].threadUserKey).toContain("user:other");
+      expect(JSON.stringify(snapshot)).not.toContain("user:deleted");
+      expect(onStateChanged).toHaveBeenLastCalledWith(snapshot);
+      if (persistence === "file") expect(createChatService({ persistenceFilePath: file, nowMs: () => 1_700_000_000_000 }).snapshotState()).toEqual(snapshot);
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
 });

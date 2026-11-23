@@ -114,10 +114,11 @@ export function createMatchingService(deps: MatchingServiceDeps = {}): MatchingS
         swipeByPair.delete(key);
         likeByPair.delete(key);
       }
-      for (const key of matchesByUser.get(userId) ?? []) {
-        const match = matchByPair.get(key);
-        if (match) matchesByUser.get(match.userA === userId ? match.userB : match.userA)?.delete(key);
-        matchByPair.delete(key);
+      const removedPairs = matchesByUser.get(userId) ?? new Set<string>();
+      for (const key of removedPairs) matchByPair.delete(key);
+      for (const pairs of matchesByUser.values()) {
+        if (pairs === removedPairs) continue;
+        for (const key of removedPairs) pairs.delete(key);
       }
       matchesByUser.delete(userId);
     },

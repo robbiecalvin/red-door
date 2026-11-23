@@ -412,4 +412,24 @@ describe("matchingService", () => {
     expect(svc.isMatched("u_a", "u_c")).toBe(false);
     expect(svc.isMatched("", "u_b")).toBe(false);
   });
+  it("erases both directions of a deleted member's swipes and matches while preserving other matches", () => {
+    const service = createMatchingService({ nowMs: () => 1 });
+    const like = (from: string, to: string) => service.recordSwipe({
+      sessionToken: `session-${from}`, userId: from, userType: "registered", mode: "date", ageVerified: true
+    }, to, "like");
+    for (const [from, to] of [["a", "b"], ["b", "a"], ["b", "c"], ["c", "b"]]) {
+      expect(like(from, to).ok).toBe(true);
+    }
+    expect(service.isMatched("a", "b")).toBe(true);
+
+    service.eraseUser("a");
+    service.eraseUser("a");
+
+    expect(service.getSwipe("a", "b")).toBeNull();
+    expect(service.getSwipe("b", "a")).toBeNull();
+    expect(service.isMatched("a", "b")).toBe(false);
+    expect(service.listMatches("b")).toMatchObject({ ok: true, value: [{ userA: "b", userB: "c" }] });
+    expect(service.isMatched("b", "c")).toBe(true);
+  });
+
 });
