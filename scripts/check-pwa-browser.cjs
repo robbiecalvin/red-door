@@ -34,7 +34,8 @@ const server=http.createServer((req,res)=>{
   };
   // No external services are contacted by this test.
   await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
-  await page.goto(base);await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
+  await page.goto(base);await page.getByRole('heading',{name:'Gay cruising, nightlife & culture'}).waitFor();
+  await page.getByRole('link',{name:'Open the app',exact:true}).click();await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
   await expectDefaultLogin();
   const authCard=await page.getByRole('region',{name:'Authentication'}).boundingBox();
   const welcomeCard=await page.getByRole('region',{name:'Welcome to Badehaus X'}).boundingBox();
@@ -57,7 +58,7 @@ const server=http.createServer((req,res)=>{
   await page.getByRole('button',{name:'Install Badehaus X',exact:true}).click();await page.getByRole('button',{name:'Install app',exact:true}).click();assert.equal(await page.evaluate(()=>window.fixturePromptCalled),true);await page.getByRole('button',{name:'Close Install Badehaus X'}).click();
   await context.setOffline(true);await page.getByText('You’re offline.',{exact:false}).waitFor();
   assert.equal(await page.evaluate(async()=>{try{await fetch('./api/private');return false;}catch{return true;}}),true,'private API cannot be served from cache offline');
-  await page.goto(base);await page.getByRole('heading',{name:'Let’s reconnect.'}).waitFor();assert.equal(await page.getByRole('button',{name:'Try again'}).count(),1);
+  await page.reload();await page.getByRole('heading',{name:'Let’s reconnect.'}).waitFor();assert.equal(await page.getByRole('button',{name:'Try again'}).count(),1);
   await context.setOffline(false);await page.getByRole('button',{name:'Try again'}).click();await expectDefaultLogin();
   // A waiting update must preserve an in-progress form until explicitly accepted.
   await page.getByRole('tab',{name:'Login',exact:true}).click();await page.getByLabel('Email',{exact:true}).fill('controlled-draft@example.com');
@@ -81,7 +82,7 @@ const server=http.createServer((req,res)=>{
 
   // iPhone install guidance is tested in Chromium with a simulated user agent, not an actual phone.
   const apple=await browser.newContext({userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',viewport:{width:390,height:844},isMobile:true,hasTouch:true});
-  await apple.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());const iphone=await apple.newPage();await iphone.goto(base);await iphone.getByRole('button',{name:'Install Badehaus X',exact:true}).click();await iphone.getByText('Add to Home Screen',{exact:true}).waitFor();await apple.close();
+  await apple.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());const iphone=await apple.newPage();await iphone.goto(base+'#/discover-chat');await iphone.getByRole('button',{name:'Install Badehaus X',exact:true}).click();await iphone.getByText('Add to Home Screen',{exact:true}).waitFor();await apple.close();
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({status:'PASS',checks:['Chromium installability','subpath manifest and icons','first install without false update','install prompt/dismissal','private request/cache isolation','offline launch and reconnect','waiting update preserves form','explicit update activation','installed UI','simulated iPhone instructions'],physicalPhones:'NOT TESTED'}));
  }finally{await context.close();fs.rmSync(profile,{recursive:true,force:true});await new Promise(r=>server.close(r));}

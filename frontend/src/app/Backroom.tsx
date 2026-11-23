@@ -64,6 +64,11 @@ export function Backroom({ api, session }: Props) {
     <main className="rd-backroom-content">
     {!article ? <><h1>The Backroom</h1>
       {!googlePlayEdition && <p>Articles on gay cruising, queer culture, and meeting people. <a href="../gay-cruising/">Read the gay cruising guide</a>.</p>}
+      {!googlePlayEdition && <ul>
+        <li><a href="./first-gay-bathhouse-visit/">Your first visit to a gay bathhouse</a></li>
+        <li><a href="./meet-gay-men-vancouver/">Where to meet gay men in Vancouver beyond the bars</a></li>
+        <li><a href="../vancouver/">Vancouver guide</a></li>
+      </ul>}
       <section className="rd-backroom-grid" aria-label="Launch articles">
       {[...editorialArticles.slice().reverse(), ...backroomLaunch].map(entry => <article className="rd-backroom-card" key={entry.slug}>
         <a href={`./${entry.slug}/`}>

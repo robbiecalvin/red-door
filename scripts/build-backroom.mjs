@@ -66,7 +66,7 @@ ${content}
   fs.writeFileSync(indexPath, index.replace('<div id="root"></div>', `<div id="root"><main class="site-page">
     <h1>The Backroom</h1>
     <p>Articles on gay cruising, queer culture, and meeting people.</p>
-    <p><a href="../gay-cruising/">Gay cruising guide</a> · <a href="../">Badehaus X</a></p>
+    <p><a href="../gay-cruising/">Gay cruising guide</a> · <a href="../vancouver/">Vancouver guide</a> · <a href="../">Badehaus X</a></p>
     <h2>Articles</h2><ul>${links}</ul>
   </main></div>`));
 
@@ -74,7 +74,7 @@ ${content}
   fs.writeFileSync(cruisingArticle, fs.readFileSync(cruisingArticle, "utf8").replace("</main>",
     '<p><a href="../../gay-cruising/">Read the gay cruising guide</a></p></main>'));
 
-  const paths = ["", "gay-cruising/", "thebackroom/", ...articleSlugs.map(slug => `thebackroom/${slug}/`)];
+  const paths = ["", "gay-cruising/", "vancouver/", "thebackroom/", ...articleSlugs.map(slug => `thebackroom/${slug}/`)];
   fs.writeFileSync("dist/robots.txt", `User-agent: *\nSitemap: ${baseUrl}sitemap.xml\n`);
   fs.writeFileSync("dist/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

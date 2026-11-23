@@ -50,19 +50,26 @@ async function main() {
   });
   if (googlePlayEdition) return;
   const home = fs.readFileSync("dist/index.html", "utf8");
-  const homeTitle = "Badehaus X | Gay Cruising App";
-  const homeDescription = "Badehaus X is an 18+ gay cruising web app. Explore nearby, start a conversation, and choose what to share. Read our guide to consent and privacy.";
+  const homeTitle = "Badehaus X | Gay Cruising, Vancouver & Culture";
+  const homeDescription = "Explore gay cruising, queer nightlife, and culture in Vancouver. Read The Backroom or open the Badehaus X gay cruising app for adults.";
   fs.writeFileSync("dist/index.html", home
     .replace("<title>Badehaus X</title>", `<title>${homeTitle}</title>`)
     .replace('name="description" content="Explore nearby. Start a conversation. Connect your way with Badehaus X."', `name="description" content="${homeDescription}"`)
     .replace('property="og:title" content="Badehaus X"', `property="og:title" content="${homeTitle}"`)
     .replace('name="twitter:title" content="Badehaus X"', `name="twitter:title" content="${homeTitle}"`)
     .replaceAll('content="Explore nearby. Start a conversation. Connect your way."', `content="${homeDescription}"`)
-    .replace('<div id="root"></div>', `<div id="root"><main class="site-page">
-      <h1>Gay cruising on Badehaus X</h1>
-      <p>Badehaus X is an 18+ web app for gay men to explore nearby, chat, and choose what to share.</p>
-      <nav aria-label="Public guides"><a href="./gay-cruising/">Gay cruising guide</a> · <a href="./thebackroom/">The Backroom blog</a></nav>
-    </main></div>`));
+    .replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/, (_, entry) => `<script type="module">
+      const openApp = () => {
+        if (location.hash || new URLSearchParams(location.search).has("st") || matchMedia("(display-mode: standalone)").matches || navigator.standalone === true) {
+          window.removeEventListener("hashchange", openApp);
+          import(${JSON.stringify(entry)});
+        }
+      };
+      window.addEventListener("hashchange", openApp);
+      openApp();
+    </script>`)
+    .replace(/<link rel="modulepreload"[^>]+>/g, "")
+    .replace('<div id="root"></div>', () => fs.readFileSync("editorial/public-home.html", "utf8")));
   const backroom = home
     .replaceAll('"./', '"../')
     .replaceAll("<title>Badehaus X</title>", "<title>The Backroom · Badehaus X</title>")
@@ -75,9 +82,17 @@ async function main() {
     .replace(`property="og:url" content="${normalizedUrl}"`, `property="og:url" content="${normalizedUrl}thebackroom/"`);
   fs.mkdirSync("dist/thebackroom", { recursive: true });
   fs.writeFileSync("dist/thebackroom/index.html", backroom);
-  fs.mkdirSync("dist/gay-cruising", { recursive: true });
-  fs.writeFileSync("dist/gay-cruising/index.html",
-    fs.readFileSync("editorial/gay-cruising.html", "utf8").replaceAll("https://badehausx.com/", normalizedUrl));
+  const publicPages = [
+    "gay-cruising",
+    "vancouver",
+    "thebackroom/first-gay-bathhouse-visit",
+    "thebackroom/meet-gay-men-vancouver",
+  ];
+  for (const slug of publicPages) {
+    fs.mkdirSync(`dist/${slug}`, { recursive: true });
+    fs.writeFileSync(`dist/${slug}/index.html`,
+      fs.readFileSync(`editorial/${slug}.html`, "utf8").replaceAll("https://badehausx.com/", normalizedUrl));
+  }
   writeBackroomArticles(backroomArticles, normalizedUrl);
   writePwaBuild();
   if(!publicBase.hostname.endsWith("github.io"))fs.writeFileSync("dist/CNAME",publicBase.hostname+"\n");

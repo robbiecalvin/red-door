@@ -42,3 +42,12 @@
 .site-article h2 { margin-top: 1.8rem; line-height: 1.2; }
 .site-article article header p { color: var(--site-muted); }
 .site-article article > img { display: block; border-radius: 10px; margin: 1.4rem 0; max-width: 100%; }
+
+.site-hub main { width: min(calc(100% - 2rem), 68rem); }
+.site-hub .site-hub-hero { background: radial-gradient(ellipse at 90% 0%, #441e29, var(--site-surface) 60%); }
+.site-hub-hero h1 { font-size: clamp(2rem, 6vw, 4rem); }
+.site-hub-hero p { max-width: 48ch; color: var(--site-muted); }
+.site-hub-hero span { margin-inline-start: .6rem; }
+.site-hub-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem; margin-block: 1rem; }
+.site-hub-grid h2 { margin-top: 0; }
+.site-hub-grid p { color: var(--site-muted); margin-bottom: 0; }
