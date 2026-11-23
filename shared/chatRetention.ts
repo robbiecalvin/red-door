@@ -1,0 +1,2 @@
+export const CHAT_RETENTION_DAYS = 120;
+export const CHAT_RETENTION_MS = CHAT_RETENTION_DAYS * 24 * 60 * 60 * 1000;

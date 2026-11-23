@@ -454,7 +454,7 @@ See [Plus subscription setup and behavior](docs/plus-subscriptions.md) for limit
 ## Reliability and measurement batch
 
 - Run `npm run test:smoke` for isolated core API and payment-lifecycle checks; no real Stripe charge is made.
-- Cruise retention is now enforced at 72 hours by the running server, including persisted messages with older expiry settings. Private chat/media delivery and upload authorization are checked server-side.
+- Cruise messages and private group conversations are kept for 120 days. The current policy also applies to existing messages still in storage. Private chat/media delivery and upload authorization are checked server-side.
 - Login includes password recovery when SMTP and an HTTPS `PUBLIC_APP_URL` are configured. Password resets revoke HTTP and realtime sessions. New administrator access requires email verification.
 - Optional activity measurement is off by default. Users can opt in at registration or change the preference in profile settings. Administrators can open **Activity dashboard** from the account menu.
 - [Execution roadmap and live-release gates](docs/execution-roadmap.md) · [Metrics privacy and interpretation](docs/baseline-analytics.md).

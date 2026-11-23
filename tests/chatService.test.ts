@@ -855,6 +855,24 @@ describe("chatService", () => {
 });
 
 describe("Cruise retention after configuration correction", () => {
+  it("extends the cutoff of existing Cruise messages that still have a 72-hour expiry", () => {
+    const day = 86400000;
+    const createdAtMs = 1_700_000_000_000;
+    let now = createdAtMs + 119 * day;
+    const service = createChatService({ nowMs: () => now, initialState: {
+      threads: [{ threadId: "cruise::user:a::user:b", messages: [{
+        messageId: "existing", chatId: "cruise::user:a::user:b", chatKind: "cruise",
+        fromKey: "user:a", toKey: "user:b", text: "Still here", createdAtMs, expiresAtMs: createdAtMs + 3 * day
+      }] }], readCursors: []
+    } });
+    const member = { sessionToken: "fixture-a", userId: "a", userType: "registered", mode: "cruise", ageVerified: true } as const;
+    expect(service.listMessages(member, "cruise", "user:b")).toMatchObject({
+      ok: true, value: [{ messageId: "existing", expiresAtMs: createdAtMs + 120 * day }]
+    });
+    now += day;
+    expect(service.listMessages(member, "cruise", "user:b")).toEqual({ ok: true, value: [] });
+  });
+
   it("Given persisted Cruise messages with an overly long expiry When cleanup runs Then removes messages older than the current retention policy", () => {
     const now = 1800000000000;
     const svc = createChatService({ nowMs: () => now, cruiseRetentionHours: 72, initialState: { threads: [{ threadId: "cruise::user:a::user:b", messages: [{ messageId: "old", chatId: "old-thread", chatKind: "cruise", fromKey: "user:a", toKey: "user:b", text: "expired", createdAtMs: now - 73 * 3600000, expiresAtMs: now + 300 * 86400000 }] }], readCursors: [] } });

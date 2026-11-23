@@ -156,13 +156,15 @@ describe("Core API and payment lifecycle smoke checks", () => {
     const profile = await request("/profile/me", { displayName: "Alice", age: 25, bio: "Hello" }, alice.token, "PUT");
     expect(profile.profile.displayName).toBe("Alice");
   });
-  it("Given opted-in accounts When exchanging messages Then caps Cruise expiry at 72 hours and records one reply", async () => {
+  it("Given opted-in accounts When exchanging messages Then keeps Cruise messages for 120 days and records one reply", async () => {
     const sent = await request("/chat/send", { chatKind: "cruise", toKey: `user:${bob.id}`, text: "Hello" }, alice.token);
-    expect(sent.message.expiresAtMs - sent.message.createdAtMs).toBe(72 * 3600000);
+    expect(sent.message.expiresAtMs - sent.message.createdAtMs).toBe(120 * 24 * 3600000);
     await request("/chat/send", { chatKind: "cruise", toKey: `user:${alice.id}`, text: "Hi back" }, bob.token);
     await request("/chat/read", { chatKind: "cruise", otherKey: `user:${alice.id}` }, bob.token);
     const listed = await request(`/chat/messages?chatKind=cruise&otherKey=user:${bob.id}`, undefined, alice.token);
     expect(listed.messages).toHaveLength(2); expect(listed.messages[0].readAtMs).toBeUndefined();
+    const threads = await request("/chat/threads?chatKind=cruise", undefined, bob.token);
+    expect(threads.threads).toEqual(expect.arrayContaining([expect.objectContaining({ otherKey: `user:${alice.id}`, peerDisplayName: "Alice" })]));
     const data = await request("/admin/analytics", undefined, admin.token);
     expect(data.totals.conversations_started).toBe(1); expect(data.totals.conversations_replied).toBe(1);
     expect(data.cohorts.find((c: any) => c.cohort === "free").firstReplies).toBe(1);

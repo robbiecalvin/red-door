@@ -1,3 +1,4 @@
+import catalogCategories from "../../../shared/adult-catalog-manifest.json";
 import React, { useEffect, useState } from "react";
 import {
   ADULT_VIDEO_CATEGORIES, type AdultVideo, type AdultVideoCategory, type AdultVideoFavorite
@@ -251,10 +252,30 @@ function BulkAdultPage({ api, session, category, page }: { api: Api; session: Se
   </section>;
 }
 
+function CatalogCategoryPicker({ value }: { value: string }) {
+  return <div className="rd-card rd-adult-library">
+    <div className="rd-card-body">
+      <label className="rd-field">
+        <span className="rd-label">Catalog category</span>
+        <select className="rd-input" value={value} onChange={event => {
+          const slug = event.target.value;
+          window.location.assign(slug ? `./?videoCategory=${encodeURIComponent(slug)}&videoPage=1#/adult-library` : "./?app=1#/adult-library");
+        }}>
+          <option value="">Curated directory</option>
+          {catalogCategories.map(category => <option key={category.slug} value={category.slug}>{category.name} ({category.count})</option>)}
+        </select>
+      </label>
+    </div>
+  </div>;
+}
+
 export function AdultLibrary(props: { api: Api; session: Session; onRegister?(): void }) {
   const query = new URLSearchParams(window.location.search);
   const category = query.get("videoCategory");
   const page = query.get("videoPage");
-  return category && page ? <BulkAdultPage key={`${category}/${page}`} api={props.api} session={props.session} category={category} page={page} />
-    : <CuratedAdultLibrary {...props} />;
+  return <>
+    {props.session.userType !== "guest" && props.session.ageVerified && <CatalogCategoryPicker value={category ?? ""} />}
+    {category && page ? <BulkAdultPage key={`${category}/${page}`} api={props.api} session={props.session} category={category} page={page} />
+      : <CuratedAdultLibrary {...props} />}
+  </>;
 }

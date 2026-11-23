@@ -35,7 +35,7 @@ Real-time presence is required
 
 Chats are ephemeral
 
-Messages auto-expire within 72 hours
+Messages auto-expire within 120 days
 
 Expired messages are unrecoverable
 

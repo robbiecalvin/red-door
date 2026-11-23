@@ -614,7 +614,6 @@ async function main(): Promise<void> {
   });
 
   const chatService = createChatService({
-    cruiseRetentionHours: 72,
     maxHistoryDays: 365,
     persistenceFilePath: postgresPool ? undefined : path.resolve(process.cwd(), "backend/.data/chat.json"),
     initialState: initialChatState,
@@ -2759,8 +2758,21 @@ async function main(): Promise<void> {
     const result = chatService.listThreads(domainSession(sessionResult.value), chatKind as any);
     if (!result.ok) return sendError(res, result.error);
     const approved = result.value.some(thread => thread.lastMessage.media) ? await playMediaReview?.approvedPhotos("chat-photo") : undefined;
-    return res.status(200).json({ threads: result.value.filter(thread => !isPlayRestrictedChatPeer(thread.otherKey))
-      .map(thread => ({ ...thread, lastMessage: chatMessageForEdition(thread.lastMessage, approved) })) });
+    res.setHeader("Cache-Control", "private, no-store");
+    const viewerKey = sessionKeyFromSession(domainSession(sessionResult.value));
+    const threads = await Promise.all(result.value.filter(thread => !isPlayRestrictedChatPeer(thread.otherKey)).map(async thread => {
+      let peerDisplayName: string | undefined;
+      if (thread.otherKey.startsWith("user:")) {
+        const peerId = thread.otherKey.slice(5);
+        const peer = authService.getUser(peerId);
+        if (peer && !peer.bannedAtMs && !blockService.isBlocked(viewerKey, thread.otherKey)) {
+          const profile = await profileService.getPublicByUserId(peerId).catch(() => null);
+          if (profile?.ok) peerDisplayName = profile.value.displayName;
+        }
+      }
+      return { ...thread, peerDisplayName, lastMessage: chatMessageForEdition(thread.lastMessage, approved) };
+    }));
+    return res.status(200).json({ threads });
   });
 
   app.post("/chat/read", (req, res) => {

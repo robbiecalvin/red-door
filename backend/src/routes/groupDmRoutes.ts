@@ -1,3 +1,4 @@
+import { CHAT_RETENTION_MS } from "../../../shared/chatRetention";
 import { randomUUID } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import type { CommunityRepository } from "../repositories/communityRepository";
@@ -8,7 +9,7 @@ import { hasPlus } from "../../../shared/plus";
 type Message = { id: string; authorId: string; text: string; createdAtMs: number };
 type Conversation = { id: string; creatorId: string; members: string[]; accepted: string[]; messages: Message[]; read: Record<string, number>; createdAtMs: number };
 const KEY = "groupConversations";
-const retentionMs = 72 * 60 * 60 * 1000;
+
 
 export function installGroupDmRoutes(app: Express, deps: {
   repository: CommunityRepository;
@@ -54,7 +55,7 @@ export function installGroupDmRoutes(app: Express, deps: {
       return result;
     });
   }
-  const recent = (group: Conversation) => group.messages.filter(message => message.createdAtMs > Date.now() - retentionMs);
+  const recent = (group: Conversation) => group.messages.filter(message => message.createdAtMs > Date.now() - CHAT_RETENTION_MS);
 
   app.get(route, wrap(async (_req, res, user) => {
     const groups = (await read()).filter(group => visible(group, user.userId)).map(group => ({

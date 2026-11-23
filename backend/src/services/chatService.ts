@@ -1,3 +1,4 @@
+import { CHAT_RETENTION_DAYS } from "../../../shared/chatRetention";
 import { hasPlus } from "../../../shared/plus";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -111,7 +112,7 @@ export type ChatPersistenceState = Readonly<{
   readCursors: ReadonlyArray<Readonly<{ threadUserKey: string; readAtMs: number }>>;
 }>;
 
-const DEFAULT_CRUISE_RETENTION_HOURS = 72;
+const DEFAULT_CRUISE_RETENTION_HOURS = CHAT_RETENTION_DAYS * 24;
 const DEFAULT_RATE_LIMIT_PER_MINUTE = 20;
 const DEFAULT_MAX_HISTORY_DAYS = 365;
 
@@ -363,16 +364,29 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
     if (!list || list.length === 0) return false;
     const before = list.length;
     const minCreatedAtMs = now - historyWindowMs;
-    const remaining = list.filter((m) => m.createdAtMs >= minCreatedAtMs && (chatKind !== "cruise" || now < m.createdAtMs + cruiseRetentionHours * 3600000) && (typeof m.expiresAtMs !== "number" || now < m.expiresAtMs));
+    const remaining = list.filter(message => message.createdAtMs >= minCreatedAtMs && (
+      chatKind === "cruise" ? now < message.createdAtMs + cruiseRetentionHours * 3600000
+        : typeof message.expiresAtMs !== "number" || now < message.expiresAtMs
+    ));
+    // Cruise expiry is assigned by policy. Refresh stored timestamps from older releases.
+    let expiryUpdated = false;
+    if (chatKind === "cruise") {
+      for (const [index, message] of remaining.entries()) {
+        const expiresAtMs = message.createdAtMs + cruiseRetentionHours * 3600000;
+        if (message.expiresAtMs === expiresAtMs) continue;
+        remaining[index] = { ...message, expiresAtMs };
+        expiryUpdated = true;
+      }
+    }
     if (remaining.length === 0) {
       messagesByThread.delete(threadId);
-    } else if (remaining.length !== before) {
+    } else if (remaining.length !== before || expiryUpdated) {
       messagesByThread.set(threadId, remaining);
     }
-    if (remaining.length !== before) {
+    if (remaining.length !== before || expiryUpdated) {
       persistMessages();
     }
-    return remaining.length !== before;
+    return remaining.length !== before || expiryUpdated;
   }
 
   if (deps.initialState) {
