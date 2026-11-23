@@ -40,7 +40,7 @@ Rule: If a scenario has no mapped test, the implementation is incomplete.
 
 - Scenario 1: Cruise Mode Chat Expiry
   - `tests/chatService.test.ts`
-    - `Given a chat created while both participants are in Cruise Mode When 72 hours have elapsed since message creation Then the messages are expired and no longer retrievable And expired messages cannot be restored`
+    - `Given a chat created while both participants are in Cruise Mode When 120 days have elapsed since message creation Then the messages are expired and no longer retrievable And expired messages cannot be restored`
 - Scenario 2: Blocked User Attempts Messaging
   - `tests/chatService.test.ts`
     - `Given a user has been blocked by another user When the blocked user attempts to send a message Then message delivery is prevented And the sender receives an explicit rejection And no message data is persisted`

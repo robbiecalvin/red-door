@@ -107,3 +107,8 @@ html:has(#public-home), body:has(#public-home) { height: auto; overflow: visible
 .site-city-more ul { margin-top: .65rem; }
 .site-city-more a { display: flex; flex-direction: column; align-items: start; justify-content: center; line-height: 1.2; }
 .site-city-more small { color: var(--site-muted); margin-top: .25rem; }
+
+[data-catalog-gallery] button[hidden] { display: none; }
+.site-catalog-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: .75rem; list-style: none; padding: 0; }
+.site-catalog-grid a { display: grid; gap: .4rem; padding: .5rem; border: 1px solid var(--site-line); border-radius: 8px; }
+.site-catalog-grid img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; }

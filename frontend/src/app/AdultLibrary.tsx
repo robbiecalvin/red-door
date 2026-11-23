@@ -1,3 +1,4 @@
+import catalogCategories from "../../../shared/adult-catalog-manifest.json";
 import React, { useEffect, useState } from "react";
 import {
   ADULT_VIDEO_CATEGORIES, type AdultVideo, type AdultVideoCategory, type AdultVideoFavorite
@@ -110,6 +111,7 @@ function CuratedAdultLibrary({ api, session, onRegister }: { api: Api; session: 
   return <section className="rd-card rd-adult-library" aria-labelledby="adult-library-title">
     <div className="rd-card-body">
       <h1 id="adult-library-title">Adult video directory · 18+</h1>
+      <p><a href="./gay-porn/#video-categories">Browse all video categories on the website</a></p>
       {session.userType === "guest" ? <>
         <p>Sign in with a Badehaus X account to browse adult videos and choose profile favorites.</p>
         <button type="button" className="rd-btn primary" onClick={onRegister}>Create an account</button>
@@ -223,10 +225,12 @@ function BulkAdultPage({ api, session, category, page }: { api: Api; session: Se
     return () => { active = false; };
   }, [api, category, page, session.ageVerified, session.sessionToken, session.userType]);
 
+  const appPage = (number: number) => `./?videoCategory=${encodeURIComponent(category)}&videoPage=${number}#/adult-library`;
   const publicPage = (number: number) => `./gay-porn/cat/${encodeURIComponent(category)}/${number === 1 ? "" : `page/${number}/`}`;
   return <section className="rd-card rd-adult-library">
     <div className="rd-card-body">
       <p><a href="./gay-porn/">Adult video categories</a></p>
+      <p><a href={publicPage(Number(page))}>View this page on the website</a></p>
       <h1>{result?.name ?? "Adult video directory"} · 18+</h1>
       {session.userType === "guest" ? <p>Sign in with an age-verified Badehaus X account to see video previews.</p>
         : error ? <p role="alert">{error}</p> : !result ? <p role="status">Loading previews…</p> : <>
@@ -239,19 +243,39 @@ function BulkAdultPage({ api, session, category, page }: { api: Api; session: Se
             </article>)}
           </div>
           <nav aria-label="Video results pages">
-            {result.page > 1 && <a href={publicPage(result.page - 1)}>Previous page</a>}
+            {result.page > 1 && <a href={appPage(result.page - 1)}>Previous page</a>}
             {" · "}Page {result.page} of {result.pages}{" · "}
-            {result.page < result.pages && <a href={publicPage(result.page + 1)}>Next page</a>}
+            {result.page < result.pages && <a href={appPage(result.page + 1)}>Next page</a>}
           </nav>
         </>}
     </div>
   </section>;
 }
 
+function CatalogCategoryPicker({ value }: { value: string }) {
+  return <div className="rd-card rd-adult-library">
+    <div className="rd-card-body">
+      <label className="rd-field">
+        <span className="rd-label">Catalog category</span>
+        <select className="rd-input" value={value} onChange={event => {
+          const slug = event.target.value;
+          window.location.assign(slug ? `./?videoCategory=${encodeURIComponent(slug)}&videoPage=1#/adult-library` : "./?app=1#/adult-library");
+        }}>
+          <option value="">Curated directory</option>
+          {catalogCategories.map(category => <option key={category.slug} value={category.slug}>{category.name} ({category.count})</option>)}
+        </select>
+      </label>
+    </div>
+  </div>;
+}
+
 export function AdultLibrary(props: { api: Api; session: Session; onRegister?(): void }) {
   const query = new URLSearchParams(window.location.search);
   const category = query.get("videoCategory");
   const page = query.get("videoPage");
-  return category && page ? <BulkAdultPage key={`${category}/${page}`} api={props.api} session={props.session} category={category} page={page} />
-    : <CuratedAdultLibrary {...props} />;
+  return <>
+    {props.session.userType !== "guest" && props.session.ageVerified && <CatalogCategoryPicker value={category ?? ""} />}
+    {category && page ? <BulkAdultPage key={`${category}/${page}`} api={props.api} session={props.session} category={category} page={page} />
+      : <CuratedAdultLibrary {...props} />}
+  </>;
 }

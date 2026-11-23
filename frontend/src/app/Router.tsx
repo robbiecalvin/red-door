@@ -3034,7 +3034,7 @@ function ThreadsPanel({
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;
-    async function safeListThreads(chatKind: "cruise" | "date"): Promise<ReadonlyArray<Readonly<{ otherKey: string; lastMessage: ChatMessage }>>> {
+    async function safeListThreads(chatKind: "cruise" | "date"): Promise<ReadonlyArray<Readonly<{ otherKey: string; peerDisplayName?: string; lastMessage: ChatMessage }>>> {
       if (session.mode !== "hybrid" && session.mode !== chatKind) return [];
       try {
         const result = await api.listChatThreads(session.sessionToken, chatKind);
@@ -3049,7 +3049,7 @@ function ThreadsPanel({
       inFlight = true;
       try {
         const [profilesRes, cruiseThreadsRes, dateThreadsRes] = await Promise.all([
-          api.getPublicProfiles(),
+          api.getPublicProfiles().catch(() => ({ profiles: [] })),
           safeListThreads("cruise"),
           safeListThreads("date")
         ]);
@@ -3085,7 +3085,7 @@ function ThreadsPanel({
               nextByKey.set(normalizedKey, {
                 key: normalizedKey,
                 chatKind: kind,
-                displayName: nameByKey[normalizedKey] ?? displayNameForPeerKey(normalizedKey),
+                displayName: thread.peerDisplayName || nameByKey[normalizedKey] || displayNameForPeerKey(normalizedKey),
                 preview,
                 at: last.createdAtMs
               });

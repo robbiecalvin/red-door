@@ -57,7 +57,7 @@ backend/src/services/chatService.ts
 Scenario 1: Cruise Mode Chat Expiry
 
 Given a chat created while both participants are in Cruise Mode
-When 72 hours have elapsed since message creation
+When 120 days have elapsed since message creation
 Then the messages are expired and no longer retrievable
 And expired messages cannot be restored
 

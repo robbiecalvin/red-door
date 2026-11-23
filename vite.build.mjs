@@ -136,7 +136,7 @@ async function main() {
     fs.writeFileSync(`dist/${slug}/index.html`,
       fs.readFileSync(`editorial/${slug}.html`, "utf8").replaceAll("https://badehausx.com/", normalizedUrl));
   }
-  const catalogPaths = writeAdultCatalogPages(process.env.ADULT_CATALOG_DIR, normalizedUrl, escapeHtml);
+  const catalogPaths = writeAdultCatalogPages(process.env.ADULT_CATALOG_DIR, normalizedUrl, escapeHtml, apiBasePath);
   const classifiedsPaths = writeClassifiedPages(cities, normalizedUrl, escapeHtml);
   writeBackroomArticles(backroomArticles, normalizedUrl, [...classifiedsPaths, ...catalogPaths]);
   writePwaBuild();
