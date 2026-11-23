@@ -50,8 +50,20 @@ async function main() {
   });
   if (googlePlayEdition) return;
   const home = fs.readFileSync("dist/index.html", "utf8");
+  // City names and regions are based on https://en.wikipedia.org/wiki/List_of_cities_in_Canada.
+  const cities = JSON.parse(fs.readFileSync("shared/classifiedCities.json", "utf8"));
+  fs.cpSync("editorial/home-art", "dist/home", { recursive: true });
+  const escapeHtml = value => value.replace(/[&<>"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
+  const cityLinks = featured => cities.filter(city => city.id !== "vancouver" && Boolean(city.featured) === featured).map(({ id, name, region }) => {
+    const art = fs.existsSync(`dist/home/${id}.webp`) ? ` style="--city-art: url('./home/${id}.webp')"` : "";
+    const label = featured ? escapeHtml(name) : `${escapeHtml(name)} <small>${escapeHtml(region)}</small>`;
+    return `<li data-city="${escapeHtml(`${id} ${name} ${region}`)}"><a href="./?city=${id}#/ads"${art}>${label}</a></li>`;
+  }).join("\n");
+  const publicHome = fs.readFileSync("editorial/public-home.html", "utf8")
+    .replace("<!-- CITY_LINKS -->", () => cityLinks(true))
+    .replace("<!-- MORE_CITY_LINKS -->", () => cityLinks(false));
   const homeTitle = "Badehaus X | Gay Cruising, Vancouver & Culture";
-  const homeDescription = "Explore gay cruising, queer nightlife, and culture in Vancouver. Read The Backroom or open the Badehaus X gay cruising app for adults.";
+  const homeDescription = "Explore gay cruising, Vancouver nightlife, and Canadian city classifieds. Read The Backroom or open the Badehaus X gay cruising app for adults.";
   fs.writeFileSync("dist/index.html", home
     .replace("<title>Badehaus X</title>", `<title>${homeTitle}</title>`)
     .replace('name="description" content="Explore nearby. Start a conversation. Connect your way with Badehaus X."', `name="description" content="${homeDescription}"`)
@@ -59,24 +71,45 @@ async function main() {
     .replace('name="twitter:title" content="Badehaus X"', `name="twitter:title" content="${homeTitle}"`)
     .replaceAll('content="Explore nearby. Start a conversation. Connect your way."', `content="${homeDescription}"`)
     .replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/, (_, entry) => `<script type="module">
-      const shouldOpenApp = () => location.hash || new URLSearchParams(location.search).has("st") || matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-      if (shouldOpenApp()) {
-        import(${JSON.stringify(entry)});
+      const appHash = () => Boolean(location.hash && !["#sign-in", "#classifieds"].includes(location.hash));
+      const query = new URLSearchParams(location.search);
+      const openApp = appHash() || query.has("st") || query.has("app") ||
+        matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+      if (openApp) {
+        document.getElementById("public-home").remove();
       } else {
-        const openApp = () => {
-          if (!shouldOpenApp()) return;
-          window.removeEventListener("hashchange", openApp);
-          // React replaces the public homepage. Restore it when Back returns to its history entry.
-          window.addEventListener("popstate", () => {
-            if (!shouldOpenApp()) location.reload();
-          });
-          import(${JSON.stringify(entry)});
+        const search = document.getElementById("city-search");
+        const cities = Array.from(document.querySelectorAll("[data-city]"));
+        const status = document.getElementById("city-search-status");
+        const more = document.getElementById("more-cities");
+        let wasSearching = false;
+        let moreWasOpen = false;
+        const normalize = (value) => value.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().replace(/[’']/g, "");
+        const filterCities = () => {
+          const query = normalize(search.value.trim());
+          for (const city of cities) city.hidden = !normalize(city.dataset.city).includes(query);
+          status.hidden = cities.some(city => !city.hidden);
+          if (query) {
+            if (!wasSearching) moreWasOpen = more.open;
+            more.hidden = !cities.some(city => !city.hidden && more.contains(city));
+            more.open = !more.hidden;
+          } else {
+            more.hidden = false;
+            if (wasSearching) more.open = moreWasOpen;
+          }
+          wasSearching = Boolean(query);
         };
-        window.addEventListener("hashchange", openApp);
+        search.hidden = false;
+        search.addEventListener("input", filterCities);
+        filterCities();
+        window.addEventListener("hashchange", () => {
+          if (appHash()) location.reload();
+        });
       }
+      import(${JSON.stringify(entry)});
     </script>`)
     .replace(/<link rel="modulepreload"[^>]+>/g, "")
-    .replace('<div id="root"></div>', () => fs.readFileSync("editorial/public-home.html", "utf8")));
+    .replace('<div id="root"></div>', () => publicHome));
   const backroom = home
     .replaceAll('"./', '"../')
     .replaceAll("<title>Badehaus X</title>", "<title>The Backroom · Badehaus X</title>")

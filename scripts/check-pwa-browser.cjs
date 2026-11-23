@@ -2,7 +2,7 @@
 const {chromium}=require('playwright-core');
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const root=path.resolve(__dirname,'../dist');
-const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml','.woff2':'font/woff2'};
+const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml','.woff2':'font/woff2','.webp':'image/webp'};
 let variant='a',privateHits=0;
 const server=http.createServer((req,res)=>{
  const url=new URL(req.url,'http://localhost');
@@ -37,9 +37,18 @@ const server=http.createServer((req,res)=>{
   await page.goto(base);await page.getByRole('heading',{name:'Gay cruising, nightlife & culture'}).waitFor();
   await page.getByRole('link',{name:'Log in',exact:true}).click();
   await expectDefaultLogin();
+  const citySearch = page.getByRole('searchbox', {name:'Find a Canadian city'});
+  await citySearch.fill('montreal');
+  assert.equal(await page.getByRole('link',{name:'Montréal',exact:true}).isVisible(), true);
+  assert.equal(await page.getByRole('link',{name:'Toronto',exact:true}).isVisible(), false);
+  await citySearch.fill('');
+  await page.getByRole('link',{name:'Open the web app',exact:true}).click();
+  await page.getByRole('region',{name:'Welcome to Badehaus X'}).waitFor();
   await page.goBack();
   await page.getByRole('heading',{name:'Gay cruising, nightlife & culture'}).waitFor();
-  await page.getByRole('link',{name:'Open the app',exact:true}).click();await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
+  await page.getByRole('link',{name:'Open the web app',exact:true}).click();
+  await page.getByRole('region',{name:'Welcome to Badehaus X'}).waitFor();
+  await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
   await expectDefaultLogin();
   const authCard=await page.getByRole('region',{name:'Authentication'}).boundingBox();
   const welcomeCard=await page.getByRole('region',{name:'Welcome to Badehaus X'}).boundingBox();

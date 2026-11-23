@@ -447,3 +447,21 @@
   .rd-group-list { grid-template-columns: minmax(0, 1fr); }
   .rd-group-create-footer .rd-btn { width: 100%; }
 }
+
+.rd-classifieds-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; padding: .8rem; }
+.rd-classifieds-heading h1 { margin: 0; font-size: 1.15rem; }
+.rd-classifieds-heading a { color: var(--accent); }
+
+.rd-classifieds-heading .rd-field { flex: 1 0 100%; margin: 0; }
+.rd-city-posting-form { flex-direction: column; }
+.rd-city-posting-form .rd-input { width: 100%; flex: auto; }
+.rd-city-posting-form textarea { min-height: 5rem; resize: vertical; }
+
+.rd-adult-library { width: min(100%, 70rem); margin-inline: auto; }
+.rd-adult-video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem; }
+.rd-adult-video-grid article { padding: .8rem; }
+.rd-adult-video-grid a { display: block; color: var(--ink); }
+.rd-adult-video-grid img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: var(--card); }
+.rd-adult-video-grid h2 { font-size: 1.15rem; }
+.rd-adult-library :is(ol, .rd-row) button { margin: .2rem; }
+.rd-adult-editor { margin-top: 1.5rem; }

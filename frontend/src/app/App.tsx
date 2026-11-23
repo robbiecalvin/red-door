@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { AccountDeletion } from "./AccountDeletion";
 import { MediaReview } from "./MediaReview";
 import { googlePlayEdition } from "./edition";
@@ -29,7 +30,7 @@ import { Icon } from "./Icon";
 import { RightNowControl } from "./MemberPanels";
 
 type AuthView = "guest" | "register" | "login";
-type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
+type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "adult-library" | "promoted" | "md";
 type DiscoverFilter = "all" | "online" | "favorites";
 type DiscoverScreen = "map" | "chat";
 type ProfilePosition = "" | "top" | "bottom" | "side";
@@ -48,7 +49,7 @@ type ProfileSetupDraft = Readonly<{
 const SESSION_TOKEN_KEY = "reddoor_session_token";
 const WINDOW_NAME_TOKEN_PREFIX = "rdst:";
 const DEFAULT_SHARED_API_BASE = "https://red-door-api.onrender.com";
-const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "live", "cruise", "profile", "settings", "submissions"]);
+const TAB_SET: ReadonlySet<TopTab> = new Set(["discover", "threads", "ads", "groups", "live", "cruise", "profile", "settings", "submissions", ...(googlePlayEdition ? [] : ["adult-library"] as const)]);
 const DEFAULT_TAB: TopTab = "discover";
 const FULL_PAGE_TAB_NAV = false;
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
@@ -335,14 +336,20 @@ function emptyProfileSetupDraft(): ProfileSetupDraft {
   };
 }
 
-export function App(): React.ReactElement {
+export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | null }): React.ReactElement {
   const api = useMemo(() => apiClient(resolveApiBasePath()), []);
 
   const [settings] = useState<Settings>(() => loadSettingsFromEnv());
 
   const [sessionToken, setSessionToken] = useState<string | null>(() => initialSessionToken());
   const [session, setSession] = useState<Session | null>(null);
+  const initialToken = useRef(sessionToken);
   const liveState = useLiveState(api, session);
+  useEffect(() => {
+    if (publicAuthTarget && session && sessionToken && sessionToken !== initialToken.current) {
+      window.location.assign("./?app=1#/discover-chat");
+    }
+  }, [publicAuthTarget, session, sessionToken]);
 
   const [lastError, setLastError] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
@@ -1010,6 +1017,7 @@ export function App(): React.ReactElement {
   }, [discoverScreen, setTabAndRoute]);
 
   useEffect(() => {
+    if (publicAuthTarget) return;
     if (FULL_PAGE_TAB_NAV) {
       setActiveTab(tabFromLocation());
       return;
@@ -1021,7 +1029,7 @@ export function App(): React.ReactElement {
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
+  }, [publicAuthTarget]);
 
   useEffect(() => {
     const open = (event: Event) => { if (session?.freePlus !== false) return; const feature = (event as CustomEvent<{feature?:unknown}>).detail?.feature; setPlusFeature(isPlusFeature(feature) ? feature : undefined); setPlusOpen(true); };
@@ -1073,9 +1081,231 @@ export function App(): React.ReactElement {
     </>
   );
 
+  const passwordRecovery = (recoveryOpen ? <PasswordRecovery api={api} token={recoveryToken} onClose={() => { setRecoveryOpen(false); setRecoveryToken(""); }} onComplete={() => { onLogout(); setRecoveryOpen(false); setRecoveryToken(""); setAuthView("login"); setAuthInfo("Password updated. Sign in with your new password."); }} /> : null);
+  const authentication = (
+    <section className="rd-card rd-auth-hero" aria-label="Authentication">
+      <div className="rd-tabs" role="tablist" aria-label="Authentication tabs">
+        <button
+          type="button"
+          className={`rd-tab ${authView === "guest" ? "active" : ""}`}
+          onClick={() => switchAuthView("guest")}
+          disabled={busy}
+          aria-label="Anon login"
+          role="tab"
+          aria-selected={authView === "guest"}
+        >
+          Anon
+        </button>
+        <button
+          type="button"
+          className={`rd-tab ${authView === "register" ? "active" : ""}`}
+          onClick={() => switchAuthView("register")}
+          disabled={busy}
+          aria-label="Register"
+          role="tab"
+          aria-selected={authView === "register"}
+        >
+          Register
+        </button>
+        <button
+          type="button"
+          className={`rd-tab ${authView === "login" ? "active" : ""}`}
+          onClick={() => switchAuthView("login")}
+          disabled={busy}
+          aria-label="Login"
+          role="tab"
+          aria-selected={authView === "login"}
+        >
+          Login
+        </button>
+      </div>
+
+      <div className="rd-card-body">
+        {lastError ? (
+          <div
+            role="alert"
+            aria-live="polite"
+            style={{
+              color: "#ff848f",
+              background: "rgba(120, 8, 18, 0.35)",
+              border: "1px solid rgba(255, 90, 100, 0.5)",
+              borderRadius: 8,
+              padding: "10px 12px",
+              marginBottom: 12
+            }}
+          >
+            {lastError}
+          </div>
+        ) : null}
+
+        {authInfo ? <div style={{ color: "#ff7a88", marginBottom: 12 }}>{authInfo}</div> : null}
+        {pendingVerificationEmail !== null ? (
+          <div style={{ color: "var(--muted)", marginBottom: 12 }}>
+            Check the email or phone associated with your account. Contact support if your code does not arrive.
+          </div>
+        ) : null}
+
+        {authView === "guest" ? (
+          <div className="rd-row">
+            <button type="button" className="rd-btn primary" onClick={() => void createGuest()} disabled={busy} aria-label="Create guest session">
+              Continue as a guest
+            </button>
+          </div>
+        ) : null}
+
+        <p className="rd-auth-note"><Icon name="shield" />For adults 18 and over. You choose what to share.</p>
+
+        {authView === "register" && (googleRegistration ? (
+          <div className="rd-row">
+            <span>Google account selected</span>
+            <button type="button" className="rd-btn" disabled={busy} onClick={() => setGoogleRegistration(null)}>Use email and password</button>
+          </div>
+        ) : <GoogleSignInButton key="google-register" api={api} register disabled={busy} onCredential={credential => {
+          setGoogleRegistration(credential);
+          setLastError(null);
+          setAuthInfo("");
+          return true;
+        }} />)}
+        {authView === "register" || authView === "login" ? (
+          <form
+            key={authView}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void (authView === "register" ? submitRegister() : submitLogin());
+            }}
+          >
+            {(!googleRegistration || authView === "login") && (
+              <>
+                <label className="rd-field">
+                  <span className="rd-label">Email</span>
+                  <input className="rd-input" value={authView === "register" ? registerEmail : loginEmail}
+                    onChange={(e) => (authView === "register" ? setRegisterEmail : setLoginEmail)(e.target.value)}
+                    type="email" autoComplete="username" autoCapitalize="none" aria-label="Email" />
+                </label>
+                <label className="rd-field">
+                  <span className="rd-label">Password</span>
+                  <input className="rd-input" value={authView === "register" ? registerPassword : loginPassword}
+                    onChange={(e) => (authView === "register" ? setRegisterPassword : setLoginPassword)(e.target.value)}
+                    type="password" autoComplete={authView === "register" ? "new-password" : "current-password"} aria-label="Password" />
+                </label>
+              </>
+            )}
+
+            {authView === "register" ? (
+              <label className="rd-field">
+                <span className="rd-label">Display Name</span>
+                <input className="rd-input" value={registerDisplayName} onChange={(e) => setRegisterDisplayName(e.target.value)} aria-label="Display name" />
+              </label>
+            ) : null}
+
+            {authView === "register" ? (
+              <label className="rd-field">
+                <span className="rd-label">Age</span>
+                <input
+                  className="rd-input"
+                  value={registerAge}
+                  onChange={(e) => setRegisterAge(e.target.value)}
+                  inputMode="numeric"
+                  aria-label="Age"
+                />
+              </label>
+            ) : null}
+
+            {authView === "register" ? (
+              <label className="rd-field">
+                <span className="rd-label">Phone (E.164, optional)</span>
+                <input
+                  className="rd-input"
+                  value={phoneE164}
+                  onChange={(e) => setPhoneE164(e.target.value)}
+                  placeholder="+15555551234"
+                  aria-label="Phone number"
+                />
+              </label>
+            ) : null}
+
+            {authView === "register" ? (
+              <label className="rd-field"><span className="rd-label">Invitation or referral code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" /></label>
+            ) : null}
+            {authView === "register" && policy?.status === "required" ? <label className="rd-field">
+              <span><input type="checkbox" checked={acceptedPolicy} required onChange={event => setAcceptedPolicy(event.target.checked)} /> I accept the{" "}
+                <a href={policy.terms.url} target="_blank" rel="noopener noreferrer">Terms of Service</a>{" "}and{" "}
+                <a href={policy.privacy.url} target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+              </span>
+            </label> : null}
+            {authView === "register" && policy?.status === "unavailable" ? <div role="status">
+              <p>Registration information is temporarily unavailable.</p>
+              <button type="button" className="rd-btn" onClick={() => setPolicyRequest(current => current + 1)}>Retry</button>
+            </div> : null}
+            {authView === "register" ? <label className="rd-field"><span><input type="checkbox" checked={marketingConsent} onChange={event => setMarketingConsent(event.target.checked)} /> {MARKETING_CONSENT_LABEL}</span></label> : null}
+            {authView === "register" ? <label className="rd-field" style={{ fontSize: 12, color: "var(--muted)" }}><span><input type="checkbox" checked={analyticsConsent} onChange={e => setAnalyticsConsent(e.target.checked)} /> Help improve Badehaus X (optional)</span><span>Share activity counts using a protected account identifier. Daily activity is kept for 35 days; inactive measurement records are deleted after 35 days. No message content, photos, or location. Change this in settings anytime.</span></label> : null}
+            {authView === "register" && !googleRegistration ? (
+              <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
+                Use at least 10 characters with uppercase, lowercase, a number and a symbol.
+              </div>
+            ) : null}
+
+            <div className="rd-row">
+              <button type="submit" className="rd-btn primary" disabled={busy || (authView === "register" && !canRegister)} aria-label={authView === "register" ? "Register" : "Login"}>
+                {authView === "register" ? "Register" : "Login"}
+              </button>
+            </div>
+          </form>
+        ) : null}
+
+        {authView === "login" ? <>
+          <GoogleSignInButton key="google-login" api={api} disabled={busy} onCredential={submitLogin} />
+          <button type="button" className="rd-btn" onClick={() => { setRecoveryToken(""); setRecoveryOpen(true); }}>Forgot password?</button>
+        </> : null}
+        {pendingVerificationEmail !== null && (authView === "register" || authView === "login") ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitVerifyEmail();
+            }}
+          >
+            <label className="rd-field">
+              <span className="rd-label">Email</span>
+              <input
+                className="rd-input"
+                value={pendingVerificationEmail}
+                onChange={(e) => setPendingVerificationEmail(e.target.value)}
+                type="email" autoComplete="email" autoCapitalize="none" aria-label="Verification email"
+              />
+            </label>
+
+            <label className="rd-field">
+              <span className="rd-label">6-digit verification code</span>
+              <input
+                className="rd-input"
+                value={verificationCode}
+                onChange={(e) => setVerificationCode(e.target.value)}
+                inputMode="numeric"
+                aria-label="Verification code"
+              />
+            </label>
+
+            <div className="rd-row">
+              <button type="submit" className="rd-btn primary" disabled={busy} aria-label="Verify email">
+                Verify Email
+              </button>
+              <button type="button" className="rd-btn" disabled={busy} onClick={() => void resendVerificationCode()} aria-label="Resend verification code">
+                Resend Code
+              </button>
+            </div>
+          </form>
+        ) : null}
+      </div>
+    </section>
+  );
+
+  if (publicAuthTarget) {
+    return createPortal(<>{!sessionToken && authentication}{passwordRecovery}</>, publicAuthTarget);
+  }
+
   return (
     <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav rd-app-bars" : ""}`}>
-      {recoveryOpen ? <PasswordRecovery api={api} token={recoveryToken} onClose={() => { setRecoveryOpen(false); setRecoveryToken(""); }} onComplete={() => { onLogout(); setRecoveryOpen(false); setRecoveryToken(""); setAuthView("login"); setAuthInfo("Password updated. Sign in with your new password."); }} /> : null}
+      {passwordRecovery}
       {session?.freePlus === false && <AccountNotices api={api} session={session} ready={Boolean(session?.ageVerified && !profileSetupChecking && !profileSetupRequired && !plusOpen)} loginSequence={loginSequence} />}
       {plusOpen && session?.freePlus === false ? <PlusPanel api={api} session={session} feature={plusFeature} onClose={() => setPlusOpen(false)} onRegister={() => { setPlusOpen(false); onLogout(); setAuthView("register"); }} /> : null}
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
@@ -1124,220 +1354,7 @@ export function App(): React.ReactElement {
         <div className="rd-grid">
           {!session ? (
             <>
-              <section className="rd-card rd-auth-hero" aria-label="Authentication">
-                <div className="rd-tabs" role="tablist" aria-label="Authentication tabs">
-                  <button
-                    type="button"
-                    className={`rd-tab ${authView === "guest" ? "active" : ""}`}
-                    onClick={() => switchAuthView("guest")}
-                    disabled={busy}
-                    aria-label="Anon login"
-                    role="tab"
-                    aria-selected={authView === "guest"}
-                  >
-                    Anon
-                  </button>
-                  <button
-                    type="button"
-                    className={`rd-tab ${authView === "register" ? "active" : ""}`}
-                    onClick={() => switchAuthView("register")}
-                    disabled={busy}
-                    aria-label="Register"
-                    role="tab"
-                    aria-selected={authView === "register"}
-                  >
-                    Register
-                  </button>
-                  <button
-                    type="button"
-                    className={`rd-tab ${authView === "login" ? "active" : ""}`}
-                    onClick={() => switchAuthView("login")}
-                    disabled={busy}
-                    aria-label="Login"
-                    role="tab"
-                    aria-selected={authView === "login"}
-                  >
-                    Login
-                  </button>
-                </div>
-
-                <div className="rd-card-body">
-                  {lastError ? (
-                    <div
-                      role="alert"
-                      aria-live="polite"
-                      style={{
-                        color: "#ff848f",
-                        background: "rgba(120, 8, 18, 0.35)",
-                        border: "1px solid rgba(255, 90, 100, 0.5)",
-                        borderRadius: 8,
-                        padding: "10px 12px",
-                        marginBottom: 12
-                      }}
-                    >
-                      {lastError}
-                    </div>
-                  ) : null}
-
-                  {authInfo ? <div style={{ color: "#ff7a88", marginBottom: 12 }}>{authInfo}</div> : null}
-                  {pendingVerificationEmail !== null ? (
-                    <div style={{ color: "var(--muted)", marginBottom: 12 }}>
-                      Check the email or phone associated with your account. Contact support if your code does not arrive.
-                    </div>
-                  ) : null}
-
-                  {authView === "guest" ? (
-                    <div className="rd-row">
-                      <button type="button" className="rd-btn primary" onClick={() => void createGuest()} disabled={busy} aria-label="Create guest session">
-                        Continue as a guest
-                      </button>
-                    </div>
-                  ) : null}
-
-                  <p className="rd-auth-note"><Icon name="shield" />For adults 18 and over. You choose what to share.</p>
-
-                  {authView === "register" && (googleRegistration ? (
-                    <div className="rd-row">
-                      <span>Google account selected</span>
-                      <button type="button" className="rd-btn" disabled={busy} onClick={() => setGoogleRegistration(null)}>Use email and password</button>
-                    </div>
-                  ) : <GoogleSignInButton key="google-register" api={api} register disabled={busy} onCredential={credential => {
-                    setGoogleRegistration(credential);
-                    setLastError(null);
-                    setAuthInfo("");
-                    return true;
-                  }} />)}
-                  {authView === "register" || authView === "login" ? (
-                    <form
-                      key={authView}
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void (authView === "register" ? submitRegister() : submitLogin());
-                      }}
-                    >
-                      {(!googleRegistration || authView === "login") && (
-                        <>
-                          <label className="rd-field">
-                            <span className="rd-label">Email</span>
-                            <input className="rd-input" value={authView === "register" ? registerEmail : loginEmail}
-                              onChange={(e) => (authView === "register" ? setRegisterEmail : setLoginEmail)(e.target.value)}
-                              type="email" autoComplete="username" autoCapitalize="none" aria-label="Email" />
-                          </label>
-                          <label className="rd-field">
-                            <span className="rd-label">Password</span>
-                            <input className="rd-input" value={authView === "register" ? registerPassword : loginPassword}
-                              onChange={(e) => (authView === "register" ? setRegisterPassword : setLoginPassword)(e.target.value)}
-                              type="password" autoComplete={authView === "register" ? "new-password" : "current-password"} aria-label="Password" />
-                          </label>
-                        </>
-                      )}
-
-                      {authView === "register" ? (
-                        <label className="rd-field">
-                          <span className="rd-label">Display Name</span>
-                          <input className="rd-input" value={registerDisplayName} onChange={(e) => setRegisterDisplayName(e.target.value)} aria-label="Display name" />
-                        </label>
-                      ) : null}
-
-                      {authView === "register" ? (
-                        <label className="rd-field">
-                          <span className="rd-label">Age</span>
-                          <input
-                            className="rd-input"
-                            value={registerAge}
-                            onChange={(e) => setRegisterAge(e.target.value)}
-                            inputMode="numeric"
-                            aria-label="Age"
-                          />
-                        </label>
-                      ) : null}
-
-                      {authView === "register" ? (
-                        <label className="rd-field">
-                          <span className="rd-label">Phone (E.164, optional)</span>
-                          <input
-                            className="rd-input"
-                            value={phoneE164}
-                            onChange={(e) => setPhoneE164(e.target.value)}
-                            placeholder="+15555551234"
-                            aria-label="Phone number"
-                          />
-                        </label>
-                      ) : null}
-
-                      {authView === "register" ? (
-                        <label className="rd-field"><span className="rd-label">Invitation or referral code (optional)</span><input className="rd-input" value={promoCode} onChange={e => setPromoCode(e.target.value)} aria-label="Promo code" autoComplete="off" /></label>
-                      ) : null}
-                      {authView === "register" && policy?.status === "required" ? <label className="rd-field">
-                        <span><input type="checkbox" checked={acceptedPolicy} required onChange={event => setAcceptedPolicy(event.target.checked)} /> I accept the{" "}
-                          <a href={policy.terms.url} target="_blank" rel="noopener noreferrer">Terms of Service</a>{" "}and{" "}
-                          <a href={policy.privacy.url} target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
-                        </span>
-                      </label> : null}
-                      {authView === "register" && policy?.status === "unavailable" ? <div role="status">
-                        <p>Registration information is temporarily unavailable.</p>
-                        <button type="button" className="rd-btn" onClick={() => setPolicyRequest(current => current + 1)}>Retry</button>
-                      </div> : null}
-                      {authView === "register" ? <label className="rd-field"><span><input type="checkbox" checked={marketingConsent} onChange={event => setMarketingConsent(event.target.checked)} /> {MARKETING_CONSENT_LABEL}</span></label> : null}
-                      {authView === "register" ? <label className="rd-field" style={{ fontSize: 12, color: "var(--muted)" }}><span><input type="checkbox" checked={analyticsConsent} onChange={e => setAnalyticsConsent(e.target.checked)} /> Help improve Badehaus X (optional)</span><span>Share activity counts using a protected account identifier. Daily activity is kept for 35 days; inactive measurement records are deleted after 35 days. No message content, photos, or location. Change this in settings anytime.</span></label> : null}
-                      {authView === "register" && !googleRegistration ? (
-                        <div style={{ color: "var(--muted)", marginBottom: 10, fontSize: 13 }}>
-                          Use at least 10 characters with uppercase, lowercase, a number and a symbol.
-                        </div>
-                      ) : null}
-
-                      <div className="rd-row">
-                        <button type="submit" className="rd-btn primary" disabled={busy || (authView === "register" && !canRegister)} aria-label={authView === "register" ? "Register" : "Login"}>
-                          {authView === "register" ? "Register" : "Login"}
-                        </button>
-                      </div>
-                    </form>
-                  ) : null}
-
-                  {authView === "login" ? <>
-                    <GoogleSignInButton key="google-login" api={api} disabled={busy} onCredential={submitLogin} />
-                    <button type="button" className="rd-btn" onClick={() => { setRecoveryToken(""); setRecoveryOpen(true); }}>Forgot password?</button>
-                  </> : null}
-                  {pendingVerificationEmail !== null && (authView === "register" || authView === "login") ? (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void submitVerifyEmail();
-                      }}
-                    >
-                      <label className="rd-field">
-                        <span className="rd-label">Email</span>
-                        <input
-                          className="rd-input"
-                          value={pendingVerificationEmail}
-                          onChange={(e) => setPendingVerificationEmail(e.target.value)}
-                          type="email" autoComplete="email" autoCapitalize="none" aria-label="Verification email"
-                        />
-                      </label>
-
-                      <label className="rd-field">
-                        <span className="rd-label">6-digit verification code</span>
-                        <input
-                          className="rd-input"
-                          value={verificationCode}
-                          onChange={(e) => setVerificationCode(e.target.value)}
-                          inputMode="numeric"
-                          aria-label="Verification code"
-                        />
-                      </label>
-
-                      <div className="rd-row">
-                        <button type="submit" className="rd-btn primary" disabled={busy} aria-label="Verify email">
-                          Verify Email
-                        </button>
-                        <button type="button" className="rd-btn" disabled={busy} onClick={() => void resendVerificationCode()} aria-label="Resend verification code">
-                          Resend Code
-                        </button>
-                      </div>
-                    </form>
-                  ) : null}
-                </div>
-              </section>
+              {authentication}
 
               <section className="rd-card rd-home-hero" aria-label="Welcome to Badehaus X">
                 <div className="rd-card-body">

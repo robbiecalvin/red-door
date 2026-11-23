@@ -55,6 +55,7 @@ export type CustomerImportSettings = {
   locationConsentAtMs?: number;
 };
 export type PlusData = {
+  adultVideoFavorites?: string[];
   customerImport?: CustomerImportSettings;
   payoutContact?: PayoutContact;
   registrationPolicy?: PolicyAcceptanceRecord;
