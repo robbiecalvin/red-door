@@ -11,7 +11,7 @@ export function availableBackroomArticles(now = Date.now()) {
   return entries.filter(entry => Date.parse(`${entry.date}T10:00:00-08:00`) <= now);
 }
 
-export function writeBackroomArticles(articles, baseUrl, classifiedsPaths) {
+export function writeBackroomArticles(articles, baseUrl, additionalPaths) {
   const indexPath = "dist/thebackroom/index.html";
   const index = fs.readFileSync(indexPath, "utf8");
   for (const entry of articles) {
@@ -74,7 +74,7 @@ ${content}
   fs.writeFileSync(cruisingArticle, fs.readFileSync(cruisingArticle, "utf8").replace("</main>",
     '<p><a href="../../gay-cruising/">Read the gay cruising guide</a></p></main>'));
 
-  const paths = ["", "gay-cruising/", "gay-porn/", "vancouver/", "thebackroom/", ...classifiedsPaths, ...articleSlugs.map(slug => `thebackroom/${slug}/`)];
+  const paths = ["", "gay-cruising/", "gay-porn/", "vancouver/", "thebackroom/", ...additionalPaths, ...articleSlugs.map(slug => `thebackroom/${slug}/`)];
   fs.writeFileSync("dist/robots.txt", `User-agent: *\nSitemap: ${baseUrl}sitemap.xml\n`);
   fs.writeFileSync("dist/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

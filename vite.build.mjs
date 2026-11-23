@@ -136,9 +136,9 @@ async function main() {
     fs.writeFileSync(`dist/${slug}/index.html`,
       fs.readFileSync(`editorial/${slug}.html`, "utf8").replaceAll("https://badehausx.com/", normalizedUrl));
   }
-  writeAdultCatalogPages(process.env.ADULT_CATALOG_DIR, normalizedUrl, escapeHtml);
+  const catalogPaths = writeAdultCatalogPages(process.env.ADULT_CATALOG_DIR, normalizedUrl, escapeHtml);
   const classifiedsPaths = writeClassifiedPages(cities, normalizedUrl, escapeHtml);
-  writeBackroomArticles(backroomArticles, normalizedUrl, classifiedsPaths);
+  writeBackroomArticles(backroomArticles, normalizedUrl, [...classifiedsPaths, ...catalogPaths]);
   writePwaBuild();
   if(!publicBase.hostname.endsWith("github.io"))fs.writeFileSync("dist/CNAME",publicBase.hostname+"\n");
 }
