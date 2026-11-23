@@ -1,3 +1,4 @@
+import { EXPLOITATION_REPORT_REASON, UNDERAGE_REPORT_REASON } from "../../../shared/childSafety";
 import React, { useEffect, useRef, useState } from "react";
 import { DEFAULT_MEMBER, INTERESTS, INTENTS, PROFILE_PROMPTS, PROFILE_LINK_LABELS, RIGHT_NOW_DURATIONS_MINUTES, isRightNow, type ProfileLinkPlatform, type ProfileLinks, type MemberSettings, type MemberPreferences, type PublicMember, type PhotoVerification } from "../../../shared/member";
 import { apiClient, uploadToLocalSignedUrl, type Session } from "./api";
@@ -176,7 +177,7 @@ export function MemberPrivacy(props:Props){
   const {data,error,busy,save}=useMember(props);if(!props.session.userId)return null;
   return <section className="rd-card rd-settings-body"><h2>Your location. Your choice.</h2><p className="rd-muted">Map coordinates are randomized and distances are approximate. Location sharing is optional.</p><label className="rd-setting-toggle"><span><strong>Hide my location</strong><small>Remove your map presence and distance from discovery. Your profile can still appear in People.</small></span><input type="checkbox" checked={data?.preferences.hideLocation ?? false} disabled={busy||!data} onChange={e=>void save({hideLocation:e.target.checked})} /></label><label className="rd-setting-toggle"><span><strong>Hide my profile</strong><small>Remove your personal profile from the People grid and map. Existing chats remain available.</small></span><input type="checkbox" checked={Boolean(data?.preferences.hideProfile || data?.preferences.incognito)} disabled={busy||!data} onChange={e=>{void save({hideProfile:e.target.checked,incognito:false});}} /></label><p className="rd-caption">These settings stop future discovery and location updates; they cannot erase information someone already saw. Blocking and reporting remain free.</p>{error?<p role="alert" className="rd-error">{error}</p>:null}</section>;
 }
-export function ProfileConversation({member,onReply}:{member?:PublicMember;onReply(excerpt:string):void}){if(!member)return null;return <section className="rd-profile-conversation"><ProfileExternalLinks member={member} /><VerifiedBadge verified={member.photoVerified}/><IntentBadge member={member}/>{member.interests.length?<div className="rd-interest-picker">{member.interests.map(i=><span className="rd-interest-chip" key={i}>{i}</span>)}</div>:null}{member.prompts.map(p=><div className="rd-profile-prompt" key={p.prompt}><span>{p.prompt}</span><p>{p.answer}</p><button className="rd-btn" onClick={()=>onReply(`${p.prompt} ${p.answer}`)}>Reply to this answer</button></div>)}</section>;}
+export function ProfileConversation({member,onReply}:{member?:PublicMember;onReply?(excerpt:string):void}){if(!member)return null;return <section className="rd-profile-conversation"><ProfileExternalLinks member={member} /><VerifiedBadge verified={member.photoVerified}/><IntentBadge member={member}/>{member.interests.length?<div className="rd-interest-picker">{member.interests.map(i=><span className="rd-interest-chip" key={i}>{i}</span>)}</div>:null}{member.prompts.map(p=><div className="rd-profile-prompt" key={p.prompt}><span>{p.prompt}</span><p>{p.answer}</p>{onReply && <button className="rd-btn" onClick={()=>onReply(`${p.prompt} ${p.answer}`)}>Reply to this answer</button>}</div>)}</section>;}
 export function PhotoVerificationPanel(props:Props){
   const {data,error,refresh}=useMember(props),[busy,setBusy]=useState(false),[message,setMessage]=useState("");if(!props.session.userId)return null;
   const verification=data?.verification;
@@ -196,13 +197,101 @@ export function PhotoReviewQueue(props:Props){
 }
 export function ReportMemberButton({api,session,peerKey}:Props&{peerKey:string}){
   const [open,setOpen]=useState(false),[reason,setReason]=useState("Harassment or unwanted contact"),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
-  return <><button className="rd-btn" onClick={()=>setOpen(true)}>Report profile</button>{open?<div className="rd-report-inline" role="group" aria-label="Report profile"><label className="rd-field"><span>Reason</span><select className="rd-input" value={reason} onChange={e=>setReason(e.target.value)}>{["Harassment or unwanted contact","Impersonation or misleading photos","Spam or scam","Underage concern","Other safety concern"].map(r=><option key={r}>{r}</option>)}</select></label><div className="rd-row"><button className="rd-btn primary" disabled={busy} onClick={()=>{setBusy(true);void api.reportUser(session.sessionToken,peerKey,reason).then(()=>{setMessage("Report sent for review. You can also block this member.");setOpen(false);}).catch(e=>setMessage(e.message)).finally(()=>setBusy(false));}}>Send report</button><button className="rd-btn" onClick={()=>setOpen(false)}>Cancel</button></div></div>:null}{message?<p role="status" className="rd-caption">{message}</p>:null}</>;
+  return <><button className="rd-btn" onClick={()=>setOpen(true)}>Report profile</button>{open?<div className="rd-report-inline" role="group" aria-label="Report profile"><label className="rd-field"><span>Reason</span><select className="rd-input" value={reason} onChange={e=>setReason(e.target.value)}>{["Harassment or unwanted contact","Impersonation or misleading photos","Spam or scam",UNDERAGE_REPORT_REASON,EXPLOITATION_REPORT_REASON,"Other safety concern"].map(r=><option key={r}>{r}</option>)}</select></label><div className="rd-row"><button className="rd-btn primary" disabled={busy} onClick={()=>{setBusy(true);void api.reportUser(session.sessionToken,peerKey,reason).then(()=>{setMessage("Report sent for review. You can also block this member.");setOpen(false);}).catch(e=>setMessage(e.message)).finally(()=>setBusy(false));}}>Send report</button><button className="rd-btn" onClick={()=>setOpen(false)}>Cancel</button></div></div>:null}{message?<p role="status" className="rd-caption">{message}</p>:null}</>;
 }
+export function ReportProfileMediaButton({ api, session, mediaId, video, reportPath, context, labelOverride }: Props & { mediaId: string; video: boolean; reportPath?: string; context?: Record<string, string>; labelOverride?: string }) {
+  const reasons = ["Sexual or explicit content", UNDERAGE_REPORT_REASON, EXPLOITATION_REPORT_REASON, "Harassment or abuse", "Other safety concern"];
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState(reasons[0]);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+  const label = labelOverride ?? (video ? "Report this video" : "Report this photo");
+
+  async function submit() {
+    setBusy(true);
+    setError("");
+    try {
+      await api.memberRequest(session.sessionToken, reportPath ?? `/media-review/published/${encodeURIComponent(mediaId)}/report`, { ...context, mediaId, reason });
+      setSent(true);
+      setOpen(false);
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div>
+    {!open && !sent && <button className="rd-btn" type="button" onClick={() => setOpen(true)}>{label}</button>}
+    {open && <form className="rd-report-inline" aria-label={label} onSubmit={event => { event.preventDefault(); void submit(); }}>
+      <label className="rd-field"><span>Reason</span><select className="rd-input" value={reason} onChange={event => setReason(event.target.value)}>
+        {reasons.map(option => <option key={option}>{option}</option>)}
+      </select></label>
+      <div className="rd-row">
+        <button className="rd-btn primary" type="submit" disabled={busy}>Send report</button>
+        <button className="rd-btn" type="button" disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+    </form>}
+    {sent && <p role="status">Report sent for review.</p>}
+    {error && <p role="alert">{error}</p>}
+  </div>;
+}
+
+function ReportedProfileMedia({ api, session, reportId, mediaId }: Props & { reportId: string; mediaId: string }) {
+  const [preview, setPreview] = useState<{ url: string; video: boolean }>();
+  const [busy, setBusy] = useState(false);
+  const [reason, setReason] = useState("");
+  const [removed, setRemoved] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+
+  async function perform(action: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try { await action(); }
+    catch (error) { setError((error as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  return <div>
+    <button type="button" className="rd-btn" disabled={busy} onClick={() => void perform(async () => {
+      const file = await api.memberPhoto(session.sessionToken, reportId, "reported-media");
+      setPreview({ url: URL.createObjectURL(file), video: file.type.startsWith("video/") });
+    })}>View reported media</button>
+    {preview && <div>
+      {preview.video ? <video controls src={preview.url} style={{ maxWidth: "100%" }} /> :
+        <img src={preview.url} alt="Reported profile media" style={{ maxWidth: "100%", maxHeight: 420 }} />}
+      {!removed && <form onSubmit={event => { event.preventDefault(); void perform(async () => {
+        await api.memberRequest(session.sessionToken, `/admin/media-review/${encodeURIComponent(mediaId)}/decision`, { action: "removed", reason });
+        setRemoved(true);
+      }); }}>
+        <label className="rd-field"><span>Removal reason</span><input className="rd-input" value={reason} maxLength={500} onChange={event => setReason(event.target.value)} /></label>
+        <button type="submit" className="rd-btn" disabled={busy || !reason.trim()}>Remove reported media</button>
+      </form>}
+    </div>}
+    {removed && <p role="status">Reported media removed.</p>}
+    {error && <p role="alert">{error}</p>}
+  </div>;
+}
+
 export function SafetyReportQueue(props:Props){
-  type Report={reportId:string;reason:string;createdAtMs:number;target:{kind:string;targetKey?:string;messageId?:string;postingId?:string;conversationId?:string;broadcastId?:string;text?:string}};
+  type Report={reportId:string;reason:string;createdAtMs:number;childSafetyPriority?: "underage" | "exploitation";target:{kind:string;targetKey?:string;messageId?:string;postingId?:string;conversationId?:string;broadcastId?:string;mediaId?:string;text?:string}};
   const [reports,setReports]=useState<Report[]>([]),[error,setError]=useState(""),[message,setMessage]=useState("");
-  async function refresh(){try{const r=await props.api.memberRequest<{reports:Report[]}>(props.session.sessionToken,"/admin/safety-reports");setReports(r.reports);}catch(e){setError((e as Error).message);}}
+  const [childQueue, setChildQueue] = useState(false);
+  const [canReviewChildSafety, setCanReviewChildSafety] = useState(false);
+  async function refresh(priority = childQueue) {
+    setError("");
+    try {
+      const result = await props.api.memberRequest<{ reports: Report[]; canReviewChildSafety?: boolean }>(
+        props.session.sessionToken, priority ? "/admin/safety-reports?queue=child-safety" : "/admin/safety-reports");
+      setReports(result.reports);
+      setCanReviewChildSafety(Boolean(result.canReviewChildSafety));
+      setChildQueue(priority);
+    } catch (error) { setError((error as Error).message); }
+  }
   useEffect(()=>{if(props.session.role==="admin")void refresh();},[props.api,props.session.sessionToken]);if(props.session.role!=="admin")return null;
-  return <section className="rd-card rd-settings-body"><h2>Safety reports</h2><p className="rd-caption">Latest 200 reports. Review the evidence before taking action. Community plans can be canceled from Community.</p><button className="rd-btn" onClick={()=>void refresh()}>Refresh safety reports</button>{!reports.length?<p>No reports.</p>:null}{reports.map(r=><article className="rd-review-request" key={r.reportId}><strong>{r.target.kind === "broadcast" ? "Live broadcast report" : r.target.kind === "group-dm-message" ? "Group conversation report" : r.target.kind === "group-message" ? "Group discussion report" : r.target.kind === "message" ? "Message report" : "Member or plan report"}</strong><p>{r.reason}</p>{r.target.kind === "group-message" || r.target.kind === "group-dm-message" ? <><blockquote>{r.target.text}</blockquote><small>{r.target.postingId ?? r.target.conversationId}</small></> : null}<small>{new Date(r.createdAtMs).toLocaleString()}</small>{r.target.targetKey?.startsWith("user:")?<button className="rd-btn" disabled={r.target.targetKey===`user:${props.session.userId}`} onClick={()=>void props.api.adminBanUser(props.session.sessionToken,r.target.targetKey!.slice(5),`Safety review: ${r.reason}`).then(()=>setMessage("Member banned. Existing moderation controls can reverse this action.")).catch(e=>setError(e.message))}>Ban reported member</button>:null}{r.target.broadcastId ? <small>Broadcast {r.target.broadcastId}</small> : null}<small>Reference: {r.reportId}</small></article>)}{error?<p role="alert" className="rd-error">{error}</p>:null}{message?<p role="status">{message}</p>:null}</section>;
+  return <section className="rd-card rd-settings-body"><h2>Safety reports</h2><p className="rd-caption">Latest 200 reports. Review the evidence before taking action. Community plans can be canceled from Community.</p><button className="rd-btn" onClick={()=>void refresh()}>Refresh safety reports</button>{canReviewChildSafety && <button type="button" className="rd-btn" onClick={() => void refresh(!childQueue)}>
+    {childQueue ? "General reports" : "Child safety reports"}</button>}{!reports.length?<p>No reports.</p>:null}{reports.map(r=><article className="rd-review-request" key={r.reportId}><strong>{r.target.mediaId ? (r.target.kind === "profile-media" ? "Profile media report" : `${r.target.kind.replace("-", " ")} report`) : r.target.kind === "broadcast" ? "Live broadcast report" : r.target.kind === "group-dm-message" ? "Group conversation report" : r.target.kind === "group-message" ? "Group discussion report" : r.target.kind === "message" ? "Message report" : "Member or plan report"}</strong><p>{r.reason}</p>{r.childSafetyPriority && r.target.text && r.target.kind === "message" && <blockquote>{r.target.text}</blockquote>}{r.target.mediaId && <><small>Media reference {r.target.mediaId}</small><ReportedProfileMedia api={props.api} session={props.session} reportId={r.reportId} mediaId={r.target.mediaId} /></>}{r.target.kind === "group-message" || r.target.kind === "group-dm-message" ? <><blockquote>{r.target.text}</blockquote><small>{r.target.postingId ?? r.target.conversationId}</small></> : null}<small>{new Date(r.createdAtMs).toLocaleString()}</small>{r.target.targetKey?.startsWith("user:")?<button className="rd-btn" disabled={r.target.targetKey===`user:${props.session.userId}`} onClick={()=>void props.api.adminBanUser(props.session.sessionToken,r.target.targetKey!.slice(5),`Safety review: ${r.reason}`).then(()=>setMessage("Member banned. Existing moderation controls can reverse this action.")).catch(e=>setError(e.message))}>Ban reported member</button>:null}{r.target.broadcastId ? <small>Broadcast {r.target.broadcastId}</small> : null}<small>Reference: {r.reportId}</small></article>)}{error?<p role="alert" className="rd-error">{error}</p>:null}{message?<p role="status">{message}</p>:null}</section>;
 }
 export function PrivacyBlockList(props:Props){const [blocked,setBlocked]=useState<string[]>([]),[error,setError]=useState("");async function refresh(){try{setBlocked([...(await props.api.listBlocked(props.session.sessionToken)).blocked]);}catch(e){setError((e as Error).message);}}useEffect(()=>{void refresh();},[props.api,props.session.sessionToken]);return <section className="rd-card rd-settings-body"><h2>Blocked members</h2><p className="rd-caption">Blocking stops messages and map interactions in both directions. This control is free for members and guests.</p>{!blocked.length?<p>No blocked members.</p>:blocked.map((key,index)=><div className="rd-row" key={key}><span>{key.startsWith("session:") || key.startsWith("guest:")?"Anon":`Blocked member ${index+1}`}</span><button className="rd-btn" onClick={()=>void props.api.unblock(props.session.sessionToken,key).then(()=>{window.dispatchEvent(new Event("rd:member-updated"));void refresh();}).catch(e=>setError(e.message))}>Unblock</button></div>)}{error?<p role="alert">{error}</p>:null}</section>;}

@@ -12,6 +12,7 @@ export function installMemberRoutes(app:Express,deps:{
   admin(req:Request,res:Response):Session|null;
   persist():Promise<void>; privatePhoto(media:MediaRecord):Promise<{data:Buffer;mimeType:string}|null>;
   push:{publicKey:string;configured:boolean};
+  googlePlayEdition?: boolean;
   privacyChanged?(key:string,hideProfile:boolean):void;
 }) {
   const {auth,profiles,media,member}=deps;
@@ -20,8 +21,14 @@ export function installMemberRoutes(app:Express,deps:{
   async function removeProof(userId:string) {const v=auth.getUser(userId)?.plusData?.photoVerification;if(v?.proofMediaId){const m=await media.getById(v.proofMediaId);if(m?.kind==="photo_verification" && m.userId===userId)await deps.storage.deleteObject?.({bucket:deps.bucket,key:m.objectKey});}}
   async function purgeProofs(){for(const id of auth.listRegisteredUserIds()){const v=auth.getUser(id)?.plusData?.photoVerification;if(v?.status==="pending"&&v.expiresAtMs<=Date.now()){await removeProof(id);await save(id,{photoVerification:{...v,status:"rejected",proofMediaId:undefined,reason:"Photo review request expired. Please submit again."}});}}}
   const cleanup=setInterval(()=>void purgeProofs().catch(()=>{}),3600000);cleanup.unref();void purgeProofs().catch(()=>{});
-  app.get("/members/me",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;let v=a.user.plusData?.photoVerification;const profile=await profiles.getByUserId(a.user.id);if(v?.status==="approved" && v.mainPhotoMediaId!==profile?.mainPhotoMediaId)v={...v,status:"outdated",reason:"Your main photo changed. Request a fresh review for the new photo."};res.json({preferences:currentMember(auth.getUser(a.user.id)?.plusData?.member),verification:v ?? null,plus:hasPlus(a.session)});}));
-  app.put("/members/me",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;const preferences=updateMember(a.user.plusData?.member,req.body,a.session);await save(a.user.id,{member:preferences});if(preferences.hideLocation || preferences.incognito || preferences.hideProfile)deps.privacyChanged?.(`user:${a.user.id}`,Boolean(preferences.incognito || preferences.hideProfile));res.json({preferences,plus:hasPlus(a.session),verification:auth.getUser(a.user.id)?.plusData?.photoVerification ?? null});}));
+  function preferencesForEdition(preferences: ReturnType<typeof currentMember>) {
+    if (!deps.googlePlayEdition) return preferences;
+    const { rightNowStartsAtMs, rightNowExpiresAtMs, ...socialPreferences } = preferences;
+    return socialPreferences;
+  }
+
+  app.get("/members/me",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;let v=a.user.plusData?.photoVerification;const profile=await profiles.getByUserId(a.user.id);if(v?.status==="approved" && v.mainPhotoMediaId!==profile?.mainPhotoMediaId)v={...v,status:"outdated",reason:"Your main photo changed. Request a fresh review for the new photo."};res.json({preferences:preferencesForEdition(currentMember(auth.getUser(a.user.id)?.plusData?.member)),verification:v ?? null,plus:hasPlus(a.session)});}));
+  app.put("/members/me",wrap(async(req,res)=>{const a=member(req,res);if(!a)return;if(deps.googlePlayEdition && ["rightNow","rightNowStartsAtMs","rightNowDurationMinutes"].some(key=>req.body?.[key]!==undefined))throw new MemberError("FEATURE_DISABLED","Use group plans in this edition.",403);const preferences=preferencesForEdition(updateMember(a.user.plusData?.member,req.body,a.session));await save(a.user.id,{member:preferences});if(preferences.hideLocation || preferences.incognito || preferences.hideProfile)deps.privacyChanged?.(`user:${a.user.id}`,Boolean(preferences.incognito || preferences.hideProfile));res.json({preferences,plus:hasPlus(a.session),verification:auth.getUser(a.user.id)?.plusData?.photoVerification ?? null});}));
   app.get("/members/automatic-replies", wrap(async (req, res) => {
     const actor = member(req, res);
     if (!actor) return;

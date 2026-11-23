@@ -1,3 +1,7 @@
+import { ApprovedPhotoPicker } from "../../app/ApprovedPhotoPicker";
+import { ReportProfileMediaButton } from "../../app/MemberPanels";
+import type { apiClient, Session } from "../../app/api";
+import { googlePlayEdition } from "../../app/edition";
 import { Icon } from "../../app/Icon";
 import { peekReply, clearReply } from "../../app/replyDraft";
 import { Sheet } from "../../app/Sheet";
@@ -79,10 +83,12 @@ export function ChatWindow({
   showHeader,
   fillHeight,
   presentation,
-  allowAttachments=true,
+  allowAttachments=!googlePlayEdition,
+  reviewedPhotos,
   authorLabelForKey
 }: Readonly<{
   allowAttachments?:boolean;
+  reviewedPhotos?: { api: ReturnType<typeof apiClient>; session: Session };
   readReceipts?: boolean;
   chatKind: ChatKind;
   peerKey: string;
@@ -140,6 +146,29 @@ export function ChatWindow({
     [sorted]
   );
 
+  const reviewToken = reviewedPhotos?.session.sessionToken;
+  const reviewedBlobUrls = useRef(new Map<string, string>());
+  useEffect(() => () => {
+    for (const url of reviewedBlobUrls.current.values()) URL.revokeObjectURL(url);
+    reviewedBlobUrls.current.clear();
+  }, [reviewToken, peerKey]);
+  useEffect(() => {
+    if (!reviewToken) return;
+    const visibleKeys = new Set(mediaObjectKeys);
+    const removed: string[] = [];
+    for (const [key, url] of reviewedBlobUrls.current) {
+      if (visibleKeys.has(key)) continue;
+      URL.revokeObjectURL(url);
+      reviewedBlobUrls.current.delete(key);
+      removed.push(key);
+    }
+    if (removed.length) setMediaUrlsByKey(previous => {
+      const next = { ...previous };
+      for (const key of removed) delete next[key];
+      return next;
+    });
+  }, [mediaObjectKeys, reviewToken]);
+
   useEffect(() => {
     let cancelled = false;
     async function loadMissingMediaUrls(): Promise<void> {
@@ -147,7 +176,15 @@ export function ChatWindow({
         if (cancelled) return;
         if (mediaUrlsByKey[key]) continue;
         try {
-          const url = await client.getMediaUrl(key);
+          let url = await client.getMediaUrl(key);
+          if (reviewToken && key.startsWith("review-photo:")) {
+            const response = await fetch(url, { headers: { "x-session-token": reviewToken }, cache: "no-store" });
+            if (!response.ok) continue;
+            const blob = await response.blob();
+            if (cancelled) return;
+            url = URL.createObjectURL(blob);
+            reviewedBlobUrls.current.set(key, url);
+          }
           if (cancelled) return;
           setMediaUrlsByKey((prev) => ({ ...prev, [key]: url }));
         } catch {
@@ -159,10 +196,11 @@ export function ChatWindow({
     return () => {
       cancelled = true;
     };
-  }, [client, mediaObjectKeys, mediaUrlsByKey]);
+  }, [client, mediaObjectKeys, mediaUrlsByKey, reviewToken]);
 
   const [replyQuote,setReplyQuote]=useState(()=>peekReply(peerKey));
   useEffect(()=>{clearReply(peerKey);const reply=(event:Event)=>{const detail=(event as CustomEvent<{peerKey:string;quote:string}>).detail;if(detail.peerKey===peerKey)setReplyQuote(detail.quote);};window.addEventListener("rd:compose-reply",reply);return()=>window.removeEventListener("rd:compose-reply",reply);},[peerKey]);
+  const [reviewedPhotoOpen, setReviewedPhotoOpen] = useState(false);
   const [failedMessage, setFailedMessage] = useState<{text:string; media?:ChatMediaAttachment} | null>(null);
   async function onSend(media?: ChatMediaAttachment, retryText?: string): Promise<void> {
     const draftText=draft.trim();
@@ -369,7 +407,7 @@ export function ChatWindow({
 
   return (
     <section
-      className={`rd-chat-window ${boardMode ? "is-board" : "is-direct-chat"} ${allowAttachments ? "" : "is-text-only"}`}
+      className={`rd-chat-window ${boardMode ? "is-board" : "is-direct-chat"} ${allowAttachments || reviewedPhotos ? "" : "is-text-only"}`}
       aria-label="Chat"
       style={{
         background: isEdgeToEdge ? "transparent" : "#000000",
@@ -538,6 +576,12 @@ export function ChatWindow({
                     </div>
                   ) : null}
                 </div> : null}
+                {reviewedPhotos && !mine && m.media?.kind === "image" && m.media.objectKey.startsWith("review-photo:") &&
+                  <ReportProfileMediaButton {...reviewedPhotos} mediaId={m.media.objectKey.slice("review-photo:".length)} video={false}
+                    reportPath="/chat/media/report" context={{ chatKind, messageId: m.messageId, peerKey }} />}
+                {reviewedPhotos && !mine && !m.media && m.text && m.text !== "Message unavailable while under safety review." &&
+                  <ReportProfileMediaButton {...reviewedPhotos} mediaId={m.messageId} video={false} labelOverride="Report message"
+                    reportPath="/report/message" context={{ chatKind, messageId: m.messageId, targetKey: m.fromKey }} />}
                 {!boardMode ? <time className="rd-chat-time" dateTime={new Date(m.createdAtMs).toISOString()}>{formatTime(m.createdAtMs)}</time> : null}
                 {!boardMode ? <button type="button" className="rd-message-reply" aria-label="Reply to message" onClick={()=>setReplyQuote(m.media ? `${m.media.kind === "image" ? "Photo" : m.media.kind === "video" ? "Video" : "Voice message"}${m.text ? `: ${m.text.slice(0,120)}` : ""}` : location ? "Shared location" : displayMessageText(m.text).slice(0,180))}>Reply</button> : null}
                 {mine && !boardMode ? (
@@ -595,6 +639,13 @@ export function ChatWindow({
             aria-label={boardMode ? "Write a post" : "Message text"}
           />
         </label>
+        {reviewedPhotos && <button className="rd-btn" type="button" disabled={sending} onClick={() => setReviewedPhotoOpen(true)}>Photo</button>}
+        {reviewedPhotos && reviewedPhotoOpen && <Sheet title="Send an approved photo" onClose={() => setReviewedPhotoOpen(false)}>
+          <ApprovedPhotoPicker {...reviewedPhotos} destination="chat-photo" action="Send photo" disabled={sending} onChoose={async id => {
+            setReviewedPhotoOpen(false);
+            await onSend({ kind: "image", objectKey: `review-photo:${id}`, mimeType: "image/jpeg" });
+          }} />
+        </Sheet>}
         <div style={{ position: "relative",display:allowAttachments?"block":"none" }}>
           <input
             ref={fileInputRef}

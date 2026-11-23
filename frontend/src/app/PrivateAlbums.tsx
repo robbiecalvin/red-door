@@ -1,3 +1,6 @@
+import { googlePlayEdition } from "./edition";
+import { ApprovedPhotoPicker } from "./ApprovedPhotoPicker";
+import { ReportProfileMediaButton } from "./MemberPanels";
 import React, { useEffect, useState } from "react";
 import { uploadToLocalSignedUrl, type apiClient, type PlusStatus, type Session } from "./api";
 
@@ -8,7 +11,24 @@ type Album = Awaited<ReturnType<Props["api"]["getPrivateAlbum"]>>;
 type State = "unavailable" | "available" | "pending" | "approved";
 const route = "/plus/album-requests";
 
-function AlbumPhotos({ album, remove }: { album: Album | null; remove?: (id: string) => void }) {
+function ProtectedAlbumPhoto({ url, token }: { url: string; token: string }) {
+  const [photo, setPhoto] = useState<{ source: string; url: string }>();
+  useEffect(() => {
+    let active = true;
+    let blobUrl: string | undefined;
+    void fetch(url, { headers: { "x-session-token": token }, cache: "no-store" }).then(async response => {
+      if (!response.ok) return;
+      const blob = await response.blob();
+      if (!active) return;
+      blobUrl = URL.createObjectURL(blob);
+      setPhoto({ source: url, url: blobUrl });
+    }).catch(() => {});
+    return () => { active = false; if (blobUrl) URL.revokeObjectURL(blobUrl); };
+  }, [url, token]);
+  return photo?.source === url ? <img src={photo.url} alt="Private album photo" /> : null;
+}
+
+function AlbumPhotos({ album, remove, report, token }: { album: Album | null; token: string; remove?: (id: string) => void; report?: (id: string) => React.ReactNode }) {
   const [expired, setExpired] = useState<Album | null>(null);
   useEffect(() => {
     if (!album) return;
@@ -17,7 +37,8 @@ function AlbumPhotos({ album, remove }: { album: Album | null; remove?: (id: str
   }, [album]);
   if (!album || album === expired) return null;
   return <div className="rd-private-grid">{album.photos.map(photo => <div key={photo.mediaId}>
-    <img src={photo.downloadUrl} alt="Private album photo" />
+    {googlePlayEdition ? <ProtectedAlbumPhoto url={photo.downloadUrl} token={token} /> : <img src={photo.downloadUrl} alt="Private album photo" />}
+    {report?.(photo.mediaId)}
     {remove ? <button type="button" className="rd-btn" onClick={() => remove(photo.mediaId)}>Remove</button> : null}
   </div>)}</div>;
 }
@@ -44,7 +65,7 @@ export function RequestPrivateAlbum({ api, session, ownerId }: Props & { ownerId
       setError("");
       void api.memberRequest<{ status: State }>(token, path, {}).then(result => setState(result.status))
         .catch(cause => setError(cause.message || "Unable to request this album.")).finally(() => setBusy(false));
-    }}>Request Private Album</button> : <p role="status">{state === "pending" ? "Private album request pending." : "Album shared with you. Open it in Settings → Private album."}</p>}
+    }}>Request Private Album</button> : <p role="status">{state === "pending" ? "Private album request pending." : "Album shared with you. Open it in Settings → Photos."}</p>}
     {error ? <p className="rd-error" role="alert">{error}</p> : null}
   </div>;
 }
@@ -53,7 +74,7 @@ export function PrivateAlbumsSettings({ api, session }: Props) {
   const [status, setStatus] = useState<PlusStatus | null>(null);
   const [queue, setQueue] = useState<Queue | null>(null);
   const [owned, setOwned] = useState<Album | null>(null);
-  const [viewed, setViewed] = useState<{ name: string; album: Album } | null>(null);
+  const [viewed, setViewed] = useState<{ id: string; name: string; album: Album } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { userId, sessionToken: token } = session;
@@ -104,13 +125,15 @@ export function PrivateAlbumsSettings({ api, session }: Props) {
     <h2>Your private album</h2>
     {status ? <>
       <p>{status.privateMediaIds.length} / {status.limits.privateAlbum} photos</p>
-      <label className="rd-field"><span>Add a private photo</span><input type="file" accept="image/jpeg,image/png,image/webp"
+      {googlePlayEdition ? <ApprovedPhotoPicker api={api} session={session} destination="private-album" action="Add to album"
+        excluded={status.privateMediaIds} disabled={busy || status.privateMediaIds.length >= status.limits.privateAlbum}
+        onChoose={id => save([...status.privateMediaIds, id])} /> : <label className="rd-field"><span>Add a private photo</span><input type="file" accept="image/jpeg,image/png,image/webp"
         disabled={busy || status.privateMediaIds.length >= status.limits.privateAlbum} onChange={event => {
           const file = event.target.files?.[0];
           event.target.value = "";
           if (file) void run(() => upload(file));
-        }} /></label>
-      <AlbumPhotos album={owned} remove={busy ? undefined : id => void run(() => save(status.privateMediaIds.filter(photo => photo !== id)))} />
+        }} /></label>}
+      <AlbumPhotos token={token} album={owned} remove={busy ? undefined : id => void run(() => save(status.privateMediaIds.filter(photo => photo !== id)))} />
     </> : null}
     <button type="button" className="rd-btn" disabled={busy} onClick={() => void run(refresh)}>Refresh album</button>
     <h3>Album requests</h3>
@@ -129,10 +152,12 @@ export function PrivateAlbumsSettings({ api, session }: Props) {
       <span>{row.name}</span>
       <button type="button" className="rd-btn" disabled={busy} onClick={() => void run(async () => {
         setViewed(null);
-        setViewed({ name: row.name, album: await api.getPrivateAlbum(token, row.id) });
+        setViewed({ id: row.id, name: row.name, album: await api.getPrivateAlbum(token, row.id) });
       })}>Open album</button>
     </div>) : queue ? <p>No albums have been shared with you.</p> : null}
-    {viewed ? <><h4>{viewed.name}’s album</h4><AlbumPhotos album={viewed.album} /></> : null}
+    {viewed ? <><h4>{viewed.name}’s album</h4><AlbumPhotos token={token} album={viewed.album} report={googlePlayEdition ? mediaId =>
+      <ReportProfileMediaButton api={api} session={session} mediaId={mediaId} video={false}
+        reportPath={`/plus/albums/${encodeURIComponent(viewed.id)}/photos/${encodeURIComponent(mediaId)}/report`} /> : undefined} /></> : null}
     {error ? <p className="rd-error" role="alert">{error}</p> : null}
   </section>;
 }

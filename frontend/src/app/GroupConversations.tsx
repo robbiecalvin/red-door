@@ -1,3 +1,5 @@
+import { EXPLOITATION_REPORT_REASON, UNDERAGE_REPORT_REASON } from "../../../shared/childSafety";
+import { googlePlayEdition } from "./edition";
 import React, { useEffect, useState } from "react";
 import type { apiClient, Session } from "./api";
 import { Sheet } from "./Sheet";
@@ -125,6 +127,10 @@ export function GroupConversations({ api, session, peerId, candidates, onClose }
             setReporting(""); setReportSent(true);
           });
         }}>
+          {googlePlayEdition && <div className="rd-row">
+            {[UNDERAGE_REPORT_REASON, EXPLOITATION_REPORT_REASON].map(option => <button key={option}
+              className="rd-btn" type="button" onClick={() => setReason(option)}>{option}</button>)}
+          </div>}
           <label className="rd-field"><span>Report reason</span>
             <textarea className="rd-input" maxLength={500} value={reason} onChange={event => setReason(event.target.value)} />
           </label>

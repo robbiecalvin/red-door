@@ -1,3 +1,6 @@
+import { deletionPage } from "./AccountDeletion";
+import { INTERESTS } from "../../../shared/member";
+import { googlePlayEdition } from "./edition";
 import { AdminAnalytics } from "./AdminAnalytics";
 import { CustomerImport } from "./CustomerImport";
 import { PrivateAlbumsSettings, RequestPrivateAlbum } from "./PrivateAlbums";
@@ -17,7 +20,7 @@ import { permittedLocation } from "./location";
 import { AdminLaunchChecks } from "./AdminLaunchChecks";
 import { BillingSettings, PromoCodeForm } from "./BillingSettings";
 import { actorKey } from "../../../shared/identity";
-import { MemberProfileLinks, MemberPrivacy, PrivacyBlockList, ReportMemberButton, SafetyReportQueue, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, useMember } from "./MemberPanels";
+import { MemberProfileLinks, MemberPrivacy, PrivacyBlockList, ReportMemberButton, ReportProfileMediaButton, SafetyReportQueue, IntentBadge, RightNowBadge, VerifiedBadge, ProfileConversation, PhotoVerificationPanel, PhotoReviewQueue, useMember } from "./MemberPanels";
 import type { PublicMember } from "../../../shared/member";
 import { queueReply } from "./replyDraft";
 import { PlusMembershipCard } from "./PlusShowcase";
@@ -856,7 +859,7 @@ function CruiseSurface({
     async function refreshMapListings(): Promise<void> {
       try {
         const [spotsRes, groupsRes] = await Promise.all([
-          api.listCruisingSpots(session.sessionToken),
+          googlePlayEdition ? Promise.resolve({ spots: [] }) : api.listCruisingSpots(session.sessionToken),
           api.listPublicPostings("event", session.sessionToken)
         ]);
         if (!cancelled) {
@@ -1275,6 +1278,7 @@ function CruiseSurface({
         const rightNowExpiresAtMs = (liveProfile ?? profile)?.member?.rightNowExpiresAtMs;
         const stats = profile?.stats;
         const isSelf = selectedProfileKey === meKey;
+        const browseOnly = googlePlayEdition && !session.userId;
         const unreadCount = unreadByProfileKey[selectedProfileKey] ?? 0;
         const scheduled = visiblePublicProfiles.find(profile => chatKeyFromProfileUserId(profile.userId) === selectedProfileKey);
         const isOnline = isSelf || (scheduled?.scheduledOnline ?? (activeGuestKeys.includes(selectedProfileKey) || onlinePeers.some(peer => peer.key === selectedProfileKey)));
@@ -1304,13 +1308,14 @@ function CruiseSurface({
           stats?.heightInches && `${Math.floor(stats.heightInches / 12)}′ ${stats.heightInches % 12}″`,
           stats?.weightLbs && `${stats.weightLbs} lbs`
         ].filter(Boolean);
-        const otherStats = [stats?.cockSizeInches && `${stats.cockSizeInches}″`, stats?.cutStatus, stats?.position, stats?.race].filter(Boolean);
+        const sexualStats = googlePlayEdition ? [] : [stats?.cockSizeInches && `${stats.cockSizeInches}″`, stats?.cutStatus, stats?.position];
+        const otherStats = [...sexualStats, stats?.race].filter(Boolean);
 
         return (
           <Sheet title={displayName} onClose={close} className="rd-member-profile">
             <div className="rd-member-profile-status">
               <span className={isOnline ? "is-online" : ""}>{isOnline ? "Online now" : scheduled?.recentlyActive ? "Recently active" : "Offline"}</span>
-              <RightNowBadge expiresAtMs={rightNowExpiresAtMs} />
+              {!googlePlayEdition && <RightNowBadge expiresAtMs={rightNowExpiresAtMs} />}
               {selectedProfileDistanceLabel ? <span>{selectedProfileDistanceLabel}</span> : null}
             </div>
             <div className="rd-member-profile-layout">
@@ -1323,6 +1328,8 @@ function CruiseSurface({
                       onError={activeId && activeUrl ? () => invalidateMediaUrl(activeId) : undefined} />
                   )}
                 </div>
+                {googlePlayEdition && !isSelf && activeId && activeUrl &&
+                  <ReportProfileMediaButton key={activeId} api={api} session={session} mediaId={activeId} video={activeId === profile?.videoMediaId} />}
                 {mediaIds.length > 1 ? <div className="rd-member-thumbnails" aria-label="Profile gallery">
                   {mediaIds.map((mediaId, index) => {
                     const isVideo = mediaId === profile?.videoMediaId;
@@ -1341,13 +1348,13 @@ function CruiseSurface({
                 {profile ? <>
                   <button className="rd-btn" type="button" aria-label="Favorite" aria-pressed={favorites.has(profile.userId)}
                     onClick={() => void toggleFavoriteFromProfile(profile.userId)}><Icon name="star" active={favorites.has(profile.userId)} /></button>
-                  <button className="rd-btn" type="button" aria-label="Send fire"
-                    onClick={() => void sendFireFromProfile(chatKeyFromProfileUserId(profile.userId))}><Icon name="flame" /></button>
+                  {!browseOnly && <button className="rd-btn" type="button" aria-label="Send fire"
+                    onClick={() => void sendFireFromProfile(chatKeyFromProfileUserId(profile.userId))}><Icon name="flame" /></button>}
                 </> : null}
                 <button className="rd-btn" type="button" aria-label={blockedKeys.has(selectedProfileKey) ? "Unblock" : "Block"}
                   onClick={() => void toggleBlockFromProfile(selectedProfileKey)}><Icon name="block" /></button>
                 <button className="rd-btn primary rd-member-message" type="button" onClick={message}>
-                  Message{unreadCount > 0 ? <span className="rd-member-unread" aria-label={`${unreadCount} unread`}>{unreadCount}</span> : null}
+                  {browseOnly ? "Create an account to message" : "Message"}{unreadCount > 0 ? <span className="rd-member-unread" aria-label={`${unreadCount} unread`}>{unreadCount}</span> : null}
                 </button>
               </div> : null}
               <div className="rd-member-profile-details">
@@ -1356,12 +1363,12 @@ function CruiseSurface({
                     {row.map((value, valueIndex) => <li key={valueIndex}>{value}</li>)}
                   </ul>
                 ) : null)}
-                <ProfileConversation member={profile?.member} onReply={reply} />
-                {!isSelf && selectedProfileKey.startsWith("user:") ? <RequestPrivateAlbum key={selectedProfileKey} api={api} session={session} ownerId={selectedProfileKey.slice(5)} /> : null}
+                <ProfileConversation member={profile?.member} onReply={browseOnly ? undefined : reply} />
+                {!browseOnly && !isSelf && selectedProfileKey.startsWith("user:") ? <RequestPrivateAlbum key={selectedProfileKey} api={api} session={session} ownerId={selectedProfileKey.slice(5)} /> : null}
                 <ProfileDetailsView stats={stats} />
                 {profile?.bio ? <div className="rd-member-bio"><h3>Bio</h3><p>{profile.bio}</p></div> : null}
                 {!isSelf ? <div className="rd-member-profile-secondary">
-                  {profile?.mainPhotoMediaId ? <button className="rd-btn" type="button" onClick={() => reply("Your profile photo")}>Reply to profile photo</button> : null}
+                  {!browseOnly && profile?.mainPhotoMediaId ? <button className="rd-btn" type="button" onClick={() => reply("Your profile photo")}>Reply to profile photo</button> : null}
                   <ReportMemberButton api={api} session={session} peerKey={selectedProfileKey} />
                 </div> : null}
               </div>
@@ -1566,6 +1573,7 @@ function CruiseChat({
   const [remoteVideoStream, setRemoteVideoStream] = useState<MediaStream | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState<boolean>(discoverFilter === "favorites");
   const [distanceLimitKm, setDistanceLimitKm] = useState(0);
+  const [interestFilter, setInterestFilter] = useState("");
   const [rightNowOnly, setRightNowOnly] = useState(false);
   const [discoveryNow,setDiscoveryNow]=useState(Date.now());
   useEffect(() => {
@@ -1667,7 +1675,8 @@ function CruiseChat({
 
     const filtered = baseCards.filter((p) => {
       if (distanceLimitKm && (p.meters === null || p.meters > distanceLimitKm * 1000)) return false;
-      if (rightNowOnly && !isRightNow(p.member?.rightNowExpiresAtMs, discoveryNow)) return false;
+      if (interestFilter && !p.member?.interests?.includes(interestFilter)) return false;
+      if (!googlePlayEdition && rightNowOnly && !isRightNow(p.member?.rightNowExpiresAtMs, discoveryNow)) return false;
       if (photoReviewedOnly && !p.member?.photoVerified) return false;
       if (favoritesOnly && !favorites.has(p.userId)) return false;
       if (onlineStatusFilter === "online" && !p.isOnline) return false;
@@ -1702,7 +1711,7 @@ function CruiseChat({
       return a.key.localeCompare(b.key);
     });
   }, [
-    photoReviewedOnly, discoveryNow, rightNowOnly, priorityPlacement, distanceLimitKm,
+    photoReviewedOnly, discoveryNow, interestFilter, rightNowOnly, priorityPlacement, distanceLimitKm,
     session.tier, session.plusExpiresAtMs,
     baseCards,
     favorites,
@@ -2312,6 +2321,7 @@ function CruiseChat({
   function clearGridFilters(): void {
     setPhotoReviewedOnly(false);
     setFavoritesOnly(false);
+    setInterestFilter("");
     setRightNowOnly(false);
     setOnlineStatusFilter("all");
     setHasChatHistoryOnly(false);
@@ -2380,7 +2390,7 @@ function CruiseChat({
     return () => window.removeEventListener("rd:tab-select", onTabSelect as EventListener);
   }, []);
 
-  const activeFilterCount = [rightNowOnly, Boolean(distanceLimitKm), photoReviewedOnly,favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
+  const activeFilterCount = [googlePlayEdition ? Boolean(interestFilter) : rightNowOnly, Boolean(distanceLimitKm), photoReviewedOnly,favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, onlineStatusFilter !== "all", ...(hasPlus(session) ? [filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition].map(Boolean) : [])].filter(Boolean).length;
   useEffect(() => { window.dispatchEvent(new CustomEvent("rd:people-filter", {detail:{keys: activeFilterCount ? gridCards.map(card => card.key) : null}})); }, [activeFilterCount, gridCards]);
 
   if (view === "thread" && peerKey.trim()) {
@@ -2388,6 +2398,7 @@ function CruiseChat({
     return (
       <div style={{ display: "grid", gap: 0, marginInline: 0 }}>
         <ChatWindow
+          reviewedPhotos={googlePlayEdition && session.userId ? { api, session } : undefined}
           readReceipts={hasPlus(session)}
           chatKind={channelToChatKind(channel)}
           peerKey={peerKey}
@@ -2400,7 +2411,7 @@ function CruiseChat({
           edgeToEdge={isMobile}
           fillHeight={isMobile}
         />
-        {videoCallOpen ? (
+        {!googlePlayEdition && videoCallOpen ? (
           <div
             role="dialog"
             aria-modal="true"
@@ -2440,10 +2451,15 @@ function CruiseChat({
                   {[5, 10, 25, 50, 100].map(km => <option key={km} value={km}>Within {km} km</option>)}
                 </select>
               </label>
-              <label className="rd-right-now-filter">
+              {googlePlayEdition ? <label className="rd-field"><span>Interest</span>
+                <select className="rd-input" value={interestFilter} onChange={event => setInterestFilter(event.target.value)}>
+                  <option value="">Any interest</option>
+                  {INTERESTS.map(interest => <option key={interest}>{interest}</option>)}
+                </select>
+              </label> : <label className="rd-right-now-filter">
                 <input type="checkbox" checked={rightNowOnly} onChange={event => setRightNowOnly(event.target.checked)} />
                 <span className="rd-right-now-badge"><Icon name="lightning" active />Right Now only</span>
-              </label>
+              </label>}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} />
@@ -2477,10 +2493,10 @@ function CruiseChat({
                     <input type="checkbox" checked={mapShowPeople} onChange={(e) => setMapShowPeople(e.target.checked)} />
                     People
                   </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {!googlePlayEdition && <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <input type="checkbox" checked={mapShowSpots} onChange={(e) => setMapShowSpots(e.target.checked)} />
                     Places
-                  </label>
+                  </label>}
                   <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <input type="checkbox" checked={mapShowGroups} onChange={(e) => setMapShowGroups(e.target.checked)} />
                     Groups
@@ -2491,25 +2507,25 @@ function CruiseChat({
                 <input style={fieldStyle()} placeholder="Min age" value={filterMinAge} onChange={(e) => setFilterMinAge(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Max age" value={filterMaxAge} onChange={(e) => setFilterMaxAge(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Race" value={filterRace} onChange={(e) => setFilterRace(e.target.value)} />
-                <select style={fieldStyle()} value={filterCutStatus} onChange={(e) => setFilterCutStatus(e.target.value as "" | "cut" | "uncut")}>
+                {!googlePlayEdition && <><select style={fieldStyle()} value={filterCutStatus} onChange={(e) => setFilterCutStatus(e.target.value as "" | "cut" | "uncut")}>
                   <option value="">Cut / Uncut</option>
                   <option value="cut">Cut</option>
                   <option value="uncut">Uncut</option>
-                </select>
+                </select></>}
                 <input style={fieldStyle()} placeholder="Min height (in)" value={filterMinHeight} onChange={(e) => setFilterMinHeight(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Max height (in)" value={filterMaxHeight} onChange={(e) => setFilterMaxHeight(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Min weight (lbs)" value={filterMinWeight} onChange={(e) => setFilterMinWeight(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Max weight (lbs)" value={filterMaxWeight} onChange={(e) => setFilterMaxWeight(e.target.value)} />
-                <input style={fieldStyle()} placeholder="Min cock size (in)" value={filterMinCockSize} onChange={(e) => setFilterMinCockSize(e.target.value)} />
+                {!googlePlayEdition && <><input style={fieldStyle()} placeholder="Min cock size (in)" value={filterMinCockSize} onChange={(e) => setFilterMinCockSize(e.target.value)} />
                 <input style={fieldStyle()} placeholder="Max cock size (in)" value={filterMaxCockSize} onChange={(e) => setFilterMaxCockSize(e.target.value)} />
                 <select style={fieldStyle()} value={filterPosition} onChange={(e) => setFilterPosition(e.target.value as "" | "top" | "bottom" | "side")}>
                   <option value="">Position</option>
                   <option value="top">Top</option>
                   <option value="bottom">Bottom</option>
                   <option value="side">Side</option>
-                </select>
+                </select></>}
               </fieldset>
-              <SavedSearches api={api} session={session} filters={{ filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition, favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, photoReviewedOnly, onlineStatusFilter }} onApply={f => { setFilterMinAge((typeof f.filterMinAge === "string" ? f.filterMinAge : "")); setFilterMaxAge((typeof f.filterMaxAge === "string" ? f.filterMaxAge : "")); setFilterRace((typeof f.filterRace === "string" ? f.filterRace : "")); setFilterCutStatus((f.filterCutStatus === "cut" || f.filterCutStatus === "uncut" ? f.filterCutStatus : "")); setFilterMinHeight((typeof f.filterMinHeight === "string" ? f.filterMinHeight : "")); setFilterMaxHeight((typeof f.filterMaxHeight === "string" ? f.filterMaxHeight : "")); setFilterMinWeight((typeof f.filterMinWeight === "string" ? f.filterMinWeight : "")); setFilterMaxWeight((typeof f.filterMaxWeight === "string" ? f.filterMaxWeight : "")); setFilterMinCockSize((typeof f.filterMinCockSize === "string" ? f.filterMinCockSize : "")); setFilterMaxCockSize((typeof f.filterMaxCockSize === "string" ? f.filterMaxCockSize : "")); setFilterPosition((f.filterPosition === "top" || f.filterPosition === "bottom" || f.filterPosition === "side" ? f.filterPosition : "")); setFavoritesOnly(f.favoritesOnly === true); setHasChatHistoryOnly(f.hasChatHistoryOnly === true); setHasPicturesOnly(f.hasPicturesOnly === true); setPhotoReviewedOnly(f.photoReviewedOnly === true); setOnlineStatusFilter((f.onlineStatusFilter === "online" || f.onlineStatusFilter === "offline" ? f.onlineStatusFilter : "all")) }} />
+              {!googlePlayEdition && <SavedSearches api={api} session={session} filters={{ filterMinAge, filterMaxAge, filterRace, filterCutStatus, filterMinHeight, filterMaxHeight, filterMinWeight, filterMaxWeight, filterMinCockSize, filterMaxCockSize, filterPosition, favoritesOnly, hasChatHistoryOnly, hasPicturesOnly, photoReviewedOnly, onlineStatusFilter }} onApply={f => { setFilterMinAge((typeof f.filterMinAge === "string" ? f.filterMinAge : "")); setFilterMaxAge((typeof f.filterMaxAge === "string" ? f.filterMaxAge : "")); setFilterRace((typeof f.filterRace === "string" ? f.filterRace : "")); setFilterCutStatus((f.filterCutStatus === "cut" || f.filterCutStatus === "uncut" ? f.filterCutStatus : "")); setFilterMinHeight((typeof f.filterMinHeight === "string" ? f.filterMinHeight : "")); setFilterMaxHeight((typeof f.filterMaxHeight === "string" ? f.filterMaxHeight : "")); setFilterMinWeight((typeof f.filterMinWeight === "string" ? f.filterMinWeight : "")); setFilterMaxWeight((typeof f.filterMaxWeight === "string" ? f.filterMaxWeight : "")); setFilterMinCockSize((typeof f.filterMinCockSize === "string" ? f.filterMinCockSize : "")); setFilterMaxCockSize((typeof f.filterMaxCockSize === "string" ? f.filterMaxCockSize : "")); setFilterPosition((f.filterPosition === "top" || f.filterPosition === "bottom" || f.filterPosition === "side" ? f.filterPosition : "")); setFavoritesOnly(f.favoritesOnly === true); setHasChatHistoryOnly(f.hasChatHistoryOnly === true); setHasPicturesOnly(f.hasPicturesOnly === true); setPhotoReviewedOnly(f.photoReviewedOnly === true); setOnlineStatusFilter((f.onlineStatusFilter === "online" || f.onlineStatusFilter === "offline" ? f.onlineStatusFilter : "all")) }} />}
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                 <button type="button" style={buttonSecondary(false)} onClick={clearGridFilters}>Reset</button>
                 <button type="button" style={buttonPrimary(false)} onClick={() => setFiltersOpen(false)}>Done</button>
@@ -2524,7 +2540,7 @@ function CruiseChat({
                 const name = displayNameForIdentity(p.key, p.displayName);
                 const unread = unreadByPeerKey[p.key] ?? 0;
                 const distance = p.meters === null ? null : formatDistanceLabel(p.meters);
-                const rightNow = isRightNow(p.member?.rightNowExpiresAtMs, discoveryNow);
+                const rightNow = !googlePlayEdition && isRightNow(p.member?.rightNowExpiresAtMs, discoveryNow);
                 const live = liveKeys.has(p.key) && !p.recentlyActive;
                 const presence = p.isOnline ? "Online now" : p.recentlyActive ? "Recently active" : "Offline";
                 const profileLabel = [
@@ -2717,13 +2733,13 @@ function DateSurface({
             <input style={fieldStyle()} placeholder="Max height" value={filterMaxHeight} onChange={(e) => setFilterMaxHeight(e.target.value)} />
             <input style={fieldStyle()} placeholder="Min weight" value={filterMinWeight} onChange={(e) => setFilterMinWeight(e.target.value)} />
             <input style={fieldStyle()} placeholder="Max weight" value={filterMaxWeight} onChange={(e) => setFilterMaxWeight(e.target.value)} />
-            <input style={fieldStyle()} placeholder="Min cock size" value={filterMinCockSize} onChange={(e) => setFilterMinCockSize(e.target.value)} />
+            {!googlePlayEdition && <><input style={fieldStyle()} placeholder="Min cock size" value={filterMinCockSize} onChange={(e) => setFilterMinCockSize(e.target.value)} />
             <input style={fieldStyle()} placeholder="Max cock size" value={filterMaxCockSize} onChange={(e) => setFilterMaxCockSize(e.target.value)} />
             <select style={fieldStyle()} value={filterCutStatus} onChange={(e) => setFilterCutStatus(e.target.value as "" | "cut" | "uncut")}>
               <option value="">Cut or uncut</option>
               <option value="cut">Cut</option>
               <option value="uncut">Uncut</option>
-            </select>
+            </select></>}
           </div>
         </div>
       </div>
@@ -2873,7 +2889,7 @@ function DateChat({
           <button type="button" style={channel === "direct" ? buttonPrimary(false) : buttonSecondary(false)} onClick={() => setChannel("direct")}>DIRECT</button>
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button type="button" style={buttonSecondary(false)} onClick={() => void startVideoCall()}>VIDEO CALL</button>
+          {!googlePlayEdition && <button type="button" style={buttonSecondary(false)} onClick={() => void startVideoCall()}>VIDEO CALL</button>}
         </div>
       </div>
       <ChatWindow
@@ -2886,7 +2902,7 @@ function DateChat({
         title={`DATE ${channel.toUpperCase()} CHAT: ${peerUserId}`}
         peerSummary={{ displayName: peerUserId }}
       />
-      {videoCallOpen ? (
+      {!googlePlayEdition && videoCallOpen ? (
         <div
           role="dialog"
           aria-modal="true"
@@ -3361,6 +3377,7 @@ function ThreadsPanel({
         ) : null}
         {groupPanel}
         <ChatWindow key={selectedPeerKey}
+          reviewedPhotos={googlePlayEdition && session.userId ? { api, session } : undefined}
           readReceipts={hasPlus(session)}
           chatKind={selectedChatKind}
           peerKey={selectedPeerKey}
@@ -3465,6 +3482,27 @@ function ThreadsPanel({
   );
 }
 
+function GroupCoverPhoto({ api, token, postingId, mediaId, fallback, alt, style, preview = false }: {
+  api: Api; token: string; postingId: string; mediaId?: string; fallback: string; alt: string; style?: React.CSSProperties; preview?: boolean;
+}) {
+  const [photo, setPhoto] = useState<{ id: string; url: string }>();
+  useEffect(() => {
+    if (!mediaId) return;
+    let canceled = false;
+    let url: string | undefined;
+    void api.memberPhoto(token, preview ? mediaId : postingId, preview ? "group-photo-preview" : "group-photo").then(blob => {
+      if (canceled) return;
+      url = URL.createObjectURL(blob);
+      setPhoto({ id: mediaId, url });
+    }).catch(() => {});
+    return () => {
+      canceled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [api, token, postingId, mediaId, preview]);
+  return <img src={mediaId && photo?.id === mediaId ? photo.url : fallback} alt={alt} style={style} />;
+}
+
 function PublicPostings({
   api,
   session,
@@ -3505,6 +3543,8 @@ function PublicPostings({
   const [eventPhotoFile, setEventPhotoFile] = useState<File | null>(null);
   const [spotPhotoFile, setSpotPhotoFile] = useState<File | null>(null);
   const [eventPhotoMediaId, setEventPhotoMediaId] = useState<string>("");
+  const [approvedGroupPhotos, setApprovedGroupPhotos] = useState<string[]>([]);
+  const [groupPhotoError, setGroupPhotoError] = useState("");
   const [spotPhotoMediaId, setSpotPhotoMediaId] = useState<string>("");
   const [mediaUrlById, setMediaUrlById] = useState<Record<string, string>>({});
   const [publicProfilesByUserId, setPublicProfilesByUserId] = useState<Record<string, PublicProfile>>({});
@@ -3521,6 +3561,21 @@ function PublicPostings({
   const [spotThreadLoading, setSpotThreadLoading] = useState<boolean>(false);
   const [createPanelOpen, setCreatePanelOpen] = useState<boolean>(!compact);
   const [groupCreateOpen, setGroupCreateOpen] = useState(false);
+  useEffect(() => {
+    if (!googlePlayEdition || !groupCreateOpen) return;
+    let canceled = false;
+    setGroupPhotoError("");
+    void api.memberRequest<{ submissions: { id: string; status: string; destination: string }[] }>(session.sessionToken, "/media-review")
+      .then(({ submissions }) => {
+        if (canceled) return;
+        const ids = submissions.filter(row => row.status === "approved" && row.destination === "group-photo").map(row => row.id);
+        setApprovedGroupPhotos(ids);
+        setEventPhotoMediaId(current => ids.includes(current) ? current : "");
+      })
+      .catch(error => { if (!canceled) setGroupPhotoError(normalizeErrorMessage(error)); });
+    return () => { canceled = true; };
+  }, [api, groupCreateOpen, session.sessionToken]);
+
   const [groupCreateError, setGroupCreateError] = useState<string | null>(null);
   const [groupSubmitting, setGroupSubmitting] = useState(false);
   const [boardPosting, setBoardPosting] = useState<boolean>(false);
@@ -3620,9 +3675,9 @@ function PublicPostings({
     const requestSeq = ++refreshSeqRef.current;
     try {
       const [adsRes, eventsRes, spotsRes, invitesRes, profilesRes] = await Promise.all([
-        api.listPublicPostings("ad", session.sessionToken),
+        googlePlayEdition ? Promise.resolve({ postings: [] }) : api.listPublicPostings("ad", session.sessionToken),
         api.listPublicPostings("event", session.sessionToken),
-        api.listCruisingSpots(session.sessionToken),
+        googlePlayEdition ? Promise.resolve({ spots: [] }) : api.listCruisingSpots(session.sessionToken),
         session.userType === "guest" ? Promise.resolve({ postings: [] as ReadonlyArray<PublicPosting> }) : api.listEventInvites(session.sessionToken),
         api.getPublicProfiles()
       ]);
@@ -3647,7 +3702,7 @@ function PublicPostings({
       );
       await resolveMediaUrls([
         ...adsRes.postings.map((p) => p.photoMediaId ?? ""),
-        ...eventsRes.postings.map((p) => p.photoMediaId ?? ""),
+        ...(googlePlayEdition ? [] : eventsRes.postings.map((p) => p.photoMediaId ?? "")),
         ...spotsRes.spots.map((p) => p.photoMediaId ?? ""),
         ...profilesRes.profiles.map((p) => p.mainPhotoMediaId ?? "")
       ]);
@@ -4178,7 +4233,8 @@ function PublicPostings({
     const isUploading = uploadingKind === "event";
 
     return (
-      <section className="rd-groups-surface" aria-label="Groups">
+      <section className="rd-groups-surface" aria-label={googlePlayEdition ? "Group plans" : "Groups"}>
+          {googlePlayEdition && <h1>Group plans</h1>}
           <div>
             {events.length === 0 ? (
               <div style={{ color: "#b9bec9", fontSize: 14 }}>No groups yet.</div>
@@ -4199,11 +4255,11 @@ function PublicPostings({
                       className="rd-group-list-card"
                     >
                       <div className="rd-group-list-cover">
-                        <img
+                        {googlePlayEdition ? <GroupCoverPhoto api={api} token={session.sessionToken} postingId={p.postingId}
+                          mediaId={p.photoMediaId} fallback={avatarForKey(p.postingId)} alt="Group posting" /> : <img
                           src={p.photoMediaId ? (mediaUrlById[p.photoMediaId] ?? avatarForKey(p.postingId)) : avatarForKey(p.postingId)}
                           alt="Group posting"
-
-                        />
+                        />}
                       </div>
                       <div style={{ padding: 8, display: "grid", gap: 6 }}>
                         <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
@@ -4368,7 +4424,17 @@ function PublicPostings({
                   disabled={!canPostEvents}
                 />
               </div>
-              <div style={{ display: "grid", gap: 8 }}>
+              {googlePlayEdition && <label className="rd-field"><span>Group photo</span>
+                <select className="rd-input" value={eventPhotoMediaId} onChange={event => setEventPhotoMediaId(event.target.value)}>
+                  <option value="">No photo</option>
+                  {approvedGroupPhotos.map((id, index) => <option key={id} value={id}>Approved photo {index + 1}</option>)}
+                </select>
+                <small>{groupPhotoError || "Submit group photos for review in Settings → Profile."}</small>
+              </label>}
+              {googlePlayEdition && eventPhotoMediaId && <GroupCoverPhoto api={api} token={session.sessionToken}
+                postingId="" mediaId={eventPhotoMediaId} fallback={avatarForKey(session.userId ?? "group")} alt="Selected group photo"
+                style={{ width: "100%", maxWidth: 240, aspectRatio: "1 / 1", objectFit: "cover" }} preview />}
+              {!googlePlayEdition && <div style={{ display: "grid", gap: 8 }}>
                 <input className="rd-input" type="file" accept="image/*" onChange={(e) => setEventPhotoFile(e.target.files?.[0] ?? null)} disabled={!canPostEvents} />
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button type="button" onClick={() => void uploadGridPhoto("event")} style={canPostEvents ? buttonSecondary(isUploading) : buttonSecondary(true)} disabled={!canPostEvents || isUploading}>
@@ -4393,7 +4459,7 @@ function PublicPostings({
                   />
                 ) : null}
                 {!eventPhotoMediaId && eventPhotoFile ? <div style={{ color: "#b9bec9", fontSize: 12 }}>Photo selected. Upload to attach.</div> : null}
-              </div>
+              </div>}
               {groupCreateError && <p className="rd-error" role="alert">{groupCreateError}</p>}
               <button type="submit" className="rd-btn primary" disabled={groupSubmitting || isUploading}>
                 {groupSubmitting ? "Creating…" : "Create group"}
@@ -4603,7 +4669,7 @@ function PublicPostings({
                       aria-label="Open poster profile"
                     >
                       <img
-                        src={profile?.mainPhotoMediaId ? (mediaUrlById[profile.mainPhotoMediaId] ?? avatarForKey(actorKey)) : avatarForKey(actorKey)}
+                        src={!googlePlayEdition && profile?.mainPhotoMediaId ? (mediaUrlById[profile.mainPhotoMediaId] ?? avatarForKey(actorKey)) : avatarForKey(actorKey)}
                         alt="Poster profile"
                         style={{ width: "100%", height: "100%", objectFit: "cover", border: "2px solid rgba(108,150,255,0.8)", borderRadius: "50%" }}
                       />
@@ -4664,7 +4730,7 @@ function PublicPostings({
                 <div>Race: {profileForBoardUser?.stats?.race ?? "-"}</div>
                 <div>Height: {profileForBoardUser?.stats?.heightInches ?? "-"}</div>
                 <div>Weight: {profileForBoardUser?.stats?.weightLbs ?? "-"}</div>
-                <div>Position: {profileForBoardUser?.stats?.position ?? "-"}</div>
+                {!googlePlayEdition && <div>Position: {profileForBoardUser?.stats?.position ?? "-"}</div>}
                 <ProfileDetailsView stats={profileForBoardUser?.stats} />
                 <div style={{ marginTop: 6 }}>Bio: {profileForBoardUser?.bio ?? "-"}</div>
               </div>
@@ -4805,11 +4871,17 @@ function PublicPostings({
             </div>
             <div style={{ color: "#9fb6bf", fontSize: 13 }}>Host: {displayNameForUserId(selectedGroup.authorUserId)}</div>
           </div>
-          <img
+          {googlePlayEdition ? <GroupCoverPhoto api={api} token={session.sessionToken} postingId={selectedGroup.postingId}
+            mediaId={selectedGroup.photoMediaId} fallback={avatarForKey(selectedGroup.postingId)} alt="Group photo"
+            style={{ width: "100%", maxHeight: 280, objectFit: "cover" }} /> : <img
             src={selectedGroup.photoMediaId ? (mediaUrlById[selectedGroup.photoMediaId] ?? avatarForKey(selectedGroup.postingId)) : avatarForKey(selectedGroup.postingId)}
             alt="Group photo"
             style={{ width: "100%", maxHeight: 280, objectFit: "cover", border: "1px solid rgba(63,223,255,0.55)" }}
-          />
+          />}
+          {googlePlayEdition && selectedGroup.photoMediaId && selectedGroup.authorUserId !== session.userId &&
+            <ReportProfileMediaButton key={selectedGroup.photoMediaId} api={api} session={session}
+              mediaId={selectedGroup.photoMediaId} video={false}
+              reportPath={`/public-postings/event/${encodeURIComponent(selectedGroup.postingId)}/photo/report`} />}
           <div style={{ display: "grid", gap: 4 }}>
             <div style={{ fontSize: 13, color: "#9fb6bf" }}>Summary</div>
             <div style={{ color: "#d2d8e2", fontSize: 14, whiteSpace: "pre-wrap" }}>{selectedGroup.body}</div>
@@ -5391,9 +5463,9 @@ function PromotedProfilesPanel({
             <div style={{ color: "#ced3dc", marginTop: 2 }}>Race: {selectedProfile.stats?.race ?? "-"}</div>
             <div style={{ color: "#ced3dc", marginTop: 2 }}>Height: {selectedProfile.stats?.heightInches ?? "-"}</div>
             <div style={{ color: "#ced3dc", marginTop: 2 }}>Weight: {selectedProfile.stats?.weightLbs ?? "-"}</div>
-            <div style={{ color: "#ced3dc", marginTop: 2 }}>Cock Size: {selectedProfile.stats?.cockSizeInches ?? "-"}</div>
-            <div style={{ color: "#ced3dc", marginTop: 2 }}>Cut / Uncut: {selectedProfile.stats?.cutStatus ?? "-"}</div>
-            <div style={{ color: "#ced3dc", marginTop: 2 }}>Position: {selectedProfile.stats?.position ?? "-"}</div>
+            {!googlePlayEdition && <div style={{ color: "#ced3dc", marginTop: 2 }}>Cock Size: {selectedProfile.stats?.cockSizeInches ?? "-"}</div>}
+            {!googlePlayEdition && <div style={{ color: "#ced3dc", marginTop: 2 }}>Cut / Uncut: {selectedProfile.stats?.cutStatus ?? "-"}</div>}
+            {!googlePlayEdition && <div style={{ color: "#ced3dc", marginTop: 2 }}>Position: {selectedProfile.stats?.position ?? "-"}</div>}
             <ProfileDetailsView stats={selectedProfile.stats} />
             <div style={{ color: "#ced3dc", marginTop: 10, whiteSpace: "pre-wrap" }}>{selectedProfile.bio}</div>
             <div style={{ marginTop: 10 }}>
@@ -5907,7 +5979,7 @@ function SettingsProfile({ api, session, setLastError, section }: Readonly<{ api
               <span className="rd-label">Race</span>
               <input value={draft.race} onChange={(e) => setDraft((d) => ({ ...d, race: e.target.value }))} style={fieldStyle()} />
             </label>
-            <label style={{ display: "grid", gap: 6 }}>
+            {!googlePlayEdition && <><label style={{ display: "grid", gap: 6 }}>
               <span className="rd-label">Cock Size (in)</span>
               <input value={draft.cockSizeInches} onChange={(e) => setDraft((d) => ({ ...d, cockSizeInches: e.target.value }))} style={fieldStyle()} inputMode="decimal" />
             </label>
@@ -5927,7 +5999,7 @@ function SettingsProfile({ api, session, setLastError, section }: Readonly<{ api
                 <option value="bottom">Bottom</option>
                 <option value="side">Side</option>
               </select>
-            </label>
+            </label></>}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 12 }}>
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -5982,9 +6054,9 @@ function SettingsProfile({ api, session, setLastError, section }: Readonly<{ api
                 <div style={{ color: "#ced3dc", fontSize: 14 }}>Race: {profile.stats.race ?? "-"}</div>
                 <div style={{ color: "#ced3dc", fontSize: 14 }}>Height: {profile.stats.heightInches ?? "-"}</div>
                 <div style={{ color: "#ced3dc", fontSize: 14 }}>Weight: {profile.stats.weightLbs ?? "-"}</div>
-                <div style={{ color: "#ced3dc", fontSize: 14 }}>Cock Size: {profile.stats.cockSizeInches ?? "-"}</div>
-                <div style={{ color: "#ced3dc", fontSize: 14 }}>Cut / Uncut: {profile.stats.cutStatus ?? "-"}</div>
-                <div style={{ color: "#ced3dc", fontSize: 14 }}>Position: {profile.stats.position ?? "-"}</div>
+                {!googlePlayEdition && <div style={{ color: "#ced3dc", fontSize: 14 }}>Cock Size: {profile.stats.cockSizeInches ?? "-"}</div>}
+                {!googlePlayEdition && <div style={{ color: "#ced3dc", fontSize: 14 }}>Cut / Uncut: {profile.stats.cutStatus ?? "-"}</div>}
+                {!googlePlayEdition && <div style={{ color: "#ced3dc", fontSize: 14 }}>Position: {profile.stats.position ?? "-"}</div>}
                 <ProfileDetailsView stats={profile.stats} />
                 <div style={{ color: "#ced3dc", fontSize: 14, whiteSpace: "pre-wrap" }}>{profile.bio || "-"}</div>
               </div>
@@ -6054,7 +6126,7 @@ function SettingsPanel({
     try {
       const [usersRes, spotsRes, postingsRes, submissionsRes] = await Promise.all([
         api.adminListUsers(session.sessionToken),
-        api.adminListCruisingSpots(session.sessionToken),
+        googlePlayEdition ? Promise.resolve({ spots: [] }) : api.adminListCruisingSpots(session.sessionToken),
         api.adminListPublicPostings(session.sessionToken),
         api.adminListSubmissions(session.sessionToken)
       ]);
@@ -6477,7 +6549,7 @@ function SettingsPanel({
               ))}
             </div>
 
-            <div style={{ display: "grid", gap: 6 }}>
+            {!googlePlayEdition && <div style={{ display: "grid", gap: 6 }}>
               <div style={{ fontSize: 15, fontWeight: 700 }}>PENDING CRUISE SPOTS</div>
               {adminSpots.filter((spot) => spot.moderationStatus === "pending").slice(0, 10).map((spot) => (
                 <div key={spot.spotId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 8, alignItems: "center" }}>
@@ -6487,7 +6559,7 @@ function SettingsPanel({
                   <button type="button" style={buttonSecondary(adminBusy)} disabled={adminBusy} onClick={() => void moderateSpot(spot.spotId, "delete")}>DELETE</button>
                 </div>
               ))}
-            </div>
+            </div>}
 
             <div style={{ display: "grid", gap: 6 }}>
               <div style={{ fontSize: 15, fontWeight: 700 }}>PENDING POSTS</div>
@@ -6649,7 +6721,7 @@ function SettingsPanel({
                       placeholder="White"
                     />
                   </label>
-                  <label style={{ display: "grid", gap: 4 }}>
+                  {!googlePlayEdition && <><label style={{ display: "grid", gap: 4 }}>
                     <span style={{ fontSize: 13, color: "#b9bec9" }}>Cock Size (in)</span>
                     <input
                       type="number"
@@ -6686,7 +6758,7 @@ function SettingsPanel({
                       <option value="bottom">Bottom</option>
                       <option value="side">Side</option>
                     </select>
-                  </label>
+                  </label></>}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
                   <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -6810,7 +6882,9 @@ export function Router({
   setLastError,
   onUnreadCountChange,
   hideModeCard,
-  onLogout
+  onLogout,
+  onRegister,
+  mediaReview
 }: Readonly<{
   api: Api;
   session: Session;
@@ -6827,6 +6901,8 @@ export function Router({
   onUnreadCountChange?(count: number): void;
   hideModeCard?: boolean;
   onLogout?(): void;
+  onRegister?(): void;
+  mediaReview?: React.ReactNode;
 }>): React.ReactElement {
   const isMobile = useIsMobile();
   const threadProfileOpener = useRef<((request: ThreadProfileRequest) => void) | null>(null);
@@ -6917,14 +6993,18 @@ export function Router({
       </div>
       <div id="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${settingsSection}`}
         className="rd-profile-settings-stack" tabIndex={0}>
-        {(settingsSection === "profile" || settingsSection === "photos") &&
+        {(settingsSection === "profile" || (!googlePlayEdition && settingsSection === "photos")) &&
           <SettingsProfile section={settingsSection} api={api} session={session} setLastError={setProfileError} />}
+        {settingsSection === "profile" && mediaReview}
         {settingsSection === "photos" && <>
           <PrivateAlbumsSettings api={api} session={session} />
-          <PhotoVerificationPanel api={api} session={session} />
-          <PhotoReviewQueue api={api} session={session} />
+          {!googlePlayEdition && <>
+            <PhotoVerificationPanel api={api} session={session} />
+            <PhotoReviewQueue api={api} session={session} />
+          </>}
         </>}
         {settingsSection === "privacy" && <>
+          {googlePlayEdition && session.userId && <a href={deletionPage} className="rd-btn">Delete account</a>}
           <MemberPrivacy api={api} session={session} />
           <PrivacySettings api={api} session={session} />
           <PrivacyBlockList api={api} session={session} />
@@ -6933,6 +7013,7 @@ export function Router({
           <SafetyReportQueue api={api} session={session} />
           <SettingsPanel api={api} session={session} setLastError={setSettingsError} onLogout={onLogout} />
           <div className="rd-row">
+            {googlePlayEdition && <a className="rd-btn" href="./legal/child-safety.html">Child safety standards</a>}
             <a className="rd-btn" href="./legal/">Policies</a>
             <a className="rd-btn" href="./thebackroom/">The Backroom</a>
             <a className="rd-btn" href="https://badehausx.com/store/">Store</a>
@@ -6974,6 +7055,14 @@ export function Router({
     </div>
   ) : null;
 
+  if (googlePlayEdition && !session.userId && activeTab === "threads") {
+    return <section className="rd-card rd-settings-body" aria-label="Inbox">
+      <h1>Inbox</h1>
+      <p>Create an account to send and receive messages.</p>
+      <button type="button" className="rd-btn primary" onClick={onRegister}>Create an account</button>
+    </section>;
+  }
+
   return (
     <div style={{ display: "grid", gap: 12 }}>
       {!hideModeCard ? null : null}
@@ -6993,6 +7082,10 @@ export function Router({
           discoverScreen={discoverScreen}
           threadProfileOpener={threadProfileOpener}
           onOpenThreadRequested={(key) => {
+            if (googlePlayEdition && !session.userId) {
+              setActiveTab("threads");
+              return;
+            }
             if (!isMobile) {
               setExploreThreadKey(normalizePeerKey(key));
               return;
@@ -7042,7 +7135,7 @@ export function Router({
                 ["pinned", "Pinned Chats", "star"],
                 ["spots", "Cruising Spots", "map"],
                 ["groups", "Groups", "groups"]
-              ] as const).map(([id, label, icon]) => (
+              ] as const).filter(([id]) => !googlePlayEdition || id !== "spots").map(([id, label, icon]) => (
                 <button key={id} type="button" className="rd-btn rd-icon-only-btn" title={label}
                   aria-label={label} aria-pressed={mobileInboxTab === id} onClick={() => setMobileInboxTab(id)}>
                   <Icon name={icon} active={mobileInboxTab === id} />

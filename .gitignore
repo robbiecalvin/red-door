@@ -35,3 +35,4 @@ red-door-user-prompts.docx
 backups/
 *.dump
 *.backup
+/dist-google-play/

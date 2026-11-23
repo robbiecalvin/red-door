@@ -22,6 +22,7 @@ type Broadcast = {
 };
 
 export function installLiveRoutes(app: Express, deps: {
+  disabled?: boolean;
   session(req: Request, res: Response): Session | null;
   admin(req: Request, res: Response): Session | null;
   eligible(id: string, token: string): boolean;
@@ -35,7 +36,7 @@ export function installLiveRoutes(app: Express, deps: {
   const secret = process.env.LIVEKIT_API_SECRET;
   const secureUrl = url && (/^wss:\/\//.test(url) ||
     (process.env.NODE_ENV !== "production" && /^ws:\/\/(localhost|127\.0\.0\.1):[0-9]+$/.test(url)));
-  const enabled = process.env.LIVE_BETA_ENABLED === "true" && secureUrl && key && secret;
+  const enabled = !deps.disabled && process.env.LIVE_BETA_ENABLED === "true" && secureUrl && key && secret;
   if (!enabled || !url || !key || !secret) {
     app.get("/live", (_req, res) => res.set("Cache-Control", "no-store").json({ enabled: false, broadcasts: [] }));
     return async () => {};

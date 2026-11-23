@@ -49,6 +49,9 @@ function toProfile(row: Record<string, unknown>): Profile {
 
 export function createPostgresProfileRepository(pool: Pool): ProfileRepository {
   return {
+    async erase(userId) {
+      await pool.query("DELETE FROM profiles WHERE user_id = $1", [userId]);
+    },
     async getByUserId(userId: string): Promise<Profile | null> {
       const res = await pool.query(
         `SELECT user_id, display_name, age, bio, stats_json, discreet_mode, travel_mode_json, main_photo_media_id, gallery_media_ids, video_media_id, updated_at_ms

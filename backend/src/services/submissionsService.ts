@@ -58,6 +58,7 @@ function requireRegistered(session: SessionLike): Result<{ userId: string }> {
 }
 
 export function createSubmissionsService(deps?: Readonly<{ nowMs?: () => number; idFactory?: () => string }>): Readonly<{
+  eraseUser(userId: string): void;
   list(viewer?: SessionLike): Result<ReadonlyArray<Submission>>;
   listAll(): Result<ReadonlyArray<Submission>>;
   create(session: SessionLike, title: unknown, body: unknown): Result<Submission>;
@@ -76,6 +77,9 @@ export function createSubmissionsService(deps?: Readonly<{ nowMs?: () => number;
   }
 
   return {
+    eraseUser(userId: string) {
+      for (const [id, submission] of byId) if (submission.authorUserId === userId) byId.delete(id);
+    },
     list(viewer?: SessionLike): Result<ReadonlyArray<Submission>> {
       const isAdmin = viewer?.role === "admin";
       const visible = isAdmin ? listSorted() : listSorted().filter((submission) => submission.moderationStatus === "approved");

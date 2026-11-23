@@ -103,6 +103,7 @@ export type ChatService = Readonly<{
   snapshotState(): ChatPersistenceState;
   hasDirectHistory(aKey: string, bKey: string): boolean;
   purgeExpired(): void;
+  eraseActor(key: string): void;
 }>;
 
 export type ChatPersistenceState = Readonly<{
@@ -657,6 +658,23 @@ export function createChatService(deps: ChatServiceDeps = {}): ChatService {
         purgeExpiredInThread(kind, id, nowMs());
         return (messagesByThread.get(id) ?? []).some(message => !message.text.startsWith("GROUP_INVITE_"));
       });
+    },
+
+    eraseActor(key) {
+      const removed = new Set<string>();
+      for (const [thread, messages] of messagesByThread) {
+        if (messages.some(message => message.fromKey === key || message.toKey === key)) {
+          messagesByThread.delete(thread);
+          removed.add(thread);
+        }
+      }
+      for (const cursor of readCursorByThreadUser.keys()) {
+        const separator = cursor.lastIndexOf("::");
+        if (cursor.slice(separator + 2) === key || removed.has(cursor.slice(0, separator))) readCursorByThreadUser.delete(cursor);
+      }
+      rateByFromKey.delete(key);
+      if (persistenceFilePath) persistMessages();
+      else notifyStateChanged();
     },
 
     purgeExpired() {

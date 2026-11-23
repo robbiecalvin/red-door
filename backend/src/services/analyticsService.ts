@@ -53,7 +53,17 @@ export function createAnalyticsService(deps: { secret: string; enabled?: boolean
     if (!participant || participant.milestones.includes(event)) return;
     participant.milestones.push(event); increment(event);
   }
+  function eraseUser(id: string) {
+    const actor = tag("actor", id);
+    delete state.participants[actor];
+    delete state.dedupe[tag("registration", id)];
+    for (const [key, conversation] of Object.entries(state.conversations)) {
+      if (conversation.participants.includes(actor)) delete state.conversations[key];
+    }
+    persist();
+  }
   return {
+    eraseUser,
     registration(id: string, cohort: AnalyticsCohort, consent: boolean) {
       if (!enabled) return;
       const key = tag("registration", id);
@@ -66,9 +76,8 @@ export function createAnalyticsService(deps: { secret: string; enabled?: boolean
       if (!enabled) return;
       const actor = tag("actor", id);
       if (!value) {
-        delete state.participants[actor];
-        delete state.dedupe[tag("registration", id)];
-        for (const [key, conversation] of Object.entries(state.conversations)) if (conversation.participants.includes(actor)) delete state.conversations[key];
+        eraseUser(id);
+        return;
       } else if (!state.participants[actor]) {
         state.participants[actor] = { cohort, signupDay: new Date(createdAtMs).toISOString().slice(0, 10), startedDay: day(), activeDays: [day()], milestones: [] };
       }

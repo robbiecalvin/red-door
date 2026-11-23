@@ -32,6 +32,149 @@ legal/host/provider requirement; current numeric declarations are not independen
 age or identity verification. Do not collect identity documents without a defined
 privacy/security design and authorization.
 
+## Google Play edition groundwork
+
+Set `DUALMODE_EDITION=google-play` on both the backend and the production frontend
+build. Provide separate `DUALMODE_API_BASE_PATH` (HTTPS) and `DUALMODE_WS_URL` (WSS)
+endpoints when building. Run the Play backend with its own database or local
+storage and its own secrets. The build writes to `dist-google-play/`. The
+default web workflow continues to publish `dist/`.
+
+The Play edition omits sexual profile fields and controls. Its backend omits
+those fields when reading legacy profiles and strips them from member and
+admin profile updates. The Play discovery screen includes an interest filter and links to scheduled
+group plans. The Play API rejects Right Now updates, place chat, Cruise spots,
+and classified posting creation. Guests can browse people and group plans.
+Messaging requires registered accounts on both ends, and the Play backend
+omits guest presence from discovery. The Play edition serves reviewed profile
+and group media, along with reviewed private album and direct-chat photos.
+Chat video, voice attachments, calls, and Live remain paused. Text moderation and child-safety operations still need work before
+submission.
+
+## Private media review
+
+Play Settings → Profile includes intake and submission status for profile and
+gallery photos, profile videos, album photos, group photos, and chat photos,
+video, and audio. Admins can preview, approve, reject, or remove submissions.
+Decisions are recorded in the community repository. Review files use the
+private storage prefix. Moderator previews
+require admin access. Approved public profile media is served through the Play
+API, which checks the current decision and profile visibility on each download.
+
+Install FFmpeg and FFprobe on the Play backend before using intake. The encoder
+needs JPEG, H.264, and AAC support. The service re-encodes media without embedded
+metadata, accepts up to 20 MiB per upload, and caps audio and video at 60 seconds.
+Operate the worker with patched binaries and restricted OS privileges.
+
+Approved profile photos, gallery photos, and profile videos publish through
+the Play profile flow. A pending or rejected replacement leaves the current
+photo or video visible. Removal revokes the delivery URL. Members can report
+the exact profile file, and moderators can preview or remove it from Safety
+reports. Approved group photos can be selected when creating a plan. Delivery
+requires an age-confirmed session that can view the group. Owners can add
+approved photos to private albums and grant or revoke access. Direct chat can
+send approved photos to registered participants. Album and chat downloads
+require the matching authorized session. Exact-file reporting and moderator
+removal cover profile, group, private album, and chat photos. Retention
+controls are described below. Child-safety operations remain pending. Live streams and calls need separate real-time controls.
+
+## Play media retention
+
+The Play review store uses these proposed defaults.
+
+| File state | Cleanup eligibility |
+| --- | --- |
+| Interrupted upload | 1 day after intake started |
+| Awaiting moderation | 30 days after submission |
+| Rejected, removed, or withdrawn | 30 days after the latest review or use |
+| Approved and no longer referenced | 90 days after the latest review or use |
+| Approved and referenced | Keep while referenced by a current profile, an album, an active group, or a retained chat |
+| Held evidence or unresolved media report | Keep until an authorized moderator releases the hold with a recorded reason |
+
+Members can withdraw pending or approved uploads in Settings → Profile.
+Withdrawal removes delivery access immediately. Retention then determines when
+the backend deletes the stored file. Previously opened copies on a viewer's
+device are outside the server's control.
+
+Moderators can find the exact media reference in Media review or Safety reports.
+Use the retention controls in Settings → Profile to preview eligibility, place
+a hold, or record a release. Reports create evidence holds, and prior reports
+also protect their files. Release only after the case and any required
+preservation period are resolved. A later report puts the file back on hold.
+
+Automatic deletion is off by default. Before enabling it on the isolated Play
+backend, review the defaults, run the admin eligibility preview, and verify
+storage and backup settings. Set `PLAY_MEDIA_RETENTION_ENABLED=true` on the
+designated Play worker to run cleanup hourly. An authenticated admin can also
+POST to `/admin/media-review/retention` to run a batch of up to 100 files.
+Check the returned eligible, deleted, and failed counts. Failures are retried.
+The worker records deletion progress and keeps metadata tombstones so old
+profile replacements and reported file references resolve consistently.
+
+Verify the live storage provider separately. For S3 buckets with versioning,
+an ordinary delete can leave older versions. Set a noncurrent-version
+lifecycle that respects evidence holds, and check provider backups and
+replicas for their own expiration. Restore into isolation and reconcile the
+latest holds and deletion records before exposing restored media. Audit
+legacy storage objects without review records before deleting them. Configure
+backup expiration and publish the final retention periods in the app privacy
+policy before store submission. Account-wide deletion and child-safety
+reporting have separate requirements below.
+
+## Account deletion
+
+Host the Play build's public `/?account-deletion=1` page and use its HTTPS URL
+in Play Console. The in-app link is under Settings → Privacy. Members can ask
+for a single-use code through their verified account email, then type DELETE
+on the public page to confirm. Transactional email must be configured.
+
+Confirmation records a durable job. The worker locks the account and revokes
+sessions before removing profile, presence, submissions, matching, chats,
+group content and membership, favorites, blocks, participant analytics,
+album grants, and unheld review files. The worker retries incomplete jobs.
+Moderators retain report evidence and the existing media hold rules. Aggregate
+metrics and operational audit records are retained. Staff accounts stay outside
+the self-service flow.
+
+Check pending jobs through the authenticated /admin/account-deletion endpoint.
+Accounts with active or unverified billing remain queued until the subscription
+or schedule has been reconciled. Payment-provider records, backup expiry,
+and historical imported or third-party records need an operator process before
+making a production account-erasure commitment. Test the hosted page and email
+delivery with a disposable account before supplying its URL to the store.
+
+## Child safety operations
+
+Host `/legal/child-safety.html` and provide its public HTTPS URL in Play Console.
+The Play report controls distinguish suspected underage accounts from suspected
+child sexual abuse or exploitation. Exploitation reports on approved files
+restrict delivery and retain the reported file. Verified conversation
+participants can report individual messages. Flagged messages are masked on
+subsequent reads while their original text remains in the restricted report.
+
+Configure `CHILD_SAFETY_REVIEWER_EMAILS` on the isolated Play backend as a
+comma-separated list of verified admin email addresses. In Settings → Privacy
+→ Safety reports, designated reviewers can switch to Child safety reports.
+Only designated reviewers can open evidence linked to child-safety reports.
+A file restricted for exploitation is also unavailable through ordinary
+moderator previews. Reviewer authorization is checked by the server.
+
+Before launch, assign and train a primary contact and backup, keep the Google
+Play contact details current, and set coverage for the priority queue. Rehearse
+the workflow with harmless fixtures. Review underage concerns promptly and
+restrict the account when warranted. For suspected exploitation, minimize
+access to evidence, record decisions in the authorized case process, and
+coordinate required reports to the appropriate authority. In Canada, consult
+Cybertip.ca and confirm applicable provider reporting and preservation duties.
+Contact emergency services if someone is in immediate danger. Use the
+authorized reporting process without forwarding or making unnecessary copies
+of evidence. Retention holds must remain until the authorized reviewer clears
+the case and any applicable preservation period.
+
+Escalation to an authority is a staff action. The app does not send evidence
+externally. Production contact details, staffing, and a live rehearsal remain
+required before Play submission.
+
 ## Toolchain and conditional implementation
 
 The official npm registry returned @capacitor/cli 8.6.2, @capacitor/android 8.6.2,

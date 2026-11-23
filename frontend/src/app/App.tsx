@@ -1,3 +1,6 @@
+import { AccountDeletion } from "./AccountDeletion";
+import { MediaReview } from "./MediaReview";
+import { googlePlayEdition } from "./edition";
 import brandMark from "../assets/interface/brand.webp";
 import { Backroom } from "./Backroom";
 import type { RegistrationPolicy } from "../../../shared/registrationPolicy";
@@ -224,6 +227,8 @@ function avatarForSeed(seed: string): string {
 
 function tabFromHash(): TopTab {
   const raw = window.location.hash.trim().replace(/^#\/?/, "").split("/")[0]?.toLowerCase() ?? "";
+  if (googlePlayEdition && (raw === "ads" || raw === "cruise" || raw === "spots")) return "groups";
+  if (googlePlayEdition && raw === "live") return "discover";
   if (raw === "discover-map" || raw === "discover-chat") return "discover";
   if (raw === "public" || raw === "events") return "groups";
   if (raw === "spots") return "cruise";
@@ -240,6 +245,8 @@ function tabFromPathname(): TopTab | null {
   const file = window.location.pathname.split("/").pop()?.toLowerCase() ?? "";
   if (!file || file === "index.html") return DEFAULT_TAB;
   const slug = file.endsWith(".html") ? file.slice(0, -".html".length) : file;
+  if (googlePlayEdition && (slug === "ads" || slug === "cruise" || slug === "spots")) return "groups";
+  if (googlePlayEdition && slug === "live") return "discover";
   if (slug === "public" || slug === "events") return "groups";
   if (slug === "spots") return "cruise";
   return TAB_SET.has(slug as TopTab) ? (slug as TopTab) : null;
@@ -523,7 +530,7 @@ export function App(): React.ReactElement {
   }, [api, session]);
 
   useEffect(() => {
-    if (!session || session.ageVerified !== true) {
+    if (!session || session.ageVerified !== true || (googlePlayEdition && !session.userId)) {
       setUnreadChatCount(0);
       return;
     }
@@ -1038,11 +1045,17 @@ export function App(): React.ReactElement {
     window.addEventListener("rd:people-filter", update);
     return () => window.removeEventListener("rd:people-filter", update);
   }, []);
+  if (googlePlayEdition && new URLSearchParams(window.location.search).get("account-deletion") === "1") {
+    return <AccountDeletion apiBase={resolveApiBasePath()} />;
+  }
   if (/\/thebackroom\/?$/.test(window.location.pathname)) return <Backroom api={api} session={session} />;
 
   const showExploreShortcuts = showBottomNav && activeTab === "discover";
   const exploreControls = showExploreShortcuts && session ? <>
-    <RightNowControl key={session.userId} api={api} session={session} />
+    {googlePlayEdition ? <button type="button" className="rd-btn rd-app-tool"
+      onClick={() => setTabAndRoute("groups")} aria-label="Browse group plans" title="Group plans">
+      <Icon name="groups" />
+    </button> : <RightNowControl key={session.userId} api={api} session={session} />}
     <button type="button" className="rd-btn rd-app-tool"
       onClick={toggleTopFilterPanel} aria-label="Open filter controls" title="Filters">
       <Icon name="filter" active={filtersActive} />
@@ -1082,7 +1095,7 @@ export function App(): React.ReactElement {
                   <span className="rd-mobile-avatar-dot" />
                 </button>
                 <div className="rd-app-toolbar-side rd-app-toolbar-end">
-                  {session.userId && <button type="button" className="rd-btn rd-app-tool" aria-label="Live" title="Live"
+                  {!googlePlayEdition && session.userId && <button type="button" className="rd-btn rd-app-tool" aria-label="Live" title="Live"
                     aria-current={activeTab === "live" ? "page" : undefined} onClick={() => setTabAndRoute("live")}>
                     <Icon name="live" active={activeTab === "live" || liveState.broadcasts.some(room => room.live)} />
                   </button>}
@@ -1445,7 +1458,7 @@ export function App(): React.ReactElement {
                             aria-label="Profile weight in pounds"
                           />
                         </label>
-                        <label className="rd-field" style={{ marginBottom: 0 }}>
+                        {!googlePlayEdition && (<label className="rd-field" style={{ marginBottom: 0 }}>
                           <span className="rd-label">Position (Optional)</span>
                           <select
                             className="rd-input"
@@ -1458,7 +1471,7 @@ export function App(): React.ReactElement {
                             <option value="bottom">Bottom</option>
                             <option value="side">Side</option>
                           </select>
-                        </label>
+                        </label>)}
                       </div>
                       <div className="rd-row">
                         <button type="button" className="rd-btn primary" onClick={() => void submitProfileSetup()} disabled={busy} aria-label="Save profile and continue">
@@ -1486,6 +1499,9 @@ export function App(): React.ReactElement {
                 setLastError={setLastError}
                 onUnreadCountChange={() => {}}
                 onLogout={onLogout}
+                mediaReview={googlePlayEdition && session.userId ? <MediaReview key={session.userId}
+                  baseUrl={resolveApiBasePath()} token={session.sessionToken} admin={session.role === "admin"} /> : undefined}
+                onRegister={() => { onLogout(); switchAuthView("register"); }}
               /></LiveContext.Provider>
             </Suspense>
             )
@@ -1494,7 +1510,7 @@ export function App(): React.ReactElement {
       </main>
 
       {showBottomNav ? (
-        <nav className="rd-app-dock" aria-label="Primary navigation">
+        <nav className={googlePlayEdition ? "rd-app-dock rd-app-dock-play" : "rd-app-dock"} aria-label="Primary navigation">
           {discoverScreen !== "map" && exploreControls && <div className="rd-app-dock-context">{exploreControls}</div>}
           <button type="button" className="rd-btn rd-app-tool" aria-label="Explore" title="Explore"
             aria-current={activeTab === "discover" ? "page" : undefined}
@@ -1525,11 +1541,11 @@ export function App(): React.ReactElement {
             aria-current={activeTab === "groups" ? "page" : undefined} onClick={() => setTabAndRoute("groups")}>
             <Icon name="groups" active={activeTab === "groups"} />
           </button>
-          <button type="button" className="rd-btn rd-app-tool" aria-label="Postings" title="Postings"
+          {!googlePlayEdition && <button type="button" className="rd-btn rd-app-tool" aria-label="Postings" title="Postings"
             aria-current={activeTab === "ads" ? "page" : undefined}
             onClick={() => activeTab === "ads" && isMobile ? setTabAndRoute("discover", "map") : setTabAndRoute("ads")}>
             <Icon name="postings" active={activeTab === "ads"} />
-          </button>
+          </button>}
         </nav>
       ) : null}
     </div>
