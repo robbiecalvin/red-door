@@ -300,7 +300,7 @@
   border: 1px solid #7e292e;
   border-radius: 16px;
 }
-.rd-home-main .rd-home-hero h2 {
+.rd-home-main .rd-home-hero :is(h1, h2) {
   margin: 0;
   font-size: clamp(23px, 4vw, 38px);
   line-height: 1.05;

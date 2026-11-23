@@ -1,3 +1,4 @@
+import { googlePlayEdition } from "./edition";
 import { backroomLaunch } from "../../../shared/backroomLaunch";
 
 declare const __BACKROOM_EDITORIAL__: { slug: string; title: string; synopsis: string; alt: string }[];
@@ -61,7 +62,9 @@ export function Backroom({ api, session }: Props) {
       <nav aria-label="Site navigation"><a href="./" aria-current="page">The Backroom</a><a href="../store/">Shop</a></nav>
     </div></header>
     <main className="rd-backroom-content">
-    {!article ? <><h1>The Backroom</h1><section className="rd-backroom-grid" aria-label="Launch articles">
+    {!article ? <><h1>The Backroom</h1>
+      {!googlePlayEdition && <p>Articles on gay cruising, queer culture, and meeting people. <a href="../gay-cruising/">Read the gay cruising guide</a>.</p>}
+      <section className="rd-backroom-grid" aria-label="Launch articles">
       {[...editorialArticles.slice().reverse(), ...backroomLaunch].map(entry => <article className="rd-backroom-card" key={entry.slug}>
         <a href={`./${entry.slug}/`}>
           <img width={"alt" in entry ? 382 : 1200} height={"alt" in entry ? 510 : 600} loading="lazy" src={`./covers/${entry.slug}.${"alt" in entry ? "jpg" : "png"}`} alt={"alt" in entry ? entry.alt : ""} />

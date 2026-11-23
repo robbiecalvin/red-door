@@ -14,9 +14,6 @@ export function availableBackroomArticles(now = Date.now()) {
 export function writeBackroomArticles(articles, baseUrl) {
   const indexPath = "dist/thebackroom/index.html";
   const index = fs.readFileSync(indexPath, "utf8");
-  const links = articles.map(entry => `<li><a href="./${entry.slug}/">${esc(entry.title)}</a></li>`).join("");
-  if (links) fs.writeFileSync(indexPath, index.replace("</body>", `<noscript><h2>Recent Backroom articles</h2><ul>${links}</ul></noscript></body>`));
-
   for (const entry of articles) {
     const { slug, title, synopsis, alt, date, sections } = entry;
     const canonical = `${baseUrl}thebackroom/${slug}/`;
@@ -51,9 +48,33 @@ ${content}
 `);
   }
 
-  const paths = ["", "thebackroom/", ...fs.readdirSync("dist/thebackroom", { withFileTypes: true })
+  const articleSlugs = fs.readdirSync("dist/thebackroom", { withFileTypes: true })
     .filter(entry => entry.isDirectory() && fs.existsSync(`dist/thebackroom/${entry.name}/index.html`))
-    .map(entry => `thebackroom/${entry.name}/`)];
+    .map(entry => entry.name)
+    .sort();
+  const links = articleSlugs.map(slug => {
+    const path = `dist/thebackroom/${slug}/index.html`;
+    const html = fs.readFileSync(path, "utf8");
+    const title = html.match(/<title>(.*?)<\/title>/)?.[1]?.split(" · ")[0];
+    if (!title) throw new Error(`Missing article title in ${path}`);
+    if (!html.includes('rel="canonical"')) {
+      const canonical = `${baseUrl}thebackroom/${slug}/`;
+      fs.writeFileSync(path, html.replace('<link rel="stylesheet"', `<link rel="canonical" href="${esc(canonical)}"><link rel="stylesheet"`));
+    }
+    return `<li><a href="./${slug}/">${title}</a></li>`;
+  }).join("");
+  fs.writeFileSync(indexPath, index.replace('<div id="root"></div>', `<div id="root"><main class="site-page">
+    <h1>The Backroom</h1>
+    <p>Articles on gay cruising, queer culture, and meeting people.</p>
+    <p><a href="../gay-cruising/">Gay cruising guide</a> · <a href="../">Badehaus X</a></p>
+    <h2>Articles</h2><ul>${links}</ul>
+  </main></div>`));
+
+  const cruisingArticle = "dist/thebackroom/the-art-of-cruising/index.html";
+  fs.writeFileSync(cruisingArticle, fs.readFileSync(cruisingArticle, "utf8").replace("</main>",
+    '<p><a href="../../gay-cruising/">Read the gay cruising guide</a></p></main>'));
+
+  const paths = ["", "gay-cruising/", "thebackroom/", ...articleSlugs.map(slug => `thebackroom/${slug}/`)];
   fs.writeFileSync("dist/robots.txt", `User-agent: *\nSitemap: ${baseUrl}sitemap.xml\n`);
   fs.writeFileSync("dist/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

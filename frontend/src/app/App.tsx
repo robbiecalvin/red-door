@@ -1342,8 +1342,9 @@ export function App(): React.ReactElement {
               <section className="rd-card rd-home-hero" aria-label="Welcome to Badehaus X">
                 <div className="rd-card-body">
                   <img className="rd-afterdark-art" src={afterDark} alt="" aria-hidden="true" />
-                  <h2>See who’s inside.</h2>
+                  {googlePlayEdition ? <h2>See who’s inside.</h2> : <h1>Gay cruising on Badehaus X</h1>}
                   <p className="rd-home-copy">A space for gay men to explore, chat, and connect.</p>
+                  {!googlePlayEdition && <p className="site-page"><a href="./gay-cruising/">Gay cruising guide</a></p>}
                   <div className="rd-welcome-features"><span><Icon name="explore" />Explore nearby</span><span><Icon name="message" />Start a conversation</span><span><Icon name="shield" />Go at your pace</span></div>
                 </div>
               </section>
