@@ -171,6 +171,7 @@ export function createPublicPostingsService(
   }>
 ): Readonly<{
   list(type?: unknown, viewer?: SessionLike): Result<ReadonlyArray<Posting>>;
+  eraseUser(userId: string): void;
   listAll(type?: unknown): Result<ReadonlyArray<Posting>>;
   create(session: SessionLike, input: PostingInput): Result<Posting>;
   inviteToEvent(session: SessionLike, postingId: unknown, targetUserId: unknown, expiresAtMs?: unknown): Result<EventInvite>;
@@ -341,6 +342,23 @@ export function createPublicPostingsService(
       const filtered = posts.filter(p => p.type === parsed && canInteractWithEvent(p, viewer?.userId));
       const visible = includeAll ? filtered : filtered.filter((p) => p.moderationStatus === "approved");
       return ok(visible.sort((a, b) => b.createdAtMs - a.createdAtMs).map((p) => redactPostingForViewer(p, viewer, nowMs())));
+    },
+
+    eraseUser(userId) {
+      const removed = new Set(posts.filter(post => post.authorUserId === userId).map(post => post.postingId));
+      const remaining = posts.filter(post => !removed.has(post.postingId)).map(post => {
+        const { [userId]: discarded, ...invites } = post.inviteExpiresAtByUserId ?? {};
+        return { ...post, inviteExpiresAtByUserId: invites,
+          invitedUserIds: post.invitedUserIds?.filter(id => id !== userId),
+          acceptedUserIds: post.acceptedUserIds?.filter(id => id !== userId),
+          joinRequestUserIds: post.joinRequestUserIds?.filter(id => id !== userId) };
+      });
+      posts.splice(0, posts.length, ...remaining);
+      for (const [id, messages] of groupDiscussions) {
+        if (removed.has(id)) groupDiscussions.delete(id);
+        else groupDiscussions.set(id, messages.filter(message => message.authorUserId !== userId));
+      }
+      persistState();
     },
 
     listAll(type?: unknown): Result<ReadonlyArray<Posting>> {

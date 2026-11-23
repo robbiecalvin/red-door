@@ -121,6 +121,7 @@ export type AuthService = Readonly<{
   getUser(userId: string): StoredUser | undefined;
   updatePlus(userId: string, update: { phoneE164?: string; tier?: SubscriptionTier; plusExpiresAtMs?: number; plusData?: PlusData }): Result<StoredUser>;
   snapshotState(): AuthStateSnapshot;
+  eraseUser(userId: string): void;
 }>;
 
 export type AuthStateSnapshot = Readonly<{
@@ -977,6 +978,30 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         bannedAtMs: updated.bannedAtMs ?? null,
         bannedReason: updated.bannedReason ?? null
       });
+    },
+
+    eraseUser(userId) {
+      const user = usersById.get(userId);
+      if (user) usersByEmail.delete(user.email);
+      usersById.delete(userId);
+      verificationAttempts.delete(userId);
+      for (const [token, session] of sessionsByToken) if (session.userId === userId) sessionsByToken.delete(token);
+      for (const peer of usersById.values()) {
+        const data = peer.plusData;
+        if (!data || (!data.albumRequests?.includes(userId) && !data.albumSharedWith?.includes(userId) &&
+            !data.pinnedKeys?.includes(`user:${userId}`))) continue;
+        const nextData = {
+          ...data,
+          albumRequests: data.albumRequests?.filter(id => id !== userId),
+          albumSharedWith: data.albumSharedWith?.filter(id => id !== userId),
+          pinnedKeys: data.pinnedKeys?.filter(key => key !== `user:${userId}`)
+        };
+        const updated = { ...peer, plusData: nextData };
+        usersById.set(peer.id, updated);
+        usersByEmail.set(peer.email, updated);
+      }
+      persistUsers();
+      notifyStateChanged();
     },
 
     unbanUser(userId: unknown): Result<Pick<StoredUser, "id" | "bannedAtMs" | "bannedReason">> {

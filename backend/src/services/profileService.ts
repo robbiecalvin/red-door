@@ -76,11 +76,39 @@ export type ProfileRepository = Readonly<{
   getByUserId(userId: string): Promise<Profile | null>;
   listAll(): Promise<ReadonlyArray<Profile>>;
   upsert(profile: Profile): Promise<void>;
+  erase?(userId: string): Promise<void>;
 }>;
+
+function withoutSexualStats<T extends Record<string, unknown>>(stats: T) {
+  const { cockSizeInches, cutStatus, position, ...other } = stats;
+  return other;
+}
+
+// Use only with the isolated Google Play backend and its own data store.
+export function googlePlayProfileRepository(repo: ProfileRepository): ProfileRepository {
+  function withoutSexualFields(profile: Profile): Profile {
+    const { mainPhotoMediaId, videoMediaId, ...member } = profile;
+    return { ...member, galleryMediaIds: [], stats: withoutSexualStats(profile.stats) };
+  }
+
+  return {
+    async getByUserId(userId) {
+      const profile = await repo.getByUserId(userId);
+      return profile && withoutSexualFields(profile);
+    },
+    async listAll() {
+      return (await repo.listAll()).map(withoutSexualFields);
+    },
+    upsert(profile) {
+      return repo.upsert(withoutSexualFields(profile));
+    }
+  };
+}
 
 export type ProfileServiceDeps = Readonly<{
   repo: ProfileRepository;
   nowMs?: () => number;
+  googlePlayEdition?: boolean;
 }>;
 
 function ok<T>(value: T): ResultOk<T> {
@@ -280,7 +308,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
       if (!ageRes.ok) return ageRes;
       const bioRes = validateBio(update.bio);
       if (!bioRes.ok) return bioRes;
-      const statsRes = validateStats(update.stats);
+      const statsRes = validateStats(deps.googlePlayEdition && isObject(update.stats) ? withoutSexualStats(update.stats) : update.stats);
       if (!statsRes.ok) return statsRes;
 
       const userId = auth.value.userId;
@@ -311,7 +339,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
         displayName: displayNameRes.value,
         age: ageRes.value,
         bio: bioRes.value,
-        stats: statsRes.value,
+        stats: deps.googlePlayEdition ? withoutSexualStats(statsRes.value) : statsRes.value,
         discreetMode,
         travelMode,
         mainPhotoMediaId: existing?.mainPhotoMediaId,
@@ -444,7 +472,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
       if (!ageRes.ok) return ageRes;
       const bioRes = validateBio(update.bio);
       if (!bioRes.ok) return bioRes;
-      const statsRes = validateStats(update.stats);
+      const statsRes = validateStats(deps.googlePlayEdition && isObject(update.stats) ? withoutSexualStats(update.stats) : update.stats);
       if (!statsRes.ok) return statsRes;
 
       const existing = await deps.repo.getByUserId(userId.trim());
@@ -473,7 +501,7 @@ export function createProfileService(deps: ProfileServiceDeps): Readonly<{
         displayName: displayNameRes.value,
         age: ageRes.value,
         bio: bioRes.value,
-        stats: statsRes.value,
+        stats: deps.googlePlayEdition ? withoutSexualStats(statsRes.value) : statsRes.value,
         discreetMode,
         travelMode,
         mainPhotoMediaId: existing?.mainPhotoMediaId,

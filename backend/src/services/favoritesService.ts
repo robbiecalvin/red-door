@@ -42,6 +42,7 @@ export function createFavoritesService(deps: {
   initialFavorites?: Record<string, readonly string[]>;
   onStateChanged?: (favorites: Record<string, string[]>) => void;
 } = {}): Readonly<{
+  eraseUser(userId: string): void;
   list(session: SessionLike): Result<ReadonlyArray<string>>;
   toggle(session: SessionLike, targetUserId: unknown): Result<{ targetUserId: string; isFavorite: boolean; favorites: ReadonlyArray<string> }>;
 }> {
@@ -56,6 +57,11 @@ export function createFavoritesService(deps: {
   }
 
   return {
+    eraseUser(userId) {
+      byUser.delete(userId);
+      for (const entries of byUser.values()) entries.delete(userId);
+      deps.onStateChanged?.(Object.fromEntries(Array.from(byUser, ([id, entries]) => [id, [...entries]])));
+    },
     list(session: SessionLike): Result<ReadonlyArray<string>> {
       const auth = requireRegistered(session);
       if (!auth.ok) return auth;

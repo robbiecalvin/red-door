@@ -51,6 +51,10 @@ export function createInMemoryProfileRepository(options: ProfileRepoOptions = {}
   load();
 
   return {
+    async erase(userId) {
+      byUserId.delete(userId);
+      persist();
+    },
     async getByUserId(userId: string): Promise<Profile | null> {
       return byUserId.get(userId) ?? null;
     },

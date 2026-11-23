@@ -1,3 +1,7 @@
+import { childSafetyPriority } from "../../shared/childSafety";
+import { installAccountDeletionRoutes } from "./routes/accountDeletionRoutes";
+import { installMediaReviewRoutes } from "./routes/mediaReviewRoutes";
+import { isAnonymousIdentity } from "../../shared/identity";
 import { selectScheduledDiscovery, type ScheduledDiscoveryState } from "./services/scheduledDiscovery";
 import { customerScheduledLocation, isCustomerScheduledOnline } from "./services/customerSchedule";
 import { installCustomerImportRoutes } from "./routes/customerImportRoutes";
@@ -41,7 +45,7 @@ import { createPresenceService, type ServiceError as PresenceError } from "./ser
 import { createDatingFeedService } from "./services/datingFeedService";
 import { createFavoritesService, type ServiceError as FavoritesError } from "./services/favoritesService";
 import { createMediaService, type ServiceError as MediaError } from "./services/mediaService";
-import { createProfileService, type ServiceError as ProfileError } from "./services/profileService";
+import { createProfileService, googlePlayProfileRepository, type ServiceError as ProfileError } from "./services/profileService";
 import { createPublicPostingsService, type ServiceError as PublicPostingsError } from "./services/publicPostingsService";
 import { createReportService } from "./services/reportService";
 import { createSubmissionsService, type ServiceError as SubmissionsError } from "./services/submissionsService";
@@ -466,8 +470,14 @@ async function main(): Promise<void> {
   };
   const domainSession=(session:AuthSession):AuthSession=>session.userType==="guest"?{...session,sessionToken:publicGuestId(session.sessionToken)}:session;
   const clientSession=(session:AuthSession)=>({...session,publicKey:sessionKeyFromSession(domainSession(session))});
-  const profileRepo = postgresPool ? createPostgresProfileRepository(postgresPool) : createInMemoryProfileRepository();
-  const profileService = createProfileService({ repo: profileRepo });
+  const googlePlayEdition = process.env.DUALMODE_EDITION === "google-play";
+  function isPlayRestrictedChatPeer(key: unknown): boolean {
+    return googlePlayEdition && typeof key === "string" &&
+      (isAnonymousIdentity(key) || key.trim().startsWith("spot:"));
+  }
+  const profileStorage = postgresPool ? createPostgresProfileRepository(postgresPool) : createInMemoryProfileRepository();
+  const profileRepo = googlePlayEdition ? googlePlayProfileRepository(profileStorage) : profileStorage;
+  const profileService = createProfileService({ repo: profileRepo, googlePlayEdition });
   const bannedUserIds = (): ReadonlySet<string> =>
     new Set(authService.listUsers().filter((user) => typeof user.bannedAtMs === "number").map((user) => user.id));
 
@@ -566,9 +576,10 @@ async function main(): Promise<void> {
     const managed = settings?.completed === true;
     const online = managed && visibleOnSchedule(profile.userId);
     const recentlyActive = managed && !online && recentScheduledIds.has(profile.userId);
+    const { rightNowExpiresAtMs, ...socialMember } = member;
     return { ...profile, foundingMember: user?.plusData?.founderAtMs !== undefined,
       scheduledOnline: managed ? online : undefined, recentlyActive: recentlyActive || undefined,
-      member: managed && !online ? { ...member, rightNowExpiresAtMs: undefined } :
+      member: googlePlayEdition ? socialMember : managed && !online ? { ...member, rightNowExpiresAtMs: undefined } :
         online && settings?.rightNowTrigger ? { ...member, rightNowExpiresAtMs: now + 15_000 } : member };
   };
   const hiddenPresence = (key: string) => {
@@ -791,13 +802,23 @@ async function main(): Promise<void> {
     next();
   });
 
+  if (googlePlayEdition) {
+    app.use([
+      "/profile/media", "/chat/media/initiate", "/call",
+      "/members/verification",
+      "/storage/local", "/api/storage/local", "/storage/postgres", "/api/storage/postgres"
+    ], (_req, res) => res.status(403).json({
+      code: "MEDIA_DISABLED", message: "Member media is unavailable in this edition."
+    }));
+  }
+
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
   });
 
   app.get("/config", (_req, res) => {
     res.status(200).json({
-      mediaStorageConfigured: true,
+      mediaStorageConfigured: !googlePlayEdition,
       mediaStorageMode,
       emailDeliveryConfigured: smtpConfigured,
       smsDeliveryConfigured: smsConfigured
@@ -946,6 +967,120 @@ async function main(): Promise<void> {
     const user = authService.getUser(session.value.userId);
     return user ? { user, session: session.value } : null;
   }
+  const childSafetyEmails = new Set((process.env.CHILD_SAFETY_REVIEWER_EMAILS ?? "").split(",")
+    .map(email => email.trim().toLowerCase()).filter(Boolean));
+  function isChildSafetyReviewer(session: AuthSession): boolean {
+    const user = session.userId ? authService.getUser(session.userId) : undefined;
+    return session.role === "admin" && Boolean(user?.emailVerified && childSafetyEmails.has(user.email.toLowerCase()));
+  }
+  const reportPriority = (report: ReturnType<typeof reportService.listReports>[number]) =>
+    report.childSafetyPriority ?? childSafetyPriority(report.reason);
+
+  function flaggedTextMessage(id: string) {
+    return googlePlayEdition && reportService.listReports().some(report =>
+      reportPriority(report) === "exploitation" && "messageId" in report.target && report.target.messageId === id);
+  }
+
+  async function submitPhotoReport(req: Request, res: Response, session: AuthSession,
+    kind: "group-photo" | "album-photo" | "chat-photo", mediaId: string, ownerId: string) {
+    if (!session.ageVerified) return sendError(res, { code: "AGE_GATE_REQUIRED", message: "Confirm your age before reporting media." });
+    if (ownerId === session.userId) return res.status(400).json({ message: "Choose someone else's photo." });
+    const reason = req.body?.reason;
+    if (typeof reason !== "string" || !reason.trim() || reason.length > 500) return res.status(400).json({ message: "Enter a report reason of up to 500 characters." });
+    if (!await playMediaReview?.retainReportedMedia(mediaId, childSafetyPriority(reason) === "exploitation")) return res.status(404).json({ message: "Media is unavailable." });
+    const result = reportService.reportMedia(domainSession(session), { kind, mediaId, targetKey: `user:${ownerId}` }, reason);
+    if (!result.ok) return sendError(res, result.error);
+    await safetyPersistence;
+    if (safetyPersistenceError) return res.status(503).json({ message: "Unable to persist the media report." });
+    return res.json({ reportId: result.value.reportId });
+  }
+
+  const playMediaReview = googlePlayEdition ? (() => {
+    const bucket = s3Bucket || "local-dev-bucket";
+    return installMediaReviewRoutes(app, {
+      repository: communityRepository,
+      retentionEnabled: process.env.PLAY_MEDIA_RETENTION_ENABLED === "true",
+      profileOwnerExists: id => Boolean(authService.getUser(id)),
+      referencedMediaIds() {
+        const ids = new Set<string>();
+        for (const userId of authService.listRegisteredUserIds()) {
+          for (const id of authService.getUser(userId)?.plusData?.privateMediaIds ?? []) ids.add(id);
+        }
+        const groups = publicPostingsService.listAll("event");
+        if (groups.ok) for (const group of groups.value) if (group.photoMediaId) ids.add(group.photoMediaId);
+        chatService.purgeExpired();
+        for (const thread of chatService.snapshotState().threads) {
+          for (const message of thread.messages) {
+            const id = reviewedChatPhotoId(message.media?.objectKey);
+            if (id) ids.add(id);
+          }
+        }
+        return ids;
+      },
+      reportedMediaTimes() {
+        const times = new Map<string, number>();
+        for (const report of reportService.listReports()) {
+          if ("mediaId" in report.target) times.set(report.target.mediaId,
+            Math.max(times.get(report.target.mediaId) ?? 0, report.createdAtMs));
+        }
+        return times;
+      },
+      member: (req, res) => {
+        const actor = plusUser(req, res);
+        if (!actor) return null;
+        return actor.session;
+      },
+      admin: requireAdminSession,
+      childSafetyReviewer: isChildSafetyReviewer,
+      publicUrl: absolutizeStorageUrl,
+      reportSession(req, res) {
+        const session = authService.getSession(getSessionToken(req) ?? "");
+        if (!session.ok) { sendError(res, session.error); return null; }
+        if (!session.value.ageVerified) {
+          sendError(res, { code: "AGE_GATE_REQUIRED", message: "Confirm your age before reporting media." });
+          return null;
+        }
+        return domainSession(session.value);
+      },
+      async report(session, mediaId, ownerId, reason) {
+        const result = reportService.reportMedia(session, { kind: "profile-media", mediaId, targetKey: `user:${ownerId}` }, reason);
+        if (!result.ok) throw new Error(result.error.message);
+        await safetyPersistence;
+        if (safetyPersistenceError) throw new Error("Unable to persist the media report.");
+        return result.value.reportId;
+      },
+      reportedMedia(reportId) {
+        const report = reportService.listReports().find(row => row.reportId === reportId);
+        if (!report || !("mediaId" in report.target)) return undefined;
+        return { mediaId: report.target.mediaId, childSafety: Boolean(reportPriority(report)) };
+      },
+      async profileVisible(ownerId) {
+        const owner = authService.getUser(ownerId);
+        if (!owner || owner.bannedAtMs || hidesDiscovery(owner.plusData?.member, owner)) return false;
+        const result = await profileService.getPublicByUserId(ownerId);
+        return result.ok;
+      },
+      async put(key, bytes, mimeType) {
+        if (mediaStorageMode === "local") return (mediaStorage as LocalObjectStorage).putObject(key, bytes, mimeType);
+        if (mediaStorageMode === "postgres") return (mediaStorage as PostgresObjectStorage).putObject(key, bytes, mimeType);
+        const url = await mediaStorage.presignPutObject({ bucket, key, mimeType, expiresInSeconds: 60 });
+        const response = await fetch(url, { method: "PUT", headers: { "Content-Type": mimeType }, body: new Uint8Array(bytes), signal: AbortSignal.timeout(20000) });
+        if (!response.ok) throw new Error("Could not save review media.");
+      },
+      async read(key) {
+        if (mediaStorageMode === "local") return (mediaStorage as LocalObjectStorage).getObject(key)?.data ?? null;
+        if (mediaStorageMode === "postgres") return (await (mediaStorage as PostgresObjectStorage).getObject(key))?.data ?? null;
+        const url = await mediaStorage.presignGetObject({ bucket, key, expiresInSeconds: 60 });
+        const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
+        return response.ok ? Buffer.from(await response.arrayBuffer()) : null;
+      },
+      async remove(key) {
+        if (!mediaStorage.deleteObject) throw new Error("Media storage does not support deletion.");
+        await mediaStorage.deleteObject({ bucket, key });
+      }
+    });
+  })() : null;
+
   installBackroomRoutes(app, { repository: communityRepository, member: plusUser, admin: requireAdminSession });
   const stopGrowth = installGrowthRoutes(app, {
     auth: authService, repository: communityRepository, ledger: referralLedger, member: plusUser, admin: requireAdminSession,
@@ -973,7 +1108,19 @@ async function main(): Promise<void> {
     const diagnostic = await inspectBilling();
     return res.json(diagnostic);
   });
-  app.get("/admin/safety-reports",(req,res)=>{if(!requireAdminSession(req,res))return;res.setHeader("Cache-Control","no-store");return res.json({reports:reportService.listReports().slice(-200).reverse()});});
+  app.get("/admin/safety-reports", (req, res) => {
+    const admin = requireAdminSession(req, res);
+    if (!admin) return;
+    res.set("Cache-Control", "no-store");
+    const reports = reportService.listReports();
+    if (!googlePlayEdition) return res.json({ reports: reports.slice(-200).reverse() });
+    const canReviewChildSafety = isChildSafetyReviewer(admin);
+    const priority = req.query.queue === "child-safety";
+    if (priority && !canReviewChildSafety) return res.status(403).json({ message: "Child-safety reviewer access required." });
+    const selected = reports.filter(report => Boolean(reportPriority(report)) === priority).reverse();
+    if (priority) selected.sort((a, b) => Number(reportPriority(b) === "exploitation") - Number(reportPriority(a) === "exploitation"));
+    return res.json({ reports: selected.slice(0, 200).map(report => ({ ...report, childSafetyPriority: reportPriority(report) })), canReviewChildSafety });
+  });
   app.get("/admin/analytics", (req, res) => {
     if (!requireAdminSession(req, res)) return;
     res.setHeader("Cache-Control", "no-store");
@@ -995,10 +1142,13 @@ async function main(): Promise<void> {
     if (metricsWriteError) return res.status(503).json({ message: "Privacy preference saved, but measurement cleanup could not finish. Please retry." });
     return res.json({ analyticsConsent: consent });
   });
-  app.get("/plus", (req, res) => {
+  app.get("/plus", async (req, res) => {
     const actor = plusUser(req, res); if (!actor) return;
     const data = actor.user.plusData ?? {};
-    return res.json({ freePlus, active: hasPlus(actor.session), expiresAtMs: actor.session.plusExpiresAtMs, founderTrialEndsAtMs: data.founderTrialEndsAtMs, founderRateEligible: data.founderRateEligible === true, priority: data.priorityApprovedAtMs !== undefined, priorityInvited: data.priorityInvited === true, referralOffer: !data.founderRateEligible && Boolean(data.priorityReferralOwnerId && !data.referralIntroInvoiceId), priorityPending: data.priorityRequestedAtMs !== undefined && data.priorityApprovedAtMs === undefined, priorityReferralCode: data.priorityApprovedAtMs !== undefined ? data.priorityReferralCode : undefined, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds: data.privateMediaIds ?? [], albumSharedWith: data.albumSharedWith ?? [], billingConfigured: !freePlus && billingConfiguration().configured && (!data.founderRateEligible || Boolean(process.env.STRIPE_FOUNDER_PRICE_ID?.trim()))
+    const savedAlbum = data.privateMediaIds ?? [];
+    const approvedAlbum = savedAlbum.length ? await playMediaReview?.approvedPhotos("private-album") : undefined;
+    const privateMediaIds = approvedAlbum ? savedAlbum.filter(id => approvedAlbum.get(id) === actor.user.id) : savedAlbum;
+    return res.json({ freePlus, active: hasPlus(actor.session), expiresAtMs: actor.session.plusExpiresAtMs, founderTrialEndsAtMs: data.founderTrialEndsAtMs, founderRateEligible: data.founderRateEligible === true, priority: data.priorityApprovedAtMs !== undefined, priorityInvited: data.priorityInvited === true, referralOffer: !data.founderRateEligible && Boolean(data.priorityReferralOwnerId && !data.referralIntroInvoiceId), priorityPending: data.priorityRequestedAtMs !== undefined && data.priorityApprovedAtMs === undefined, priorityReferralCode: data.priorityApprovedAtMs !== undefined ? data.priorityReferralCode : undefined, limits: limits(actor.session), savedSearches: data.savedSearches ?? [], pinnedKeys: data.pinnedKeys ?? [], privateMediaIds, albumSharedWith: data.albumSharedWith ?? [], billingConfigured: !freePlus && billingConfiguration().configured && (!data.founderRateEligible || Boolean(process.env.STRIPE_FOUNDER_PRICE_ID?.trim()))
       && (!(data.priorityReferralOwnerId && !data.referralIntroInvoiceId && !data.founderRateEligible) ||
         Boolean(process.env.STRIPE_PRIORITY_INTRO_PRICE_ID?.trim() && process.env.STRIPE_PRIORITY_RENEWAL_PRICE_ID?.trim())), hasBillingAccount: Boolean(data.stripeCustomerId), hasPaymentMethod:data.stripePaymentMethodSaved===true, autoRenew:data.stripeAutoRenew===true,nextBillingAtMs:data.stripeNextBillingAtMs,redeemedPromoCodes:data.redeemedPromoCodes ?? [],providerTutorialPending:false,renewalScheduled:Boolean(data.stripeScheduleId && !["canceled","aborted","completed","released"].includes(data.stripeScheduleStatus ?? "")),subscriptionStatus:data.stripeSubscriptionStatus });
   });
@@ -1164,8 +1314,14 @@ async function main(): Promise<void> {
       const max = key === "pinnedKeys" ? limits(actor.session).pins : key === "privateMediaIds" ? limits(actor.session).privateAlbum : 100;
       if (!Array.isArray(values) || values.length > max || values.some((x: any) => typeof x !== "string" || !x.trim() || x.length > 200)) return res.status(400).json({ code: "PLUS_REQUIRED", message: `Limit for ${key}: ${max}.` });
       if (key === "privateMediaIds") for (const id of values) {
-        const media = await mediaRepo.getById(id);
-        if (!media || media.userId !== actor.user.id || media.kind !== "photo_private" || !media.uploadedAtMs) return res.status(403).json({ message: "Invalid private album media." });
+        if (playMediaReview) {
+          if (!await playMediaReview.touchPhoto(id, actor.user.id, "private-album")) {
+            return res.status(403).json({ message: "Choose one of your approved private album photos." });
+          }
+        } else {
+          const media = await mediaRepo.getById(id);
+          if (!media || media.userId !== actor.user.id || media.kind !== "photo_private" || !media.uploadedAtMs) return res.status(403).json({ message: "Invalid private album media." });
+        }
       }
       data[key] = [...new Set(values)] as string[];
     }
@@ -1260,8 +1416,12 @@ async function main(): Promise<void> {
     const mediaIds = owner.plusData?.privateMediaIds ?? [];
     const photos = [];
     for (const id of mediaIds) {
-      const media = await mediaRepo.getById(id);
-      if (!media || media.kind !== "photo_private" || media.userId !== owner.id) continue;
+      if (playMediaReview) {
+        if (await playMediaReview.approvedPhotoOwner(id, "private-album") !== owner.id) continue;
+      } else {
+        const media = await mediaRepo.getById(id);
+        if (!media || media.kind !== "photo_private" || media.userId !== owner.id) continue;
+      }
       const expires = Date.now() + 60_000;
       const signature = signAlbumAccess(jwtSecret!, owner.id, actor.user.id, id, expires);
       const url = `/plus/albums/${encodeURIComponent(owner.id)}/photos/${encodeURIComponent(id)}?viewer=${encodeURIComponent(actor.user.id)}&expires=${expires}&signature=${signature}`;
@@ -1270,6 +1430,18 @@ async function main(): Promise<void> {
     res.setHeader("Cache-Control", "no-store");
     return res.json({ photos, expiresInSeconds: 60 });
   });
+  if (playMediaReview) {
+    app.post("/plus/albums/:userId/photos/:mediaId/report", async (req, res) => {
+      const actor = plusUser(req, res); if (!actor) return;
+      const owner = albumPeer(actor.user.id, req.params.userId);
+      const id = req.params.mediaId;
+      if (!owner?.plusData?.albumSharedWith?.includes(actor.user.id) || !owner.plusData.privateMediaIds?.includes(id) ||
+          await playMediaReview.approvedPhotoOwner(id, "private-album") !== owner.id) {
+        return res.status(404).json({ message: "Album photo is unavailable." });
+      }
+      return submitPhotoReport(req, res, actor.session, "album-photo", id, owner.id);
+    });
+  }
   app.get("/plus/albums/:userId/photos/:mediaId", async (req, res) => {
     const owner = authService.getUser(req.params.userId);
     const viewer = typeof req.query.viewer === "string" ? req.query.viewer : "";
@@ -1277,6 +1449,19 @@ async function main(): Promise<void> {
     const expires = Number(req.query.expires);
     const signature = String(req.query.signature ?? "");
     if (!owner || !user || !user.ageVerified || user.bannedAtMs || owner.bannedAtMs || !validAlbumAccess(jwtSecret!, owner.id, viewer, req.params.mediaId, expires, signature) || blockService.isBlocked(`user:${owner.id}`, `user:${viewer}`) || (owner.id !== viewer && !owner.plusData?.albumSharedWith?.includes(viewer)) || !owner.plusData?.privateMediaIds?.includes(req.params.mediaId)) return res.status(403).end();
+    if (playMediaReview) {
+      const session = authService.getSession(getSessionToken(req) ?? "");
+      if (!session.ok || session.value.userId !== viewer || !session.value.ageVerified) return res.status(403).end();
+      const bytes = await playMediaReview.readApprovedPhoto(req.params.mediaId, owner.id, "private-album");
+      const latestOwner = authService.getUser(owner.id);
+      const latestViewer = authService.getUser(viewer);
+      if (!bytes || !latestOwner || latestOwner.bannedAtMs || !latestViewer?.ageVerified || latestViewer.bannedAtMs ||
+          expires <= Date.now() || blockService.isBlocked(`user:${owner.id}`, `user:${viewer}`) ||
+          !latestOwner.plusData?.privateMediaIds?.includes(req.params.mediaId) ||
+          (owner.id !== viewer && !latestOwner.plusData?.albumSharedWith?.includes(viewer))) return res.status(404).end();
+      return res.set({ "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" })
+        .type("image/jpeg").send(bytes);
+    }
     const media = await mediaRepo.getById(req.params.mediaId);
     if (!media || media.kind !== "photo_private" || media.userId !== owner.id) return res.status(404).end();
     res.setHeader("Cache-Control", "no-store"); res.setHeader("Referrer-Policy", "no-referrer");
@@ -1587,7 +1772,8 @@ async function main(): Promise<void> {
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const result = await profileService.getMe(sessionResult.value);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ profile: enrichProfile(result.value) });
+    const media = (await playMediaReview?.profileMediaByOwner())?.get(result.value.userId);
+    return res.status(200).json({ profile: enrichProfile({ ...result.value, ...media }) });
   });
 
   app.get("/profile/public/:userId", async (req, res) => {
@@ -1601,7 +1787,8 @@ async function main(): Promise<void> {
     if(viewer.ok && blockService.isBlocked(sessionKeyFromSession(domainSession(viewer.value)),`user:${userId}`))return res.status(404).json({code:"PROFILE_NOT_FOUND",message:"Profile not found."});
     const result = await profileService.getPublicByUserId(userId);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ profile: enrichProfile(result.value, viewer.ok && Boolean(viewer.value.userId) && viewer.value.ageVerified) });
+    const media = (await playMediaReview?.profileMediaByOwner())?.get(userId);
+    return res.status(200).json({ profile: enrichProfile({ ...result.value, ...media }, viewer.ok && Boolean(viewer.value.userId) && viewer.value.ageVerified) });
   });
 
   app.get("/profile/public", async (_req, res) => {
@@ -1610,11 +1797,12 @@ async function main(): Promise<void> {
     if (!result.ok) return sendError(res, result.error);
     const banned = bannedUserIds();
     refreshScheduledDiscovery();
+    const mediaByOwner = await playMediaReview?.profileMediaByOwner();
     return res.status(200).json({ profiles: result.value.filter(profile => {
       const user = authService.getUser(profile.userId);
       return !banned.has(profile.userId) && !(user && hidesDiscovery(user.plusData?.member, user)) &&
         (visibleOnSchedule(profile.userId) || recentScheduledIds.has(profile.userId));
-    }).map(profile => enrichProfile(profile)) });
+    }).map(profile => enrichProfile({ ...profile, ...mediaByOwner?.get(profile.userId) })) });
   });
 
   app.put("/profile/me", async (req, res) => {
@@ -1720,6 +1908,11 @@ async function main(): Promise<void> {
     return res.status(200).json(result.value);
   });
 
+  if (googlePlayEdition) {
+    app.use(["/cruise-spots", "/admin/cruise-spots"], (_req, res) =>
+      res.status(404).json({ code: "FEATURE_DISABLED", message: "This feature is unavailable in this edition." }));
+  }
+
   // Group responses can contain attendee-only locations.
   app.use("/public-postings", (_req, res, next) => {
     res.setHeader("Cache-Control", "private, no-store");
@@ -1727,19 +1920,66 @@ async function main(): Promise<void> {
   });
 
   // Community postings (ads/events)
-  app.get("/public-postings", (req, res) => {
+  app.get("/public-postings", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = token ? authService.getSession(token) : null;
     const viewer = sessionResult && sessionResult.ok ? domainSession(sessionResult.value) : undefined;
-    const result = publicPostingsService.list((req.query as any)?.type, viewer);
+    const type = req.query.type;
+    if (googlePlayEdition && type === "ad") return res.json({ postings: [] });
+    const result = publicPostingsService.list(googlePlayEdition && type === undefined ? "event" : type, viewer);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ postings: result.value });
+    if (!playMediaReview) return res.status(200).json({ postings: result.value });
+    const photos = await playMediaReview.approvedPhotos("group-photo");
+    return res.json({ postings: result.value.map(posting => {
+      const { photoMediaId, ...fields } = posting;
+      return photoMediaId && photos.get(photoMediaId) === posting.authorUserId ? posting : fields;
+    }) });
   });
 
-  app.post("/public-postings", (req, res) => {
+  if (playMediaReview) {
+    app.post("/public-postings/event/:postingId/photo/report", async (req, res) => {
+      const session = authService.getSession(getSessionToken(req) ?? "");
+      if (!session.ok) return sendError(res, session.error);
+      const result = publicPostingsService.list("event", domainSession(session.value));
+      const group = result.ok ? result.value.find(posting => posting.postingId === req.params.postingId) : undefined;
+      if (!group?.photoMediaId || group.photoMediaId !== req.body?.mediaId ||
+          await playMediaReview.approvedPhotoOwner(group.photoMediaId, "group-photo") !== group.authorUserId) {
+        return res.status(404).json({ message: "Group photo is unavailable." });
+      }
+      return submitPhotoReport(req, res, session.value, "group-photo", group.photoMediaId, group.authorUserId);
+    });
+    app.get("/public-postings/event/:postingId/photo", async (req, res) => {
+      const session = authService.getSession(getSessionToken(req) ?? "");
+      if (!session.ok) return sendError(res, session.error);
+      if (!session.value.ageVerified) return sendError(res, { code: "AGE_GATE_REQUIRED", message: "Confirm your age to view group photos." });
+      const visibleGroup = () => {
+        const result = publicPostingsService.list("event", domainSession(session.value));
+        return result.ok ? result.value.find(posting => posting.postingId === req.params.postingId) : undefined;
+      };
+      const group = visibleGroup();
+      if (!group?.photoMediaId) return res.status(404).json({ message: "Group photo is unavailable." });
+      const bytes = await playMediaReview.readGroupPhoto(group.photoMediaId, group.authorUserId);
+      if (!bytes || visibleGroup()?.photoMediaId !== group.photoMediaId) {
+        return res.status(404).json({ message: "Group photo is unavailable." });
+      }
+      return res.set("X-Content-Type-Options", "nosniff").type("image/jpeg").send(bytes);
+    });
+  }
+
+  app.post("/public-postings", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
+    if (googlePlayEdition && req.body?.type !== "event") {
+      return res.status(403).json({ code: "FEATURE_DISABLED", message: "Create a group plan in this edition." });
+    }
+    if (playMediaReview && req.body?.photoMediaId !== undefined) {
+      const id = req.body.photoMediaId;
+      if (typeof id !== "string" || !sessionResult.value.userId ||
+          !await playMediaReview.touchPhoto(id, sessionResult.value.userId, "group-photo")) {
+        return res.status(403).json({ code: "MEDIA_NOT_APPROVED", message: "Choose one of your approved group photos." });
+      }
+    }
     const result = publicPostingsService.create(domainSession(sessionResult.value), {
       type: (req.body as any)?.type,
       title: (req.body as any)?.title,
@@ -1824,7 +2064,8 @@ async function main(): Promise<void> {
     if (!session.ok) return sendError(res, session.error);
     const result = publicPostingsService.listGroupDiscussion(session.value, req.params.postingId);
     if (!result.ok) return sendError(res, result.error);
-    return res.json({ messages: result.value });
+    return res.json({ messages: result.value.map(message => flaggedTextMessage(message.messageId)
+      ? { ...message, text: "Message unavailable while under safety review." } : message) });
   });
 
   app.post("/public-postings/event/:postingId/discussion", (req, res) => {
@@ -1974,10 +2215,11 @@ async function main(): Promise<void> {
     return res.status(200).json({ user: result.value });
   });
 
-  app.post("/admin/users/:userId/unban", (req, res) => {
+  app.post("/admin/users/:userId/unban", async (req, res) => {
     const adminSessionResult = requireAdminSession(req, res);
     if (!adminSessionResult) return;
     const targetUserId = (req.params as any)?.userId;
+    if (await accountDeletion?.inProgress(targetUserId)) return res.status(409).json({ message: "Account deletion is in progress." });
     const result = authService.unbanUser(targetUserId);
     if (!result.ok) return sendError(res, result.error);
     return res.status(200).json({ user: result.value });
@@ -2202,13 +2444,13 @@ async function main(): Promise<void> {
       if(type.startsWith("md_"))return false;
       if (type === "chat_message") {
         const message = data?.message;
-        if (!message || blockService.isBlocked(message.fromKey, message.toKey)) return false;
+        if (!message || flaggedTextMessage(message.messageId) || (googlePlayEdition && message.media && !reviewedChatPhotoId(message.media.objectKey)) || isPlayRestrictedChatPeer(message.fromKey) || isPlayRestrictedChatPeer(message.toKey) || blockService.isBlocked(message.fromKey, message.toKey)) return false;
         return message.fromKey === actor || message.toKey === actor || (typeof message.toKey === "string" && message.toKey.startsWith("spot:") && !blockService.isBlocked(actor, message.fromKey));
       }
-      if (type === "call_signal") return Boolean(data && (data.fromKey === actor || data.toKey === actor) && !blockService.isBlocked(data.fromKey, data.toKey));
-      if (type === "presence_update") return typeof data?.key === "string" && auth.mode !== "date" && !hiddenPresence(data.key) && !blockService.isBlocked(actor, data.key);
+      if (type === "call_signal") return Boolean(data && !isPlayRestrictedChatPeer(data.fromKey) && !isPlayRestrictedChatPeer(data.toKey) && (data.fromKey === actor || data.toKey === actor) && !blockService.isBlocked(data.fromKey, data.toKey));
+      if (type === "presence_update") return typeof data?.key === "string" && auth.mode !== "date" && !(googlePlayEdition && isAnonymousIdentity(data.key)) && !hiddenPresence(data.key) && !blockService.isBlocked(actor, data.key);
       if(type === "presence_removed")return typeof data?.key==="string" && auth.mode!=="date";
-      if(type === "chat_read")return Boolean(data && (data.actorKey===actor || data.otherKey===actor) && !blockService.isBlocked(data.actorKey,data.otherKey));
+      if(type === "chat_read")return Boolean(data && !isPlayRestrictedChatPeer(data.actorKey) && !isPlayRestrictedChatPeer(data.otherKey) && (data.actorKey===actor || data.otherKey===actor) && !blockService.isBlocked(data.actorKey,data.otherKey));
       return false;
     }
   });
@@ -2236,6 +2478,7 @@ async function main(): Promise<void> {
   app.use(["/md", "/integrations/md", "/api/md", "/api/integrations/md"], (_req, res) => res.status(404).json({ code: "FEATURE_DISABLED", message: "This feature is unavailable in the standalone release." }));
   installLaunchReadiness(app,{admin:requireAdminSession,databasePing:postgresPool?()=>postgresPool.query("SELECT 1"):undefined,verifyMail:!apiSender&&smtpSender?()=>smtpSender.verify():undefined,httpsMailConfigured:Boolean(apiSender),mediaMode:mediaStorageMode,persistenceHealthy:()=>!authPersistenceError&&!chatPersistenceError&&!safetyPersistenceError&&!favoritesPersistenceError&&!guestPersistError&&!metricsWriteError});
   const shutdownLive = installLiveRoutes(app, {
+    disabled: googlePlayEdition,
     session: (req, res) => plusUser(req, res)?.session ?? null,
     admin: requireAdminSession,
     eligible: (id, token) => {
@@ -2260,6 +2503,7 @@ async function main(): Promise<void> {
     session: (req, res) => plusUser(req, res)?.session ?? null,
     eligible: id => { const user = authService.getUser(id); return Boolean(user?.ageVerified && !user.bannedAtMs); },
     blocked: (a, b) => blockService.isBlocked(`user:${a}`, `user:${b}`),
+    restrictedMessage: flaggedTextMessage,
     hasHistory: (a, b) => chatService.hasDirectHistory(`user:${a}`, `user:${b}`),
     report: async (session, conversationId, message, reason) => {
       const result = reportService.reportGroupMessage(session, {
@@ -2273,6 +2517,7 @@ async function main(): Promise<void> {
   });
 
   installMemberRoutes(app,{
+    googlePlayEdition,
     auth:authService,profiles:profileRepo,media:mediaRepo,storage:mediaStorage,bucket:s3Bucket || "local-dev-bucket",
     privacyChanged: (key, hideProfile) => {
       recentPriority.delete(key);
@@ -2310,7 +2555,7 @@ async function main(): Promise<void> {
     const viewerKey=sessionKeyFromSession(domainSession(sessionResult.value));
     const now = Date.now();
     // The authenticated presence poll also signals guest activity without GPS.
-    if (sessionResult.value.userType === "guest" && sessionResult.value.ageVerified) {
+    if (!googlePlayEdition && sessionResult.value.userType === "guest" && sessionResult.value.ageVerified) {
       activeGuests.set(viewerKey, Math.min(now + guestActivityMs, sessionResult.value.expiresAtMs));
     }
     const guestKeys: string[] = [];
@@ -2322,7 +2567,7 @@ async function main(): Promise<void> {
     
     // Get active presence
     const activePresence = presenceService.listActivePresence().filter((row) => {
-      if(hiddenPresence(row.key) || blockService.isBlocked(viewerKey,row.key))return false;
+      if((googlePlayEdition && isAnonymousIdentity(row.key)) || hiddenPresence(row.key) || blockService.isBlocked(viewerKey,row.key))return false;
       if (!row.key.startsWith("user:")) return true;
       const userId = row.key.slice("user:".length).trim();
       return !banned.has(userId);
@@ -2414,12 +2659,53 @@ async function main(): Promise<void> {
   });
 
   // Chat
-  app.post("/chat/send", (req, res) => {
+  function reviewedChatPhotoId(key: unknown) {
+    return typeof key === "string" ? /^review-photo:([a-f0-9-]{36})$/.exec(key)?.[1] : undefined;
+  }
+
+  function chatMessageForEdition<T extends { media?: { objectKey: string }; text: string; fromKey: string; messageId: string }>(message: T, approved?: ReadonlyMap<string, string>) {
+    if (!googlePlayEdition) return message;
+    if (flaggedTextMessage(message.messageId)) {
+      const { media, ...restricted } = message;
+      return { ...restricted, text: "Message unavailable while under safety review." };
+    }
+    if (!message.media) return message;
+    const id = reviewedChatPhotoId(message.media.objectKey);
+    const ownerId = id && approved?.get(id);
+    if (ownerId && message.fromKey === `user:${ownerId}`) return message;
+    const { media, ...textMessage } = message;
+    return { ...textMessage, text: message.text.trim() ? message.text : "Attachment unavailable" };
+  }
+
+  if (googlePlayEdition) {
+    app.use(["/chat", "/call"], (req, res, next) => {
+      if (req.method === "GET" && req.path.startsWith("/media/download/")) return next();
+      const session = authService.getSession(getSessionToken(req) ?? "");
+      if (!session.ok) return sendError(res, session.error);
+      if (session.value.userId) return next();
+      if (req.method === "GET" && req.path === "/threads") return res.json({ threads: [] });
+      if (req.method === "GET" && req.path === "/messages") return res.json({ messages: [] });
+      return res.status(403).json({ code: "ACCOUNT_REQUIRED", message: "Create an account to use messaging." });
+    });
+  }
+
+  app.post("/chat/send", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
-    const { chatKind, toKey, text, media } = req.body as any;
-    if (media && (typeof media.objectKey !== "string" || !media.objectKey.startsWith(`chat/${sessionResult.value.userId ? `user-${sessionResult.value.userId}` : `session-${publicGuestId(sessionResult.value.sessionToken)}`}/`))) return sendError(res, { code: "UNAUTHORIZED_ACTION", message: "Chat attachments must be uploaded by the sender." });
+    const { chatKind, toKey, text } = req.body as any;
+    let media = req.body?.media;
+    if (isPlayRestrictedChatPeer(toKey)) return res.status(404).json({ code: "FEATURE_DISABLED", message: "This conversation is unavailable in this edition." });
+    if (playMediaReview && media !== undefined) {
+      const id = reviewedChatPhotoId(media?.objectKey);
+      const recipient = typeof toKey === "string" && toKey.startsWith("user:") ? authService.getUser(toKey.slice(5)) : undefined;
+      if (!id || media.kind !== "image" || !sessionResult.value.userId ||
+          !recipient?.emailVerified || !recipient.ageVerified || recipient.bannedAtMs ||
+          !await playMediaReview.touchPhoto(id, sessionResult.value.userId, "chat-photo")) {
+        return res.status(403).json({ code: "MEDIA_NOT_APPROVED", message: "Choose one of your approved chat photos." });
+      }
+      media = { kind: "image", objectKey: `review-photo:${id}`, mimeType: "image/jpeg" };
+    } else if (media && (typeof media.objectKey !== "string" || !media.objectKey.startsWith(`chat/${sessionResult.value.userId ? `user-${sessionResult.value.userId}` : `session-${publicGuestId(sessionResult.value.sessionToken)}`}/`))) return sendError(res, { code: "UNAUTHORIZED_ACTION", message: "Chat attachments must be uploaded by the sender." });
     const result = chatService.sendMessage(domainSession(sessionResult.value), { chatKind, toKey, text, media });
     if (!result.ok) return sendError(res, result.error);
     if (sessionResult.value.userId && typeof toKey === "string" && toKey.startsWith("user:") && authService.getUser(sessionResult.value.userId)?.plusData?.analyticsConsent === true && authService.getUser(toKey.slice(5))?.plusData?.analyticsConsent === true && !/^GROUP_INVITE_/.test(text ?? "")) recordMetric(() => metrics.message(sessionResult.value.userId!, toKey.slice(5)));
@@ -2429,25 +2715,29 @@ async function main(): Promise<void> {
     return res.status(200).json({ message: result.value });
   });
 
-  app.get("/chat/messages", (req, res) => {
+  app.get("/chat/messages", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const chatKind = req.query.chatKind;
     const otherKey = req.query.otherKey;
+    if (isPlayRestrictedChatPeer(otherKey)) return res.status(404).json({ code: "FEATURE_DISABLED", message: "This conversation is unavailable in this edition." });
     const result = chatService.listMessages(domainSession(sessionResult.value), chatKind as any, otherKey as any);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ messages: result.value });
+    const approved = result.value.some(message => message.media) ? await playMediaReview?.approvedPhotos("chat-photo") : undefined;
+    return res.status(200).json({ messages: result.value.map(message => chatMessageForEdition(message, approved)) });
   });
 
-  app.get("/chat/threads", (req, res) => {
+  app.get("/chat/threads", async (req, res) => {
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const chatKind = req.query.chatKind;
     const result = chatService.listThreads(domainSession(sessionResult.value), chatKind as any);
     if (!result.ok) return sendError(res, result.error);
-    return res.status(200).json({ threads: result.value });
+    const approved = result.value.some(thread => thread.lastMessage.media) ? await playMediaReview?.approvedPhotos("chat-photo") : undefined;
+    return res.status(200).json({ threads: result.value.filter(thread => !isPlayRestrictedChatPeer(thread.otherKey))
+      .map(thread => ({ ...thread, lastMessage: chatMessageForEdition(thread.lastMessage, approved) })) });
   });
 
   app.post("/chat/read", (req, res) => {
@@ -2455,6 +2745,7 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { chatKind, otherKey } = req.body as any;
+    if (isPlayRestrictedChatPeer(otherKey)) return res.status(404).json({ code: "FEATURE_DISABLED", message: "This conversation is unavailable in this edition." });
     const actorKey=sessionKeyFromSession(domainSession(sessionResult.value));
     const before=chatService.listMessages(domainSession(sessionResult.value),chatKind,otherKey);
     const changed=before.ok && before.value.some(m=>m.toKey===actorKey && m.readAtMs===undefined);
@@ -2518,23 +2809,46 @@ async function main(): Promise<void> {
 
   const chatDownloadTickets = new Map<string, { key: string; sessionToken: string; expires: number }>();
   function mayReadChatMedia(session: AuthSession, key: string) {
-    if (!key.startsWith("chat/")) return false;
+    if (googlePlayEdition ? !reviewedChatPhotoId(key) : !key.startsWith("chat/")) return false;
     const actor = sessionKeyFromSession(domainSession(session));
     const messages = chatService.snapshotState().threads.flatMap(thread => thread.messages);
     for (const message of messages) {
-      if (message.media?.objectKey !== key || blockService.isBlocked(message.fromKey, message.toKey)) continue;
+      if (message.media?.objectKey !== key || flaggedTextMessage(message.messageId) || isPlayRestrictedChatPeer(message.fromKey) || isPlayRestrictedChatPeer(message.toKey) || blockService.isBlocked(message.fromKey, message.toKey)) continue;
+      if (message.fromKey !== actor && message.toKey !== actor && (googlePlayEdition || !message.toKey.startsWith("spot:"))) continue;
       const peer = message.fromKey === actor ? message.toKey : message.fromKey;
       const visible = chatService.listMessages(domainSession(session), message.chatKind, peer);
       if (visible.ok && visible.value.some(row => row.media?.objectKey === key)) return true;
     }
     return false;
   }
+  if (playMediaReview) {
+    app.post("/chat/media/report", async (req, res) => {
+      const actor = plusUser(req, res); if (!actor) return;
+      const { chatKind, messageId, peerKey, mediaId } = req.body ?? {};
+      if (typeof peerKey !== "string" || !peerKey.startsWith("user:") || isPlayRestrictedChatPeer(peerKey) ||
+          blockService.isBlocked(`user:${actor.user.id}`, peerKey)) return res.status(404).json({ message: "Chat photo is unavailable." });
+      const result = chatService.listMessages(domainSession(actor.session), chatKind, peerKey);
+      const message = result.ok ? result.value.find(row => row.messageId === messageId && row.fromKey === peerKey) : undefined;
+      const id = reviewedChatPhotoId(message?.media?.objectKey);
+      if (!id || id !== mediaId || await playMediaReview.approvedPhotoOwner(id, "chat-photo") !== peerKey.slice(5)) {
+        return res.status(404).json({ message: "Chat photo is unavailable." });
+      }
+      return submitPhotoReport(req, res, actor.session, "chat-photo", id, peerKey.slice(5));
+    });
+  }
   app.get("/chat/media/url", async (req, res) => {
     const session = authService.getSession(getSessionToken(req) ?? "");
     if (!session.ok) return sendError(res, session.error);
     if (session.value.ageVerified !== true) return sendError(res, { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Badehaus X." });
     const key = typeof req.query.objectKey === "string" ? req.query.objectKey : "";
-    if (!mayReadChatMedia(session.value, key)) return sendError(res, { code: "UNAUTHORIZED_ACTION", message: "Chat media is not available in your active conversations." });
+    if (!mayReadChatMedia(session.value, key)) {
+      const message = "Chat media is not available in your active conversations.";
+      if (playMediaReview) return res.status(403).json({ code: "UNAUTHORIZED_ACTION", message });
+      return sendError(res, { code: "UNAUTHORIZED_ACTION", message });
+    }
+    if (playMediaReview && !await playMediaReview.approvedPhotoOwner(reviewedChatPhotoId(key)!, "chat-photo")) {
+      return res.status(404).json({ message: "Chat photo is unavailable." });
+    }
     for (const [id, ticket] of chatDownloadTickets) if (ticket.expires <= Date.now()) chatDownloadTickets.delete(id);
     const ticket = randomUUID(); chatDownloadTickets.set(ticket, { key, sessionToken: session.value.sessionToken, expires: Date.now() + 60000 });
     res.setHeader("Cache-Control", "no-store");
@@ -2546,6 +2860,15 @@ async function main(): Promise<void> {
     const session = authService.getSession(ticket.sessionToken);
     if (!session.ok || !mayReadChatMedia(session.value, ticket.key)) return res.status(403).end();
     res.setHeader("Cache-Control", "no-store"); res.setHeader("Referrer-Policy", "no-referrer");
+    if (playMediaReview) {
+      if (getSessionToken(req) !== ticket.sessionToken) return res.status(403).end();
+      const id = reviewedChatPhotoId(ticket.key)!;
+      const owner = await playMediaReview.approvedPhotoOwner(id, "chat-photo");
+      const bytes = owner && await playMediaReview.readApprovedPhoto(id, owner, "chat-photo");
+      if (!bytes || ticket.expires <= Date.now() || !authService.getSession(ticket.sessionToken).ok ||
+          !mayReadChatMedia(session.value, ticket.key)) return res.status(404).end();
+      return res.set("X-Content-Type-Options", "nosniff").type("image/jpeg").send(bytes);
+    }
     if (mediaStorageMode === "s3") return res.redirect(await mediaStorage.presignGetObject({ bucket: s3Bucket, key: ticket.key, expiresInSeconds: Math.max(1, Math.floor((ticket.expires - Date.now()) / 1000)) }));
     const object = mediaStorageMode === "local" ? (mediaStorage as LocalObjectStorage).getObject(ticket.key) : await (mediaStorage as PostgresObjectStorage).getObject(ticket.key);
     if (!object) return res.status(404).end();
@@ -2561,6 +2884,7 @@ async function main(): Promise<void> {
     }
 
     const toKey = typeof (req.body as any)?.toKey === "string" ? String((req.body as any).toKey).trim() : "";
+    if (isPlayRestrictedChatPeer(toKey)) return res.status(404).json({ code: "FEATURE_DISABLED", message: "This call is unavailable in this edition." });
     const callId = typeof (req.body as any)?.callId === "string" ? String((req.body as any).callId).trim() : "";
     const signalType = typeof (req.body as any)?.signalType === "string" ? String((req.body as any).signalType).trim() : "";
     const sdp = typeof (req.body as any)?.sdp === "string" ? String((req.body as any).sdp) : undefined;
@@ -2640,6 +2964,12 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { targetKey, reason } = req.body as any;
+    if (googlePlayEdition && childSafetyPriority(reason)) {
+      const id = typeof targetKey === "string" && targetKey.startsWith("user:") ? targetKey.slice(5) : "";
+      if (!id || id === sessionResult.value.userId || !authService.getUser(id)) {
+        return res.status(404).json({ message: "Profile is unavailable." });
+      }
+    }
     const result = reportService.reportUser(domainSession(sessionResult.value), targetKey, reason);
     if (!result.ok) return sendError(res, result.error);
     await safetyPersistence;if(safetyPersistenceError)return res.status(503).json({message:"Unable to persist safety settings. Please retry."});
@@ -2651,11 +2981,92 @@ async function main(): Promise<void> {
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const { messageId, reason, targetKey } = req.body as any;
-    const result = reportService.reportMessage(domainSession(sessionResult.value), messageId, reason, targetKey);
+    const session = domainSession(sessionResult.value);
+    let evidence: string | undefined;
+    if (googlePlayEdition && childSafetyPriority(reason)) {
+      if (typeof targetKey !== "string" || !targetKey.startsWith("user:") || isPlayRestrictedChatPeer(targetKey)) {
+        return res.status(404).json({ message: "Message is unavailable." });
+      }
+      const kind = req.body?.chatKind;
+      if (kind !== "cruise" && kind !== "date") return res.status(400).json({ message: "Choose the conversation containing this message." });
+      const thread = chatService.listMessages(session, kind, targetKey);
+      const message = thread.ok ? thread.value.find(row => row.messageId === messageId &&
+        row.fromKey === targetKey && row.toKey === sessionKeyFromSession(session)) : undefined;
+      if (!message) return res.status(404).json({ message: "Message is unavailable." });
+      evidence = message.text;
+    }
+    const result = reportService.reportMessage(session, messageId, reason, targetKey, evidence);
     if (!result.ok) return sendError(res, result.error);
     await safetyPersistence;if(safetyPersistenceError)return res.status(503).json({message:"Unable to persist safety settings. Please retry."});
     return res.status(200).json({ report: result.value });
   });
+
+  const accountDeletion = googlePlayEdition ? installAccountDeletionRoutes(app, {
+    repository: communityRepository,
+    admin: requireAdminSession,
+    lookup(email) {
+      const user = authService.listUsers().find(candidate => candidate.email === email && candidate.emailVerified && candidate.role !== "admin");
+      return user && { id: user.id, email: user.email };
+    },
+    async send(email, code) {
+      if (!emailSender) throw new Error("Transactional email unavailable");
+      await emailSender.sendMail({ from: transactionalFrom, to: email, ...brandedEmail(
+        "Confirm Badehaus X account deletion",
+        `Your account deletion code is ${code}. It expires in 15 minutes. Enter it on the account deletion screen only if you requested deletion.`
+      ) });
+    },
+    async erase(userId) {
+      const user = authService.getUser(userId);
+      const billing = user?.plusData;
+      if (user) {
+        authService.banUser(userId, "Account deletion in progress");
+        await authPersistQueue;
+        if (authPersistenceError) throw new Error("Unable to revoke account sessions");
+        safeBroadcast(gateway.broadcast, "presence_removed", { key: `user:${userId}`, hideProfile: true });
+      }
+      if (billing?.stripeCheckoutSessionId) {
+        const checkout = await stripeRequest(`checkout/sessions/${encodeURIComponent(billing.stripeCheckoutSessionId)}`);
+        if (checkout.status === "open") throw new Error("Open checkout requires billing reconciliation");
+      }
+      if (billing?.stripeSubscriptionId) {
+        const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(billing.stripeSubscriptionId)}`);
+        if (!["canceled", "incomplete_expired"].includes(subscription.status)) {
+          throw new Error("Billing reconciliation required before account deletion");
+        }
+      }
+      if ((billing?.stripeScheduleId && !["canceled", "aborted", "completed", "released"].includes(billing.stripeScheduleStatus ?? ""))) {
+        throw new Error("Billing reconciliation required before account deletion");
+      }
+      metrics.eraseUser(userId);
+      presenceService.eraseActor(`user:${userId}`);
+      recentPriority.delete(`user:${userId}`);
+      submissionsService.eraseUser(userId);
+      matchingService.eraseUser(userId);
+      await profileStorage.erase!(userId);
+      chatService.eraseActor(`user:${userId}`);
+      publicPostingsService.eraseUser(userId);
+      favoritesService.eraseUser(userId);
+      blockService.eraseActor(`user:${userId}`);
+      await communityRepository.update(state => {
+        type Group = { creatorId: string; members: string[]; accepted: string[]; read: Record<string, number>; messages: { authorId: string }[] };
+        const groups = state.settings.groupConversations as Group[] | undefined;
+        if (groups) state.settings.groupConversations = groups.flatMap(group => {
+          if (!group.members.includes(userId)) return [group];
+          const members = group.members.filter(id => id !== userId);
+          if (members.length < 2) return [];
+          const { [userId]: discarded, ...read } = group.read;
+          return [{ ...group, members, read, creatorId: group.creatorId === userId ? members[0] : group.creatorId,
+            accepted: group.accepted.filter(id => id !== userId), messages: group.messages.filter(message => message.authorId !== userId) }];
+        });
+      });
+      await Promise.all([chatPersistQueue, favoritesPersistence, safetyPersistence, metricsQueue]);
+      if (chatPersistenceError || favoritesPersistenceError || safetyPersistenceError || metricsWriteError) throw new Error("Account data cleanup could not be persisted");
+      await playMediaReview?.eraseOwner(userId);
+      authService.eraseUser(userId);
+      await authPersistQueue;
+      if (authPersistenceError) throw new Error("Account removal could not be persisted");
+    }
+  }) : null;
 
   // Final error boundary.
   app.use((_err: unknown, _req: Request, res: Response, _next: unknown) => {
@@ -2691,7 +3102,7 @@ async function main(): Promise<void> {
     stopGrowth();
     clearInterval(autoReplyTimer);
     clearInterval(scheduledDiscoveryTimer);
-    await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue, guestPersistQueue, safetyPersistence, favoritesPersistence, communityRepository.flush(), shutdownLive()]);
+    await Promise.allSettled([authPersistQueue, chatPersistQueue, metricsQueue, guestPersistQueue, safetyPersistence, favoritesPersistence, communityRepository.flush(), shutdownLive(), playMediaReview?.stopRetention(), accountDeletion?.stop()]);
     if (postgresPool) {
       await postgresPool.end();
     }

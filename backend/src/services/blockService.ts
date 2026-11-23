@@ -34,6 +34,7 @@ export type BlockServiceDeps = Readonly<{
 }>;
 
 export type BlockService = Readonly<{
+  eraseActor(key: string): void;
   block(session: Session, targetKey: string): Result<BlockRecord>;
   unblock(session: Session, targetKey: string): Result<void>;
   isBlocked(fromKey: string, toKey: string): boolean;
@@ -106,6 +107,14 @@ export function createBlockService(deps: BlockServiceDeps = {}): BlockService {
   for(const record of deps.initialBlocks ?? []){blockedEdges.add(edgeKey(record.blockerKey,record.blockedKey));addIndex(record.blockerKey,record.blockedKey);}
   function persist(){const records=[];for(const [blockerKey,blocked] of blockedByBlocker)for(const blockedKey of blocked)records.push({blockerKey,blockedKey});deps.onStateChanged?.(records);}
   return {
+    eraseActor(key: string) {
+      for (const [blocker, blocked] of blockedByBlocker) for (const peer of blocked) {
+        if (blocker !== key && peer !== key) continue;
+        blockedEdges.delete(edgeKey(blocker, peer));
+        removeIndex(blocker, peer);
+      }
+      persist();
+    },
     block(session: Session, targetKey: string): Result<BlockRecord> {
       const valid = validateSession(session);
       if (!valid.ok) return valid as Result<BlockRecord>;

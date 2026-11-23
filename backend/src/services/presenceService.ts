@@ -52,6 +52,7 @@ export type PresenceService = Readonly<{
   updatePresence(session: Session, input: PresenceUpdateInput): Result<PresenceRecord>;
   listActivePresence(): ReadonlyArray<PresenceRecord>;
   sweepExpired(): number;
+  eraseActor(key: string): void;
 }>;
 
 const DEFAULT_RANDOMIZATION_METERS = 100;
@@ -142,6 +143,7 @@ export function createPresenceService(deps: PresenceServiceDeps = {}): PresenceS
   }
 
   return {
+    eraseActor(key) { byKey.delete(key); },
     updatePresence(session: Session, input: PresenceUpdateInput): Result<PresenceRecord> {
       if (
         typeof session !== "object" ||

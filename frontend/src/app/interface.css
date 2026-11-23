@@ -84,6 +84,7 @@
   padding: 3px max(0px, env(safe-area-inset-right, 0px)) calc(3px + env(safe-area-inset-bottom, 0px)) max(0px, env(safe-area-inset-left, 0px));
   background: var(--rd-app-bar-background);
 }
+.rd-app-dock-play { grid-template-columns: repeat(2, minmax(44px, 1fr)) auto minmax(44px, 1fr); }
 .rd-app-dock .rd-app-tool { position: relative; }
 .rd-app-dock-views {
   display: flex;

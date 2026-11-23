@@ -2564,7 +2564,7 @@ function localGroupBlocked(state: LocalState, hostId: string, viewerId: string):
 
 function createLocalApiClient(): Readonly<{
   memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T>;
-  memberPhoto(token: string, userId: string, purpose?: "priority"): Promise<Blob>;
+  memberPhoto(token: string, userId: string, purpose?: "priority" | "reported-media" | "group-photo" | "group-photo-preview" | "approved-photo-preview"): Promise<Blob>;
   requestPasswordReset(email: string): Promise<{ message: string }>;
   confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
   getRegistrationPolicy(): Promise<RegistrationPolicy>;
@@ -4120,7 +4120,7 @@ function createLocalApiClient(): Readonly<{
 
 export function apiClient(basePath = "/api"): Readonly<{
   memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T>;
-  memberPhoto(token: string, userId: string, purpose?: "priority"): Promise<Blob>;
+  memberPhoto(token: string, userId: string, purpose?: "priority" | "reported-media" | "group-photo" | "group-photo-preview" | "approved-photo-preview"): Promise<Blob>;
   requestPasswordReset(email: string): Promise<{ message: string }>;
   confirmPasswordReset(token: string, password: string): Promise<{ ok: true }>;
   getRegistrationPolicy(): Promise<RegistrationPolicy>;
@@ -4288,7 +4288,7 @@ export function apiClient(basePath = "/api"): Readonly<{
 
   return {
     async memberRequest<T>(token: string, route: string, data?: unknown, method?: string): Promise<T> { const response=await fetch(`${basePath}${route}`,{method:method ?? (data===undefined?"GET":"POST"),headers:headers(token),body:data===undefined?undefined:JSON.stringify(data),cache:"no-store"});return await readJsonOrThrow(response) as T; },
-    async memberPhoto(token,userId,purpose) {const route=purpose==="priority"?`/admin/membership/priority/${encodeURIComponent(userId)}/proof`:`/admin/photo-verifications/${encodeURIComponent(userId)}/photo`;const response=await fetch(`${basePath}${route}`,{headers:headers(token),cache:"no-store"});if(!response.ok){await readJsonOrThrow(response);throw new Error("Photo unavailable.");}return response.blob();},
+    async memberPhoto(token,userId,purpose) {const route=purpose==="approved-photo-preview"?`/media-review/photos/${encodeURIComponent(userId)}/preview`:purpose==="group-photo-preview"?`/media-review/group-photos/${encodeURIComponent(userId)}/preview`:purpose==="group-photo"?`/public-postings/event/${encodeURIComponent(userId)}/photo`:purpose==="reported-media"?`/admin/safety-reports/${encodeURIComponent(userId)}/media`:purpose==="priority"?`/admin/membership/priority/${encodeURIComponent(userId)}/proof`:`/admin/photo-verifications/${encodeURIComponent(userId)}/photo`;const response=await fetch(`${basePath}${route}`,{headers:headers(token),cache:"no-store"});if(!response.ok){await readJsonOrThrow(response);throw new Error("Photo unavailable.");}return response.blob();},
     async requestPasswordReset(email) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/request`, { method: "POST", headers: headers(), body: JSON.stringify({ email }) })) as Promise<{ message: string }>; },
     async confirmPasswordReset(token, password) { return readJsonOrThrow(await fetch(`${basePath}/auth/password-reset/confirm`, { method: "POST", headers: headers(), body: JSON.stringify({ token, password }) })) as Promise<{ ok: true }>; },
     async getGoogleSignInChallenge() {

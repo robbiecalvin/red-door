@@ -1,3 +1,4 @@
+import { EXPLOITATION_REPORT_REASON, UNDERAGE_REPORT_REASON } from "../shared/childSafety";
 import { createCommunityRepository } from "../backend/src/repositories/communityRepository";
 import { createReferralLedger, creditStatus, payoutWindow } from "../backend/src/services/referralLedger";
 import { createTlsMail } from "./fixtures/tlsMail";
@@ -62,9 +63,9 @@ async function webhook(type: string, id: string, valid = true, livemode = false)
 let admin: { token: string; id: string }, alice: { token: string; id: string }, bob: { token: string; id: string };
 let backendCwd: string | undefined;
 const sheetsToken = "fixture-only-priority-sheets-passphrase";
-async function startBackend(referralEmail = false, freePlus: boolean | "default" = false){
+async function startBackend(referralEmail = false, freePlus: boolean | "default" = false, edition?: "google-play", mediaRetention = false){
   backend = spawn(process.execPath, ["--import", require.resolve("tsx"), "--import", path.resolve(__dirname, "fixtures/stripe-fetch.mjs"), path.resolve(__dirname, "../backend/src/server.ts")], {
-    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, FREE_PLUS_ENABLED: freePlus === "default" ? undefined : String(freePlus), PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", NODE_EXTRA_CA_CERTS:mail.ca, SMTP_HOST: "127.0.0.1", SMTP_PORT:String(mail.port), SMTP_SECURE:"true", SMTP_USER:"fixture-user", SMTP_PASS:"fixture-pass", SMTP_FROM:"noreply@example.com", MARKETING_SEND_ENABLED:"true", MARKETING_FROM:"news@example.com", MARKETING_CONTACT_ADDRESS:"Badehaus X fixture postal address", MARKETING_PUBLIC_API_URL:"https://example.com", REFERRAL_EMAIL_ENABLED:String(referralEmail), PRIORITY_SHEETS_SYNC_TOKEN:sheetsToken, TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", STRIPE_FOUNDER_PRICE_ID: founderPrice.id, STRIPE_PRIORITY_RENEWAL_PRICE_ID: referralPrice.id, STRIPE_PRIORITY_INTRO_PRICE_ID: introPrice.id, PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
+    cwd: backendCwd ?? root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, DUALMODE_EDITION: edition, CHILD_SAFETY_REVIEWER_EMAILS: "smoke-admin@example.com", PLAY_MEDIA_RETENTION_ENABLED: String(mediaRetention), FREE_PLUS_ENABLED: freePlus === "default" ? undefined : String(freePlus), PORT: new URL(base).port, JWT_SECRET: "smoke-only-test-key", DATABASE_URL: "", NEON_DATABASE_URL: "", REQUIRE_DATABASE: "false", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", NODE_EXTRA_CA_CERTS:mail.ca, SMTP_HOST: "127.0.0.1", SMTP_PORT:String(mail.port), SMTP_SECURE:"true", SMTP_USER:"fixture-user", SMTP_PASS:"fixture-pass", SMTP_FROM:"noreply@example.com", MARKETING_SEND_ENABLED:"true", MARKETING_FROM:"news@example.com", MARKETING_CONTACT_ADDRESS:"Badehaus X fixture postal address", MARKETING_PUBLIC_API_URL:"https://example.com", REFERRAL_EMAIL_ENABLED:String(referralEmail), PRIORITY_SHEETS_SYNC_TOKEN:sheetsToken, TWILIO_ACCOUNT_SID: "", GOOGLE_SHEETS_WEBHOOK_URL: "", ADMIN_EMAILS: "smoke-admin@example.com", ANALYTICS_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_smoke_not_real", STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_PLUS_PRICE_ID: "price_smoke", STRIPE_FOUNDER_PRICE_ID: founderPrice.id, STRIPE_PRIORITY_RENEWAL_PRICE_ID: referralPrice.id, STRIPE_PRIORITY_INTRO_PRICE_ID: introPrice.id, PUBLIC_APP_URL: "https://example.com/",MD_SHARED_SECRET:MD_SECRET,MD_API_BASE_URL:`http://127.0.0.1:${(stub.address() as net.AddressInfo).port}`,MD_ALLOW_LOCAL_TESTS:"true", REDDOOR_TEST_STRIPE_ORIGIN: `http://127.0.0.1:${(stub.address() as net.AddressInfo).port}` }
   });
   let startup = ""; backend.stderr?.on("data", chunk => { startup += chunk; });
   let ready = false;
@@ -81,6 +82,7 @@ beforeAll(async () => {
   mail=await createTlsMail(root);
   const seed = createAuthService({ jwtSecret: "smoke-only-test-key", userStoreFilePath: path.join(root, "backend/.data/auth-users.json"), skipEmailVerification: true });
   seed.adminCreateUser("smoke-admin@example.com", "Smoke-test123!", null, "registered", "free", "admin");
+  seed.adminCreateUser("ordinary-admin@example.com", "Smoke-test123!", null, "registered", "free", "admin");
   seed.adminCreateUser("reset-smoke@example.com", "Smoke-test123!", null, "registered", "free", "user");
   resetToken = seed.requestPasswordReset("reset-smoke@example.com")!.token;
   stub = http.createServer(async (req, res) => {
@@ -799,10 +801,11 @@ describe("Core API and payment lifecycle smoke checks", () => {
     await request(settings, { enabled: "true" }, analyticsOnly.token, "PUT", 400);
 
     const before = mail.messages.length;
-    const draft = { subject: "Fixture newsletter", body: "A scheduled Growth test.", segment: "all", atMs: Date.now() + 500 };
-    await request("/admin/growth/campaign", draft, subscriber.token, undefined, 403);
-    const { id } = await request("/admin/growth/campaign", draft, admin.token, undefined, 201);
-    const newsletter = await mail.next(before);
+    const draft = { subject: "Fixture newsletter", body: "A scheduled Growth test.", segment: "all" };
+    await request("/admin/growth/campaign", { ...draft, atMs: Date.now() + 1_000 }, subscriber.token, undefined, 403);
+    const { id } = await request("/admin/growth/campaign", { ...draft, atMs: Date.now() + 1_000 }, admin.token, undefined, 201);
+    // The scheduled-send wake can miss a tick. The delivery worker recovers on its 15-second poll.
+    const newsletter = await mail.next(before, 20_000);
     expect(newsletter).toContain("growth-opt-in@example.com");
     expect(newsletter).not.toContain("growth-analytics-only@example.com");
     expect(newsletter).toContain("Badehaus X fixture postal address");
@@ -985,6 +988,412 @@ describe("Core API and payment lifecycle smoke checks", () => {
     await once(backend, "exit");
     await startBackend();
     expect(await request("/plus", undefined, await signIn("free-plus-new"))).toMatchObject({ freePlus: false, active: false });
+  });
+
+  it("keeps group plans available while disabling Cruise discovery in the Play edition", async () => {
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    await startBackend(false, "default", "google-play");
+
+    const member = await account("play-group-host");
+    await request("/cruise-spots", undefined, member.token, "GET", 404);
+    await request("/chat/send", { chatKind: "cruise", toKey: "spot:legacy", text: "Hello" }, member.token, "POST", 404);
+    await request("/members/me", { rightNow: true }, member.token, "PUT", 403);
+    const preferences = await request("/members/me", { interests: ["Hiking"] }, member.token, "PUT");
+    expect(preferences.preferences.interests).toEqual(["Hiking"]);
+    await request("/public-postings", { type: "ad", title: "Legacy posting" }, member.token, "POST", 403);
+    expect((await request("/public-postings?type=ad", undefined, member.token)).postings).toEqual([]);
+    const startsAtMs = Date.now() + 1_800_000;
+    const created = await request("/public-postings", {
+      type: "event", title: "Community hike", body: "An afternoon hike",
+      lat: 49.28, lng: -123.12, locationInstructions: "Meet at the park entrance",
+      groupDetails: "Bring water", groupFormat: "open-house", guestLimit: 8, eventStartAtMs: startsAtMs + 1_800_000,
+      groupSchedule: [{ startsAtMs, endsAtMs: startsAtMs + 1_800_000 }]
+    }, member.token);
+    const plans = await request("/public-postings", undefined, member.token);
+    expect(plans.postings).toEqual(expect.arrayContaining([expect.objectContaining({ postingId: created.posting.postingId })]));
+    expect(plans.postings).toEqual((await request("/public-postings?type=event", undefined, member.token)).postings);
+  });
+
+  it("lets Play guests browse and requires accounts for messaging", async () => {
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    await startBackend(false, "default", "google-play");
+
+    const guest = await request("/auth/guest", {});
+    const token = guest.session.sessionToken;
+    const guestKey = guest.session.publicKey;
+    await request("/auth/verify-age", { sessionToken: token, ageYears: 25 });
+    const member = await account("play-chat-member");
+    const peer = await account("play-chat-peer");
+    const memberKey = `user:${member.id}`;
+
+    await request("/presence", { lat: 49.28, lng: -123.12 }, token);
+    await request("/presence/active", undefined, token);
+    await request("/public-postings?type=event", undefined, token);
+    const snapshot = await request("/presence/active", undefined, member.token);
+    expect(snapshot.guestKeys).not.toContain(guestKey);
+    expect(snapshot.presence).not.toEqual(expect.arrayContaining([expect.objectContaining({ key: guestKey })]));
+    expect((await request("/chat/threads?chatKind=cruise", undefined, token)).threads).toEqual([]);
+    expect((await request(`/chat/messages?chatKind=cruise&otherKey=${memberKey}`, undefined, token)).messages).toEqual([]);
+    for (const [route, data] of [
+      ["/chat/send", { chatKind: "cruise", toKey: memberKey, text: "Hello" }],
+      ["/chat/read", { chatKind: "cruise", otherKey: memberKey }]
+    ] as const) {
+      expect((await request(route, data, token, "POST", 403)).code).toBe("ACCOUNT_REQUIRED");
+    }
+    for (const [route, data, method] of [
+      ["/profile/media/initiate", { kind: "photo_main", mimeType: "image/png", sizeBytes: 1 }, "POST"],
+      ["/profile/media/complete", { mediaId: "legacy" }, "POST"],
+      ["/profile/media/references", { mainPhotoMediaId: "legacy" }, "PUT"],
+      ["/chat/media/initiate", { mimeType: "image/png", sizeBytes: 1 }, "POST"],
+      ["/call/signal", { toKey: `user:${peer.id}` }, "POST"]
+    ] as const) {
+      expect((await request(route, data, member.token, method, 403)).code).toBe("MEDIA_DISABLED");
+    }
+    expect(await request("/live", undefined, member.token)).toEqual({ enabled: false, broadcasts: [] });
+    await request("/chat/send", { chatKind: "cruise", toKey: guestKey, text: "Hello" }, member.token, "POST", 404);
+    await request("/chat/send", { chatKind: "cruise", toKey: `user:${peer.id}`, text: "Member hello" }, member.token);
+    expect((await request(`/chat/messages?chatKind=cruise&otherKey=${memberKey}`, undefined, peer.token)).messages)
+      .toEqual([expect.objectContaining({ text: "Member hello" })]);
+  });
+
+  it("quarantines Play media and restricts review decisions to admins", async () => {
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    await startBackend(false, "default", "google-play");
+    const owner = await account("play-media-owner");
+    await request("/profile/me", { displayName: "Media owner", age: 25, bio: "", stats: {} }, owner.token, "PUT");
+    const moderator = await account("admin");
+    const upload = (bytes: Buffer, destination = "profile-photo") => fetch(base + `/media-review/${destination}`, {
+      method: "POST", headers: { "content-type": "application/octet-stream", "x-session-token": owner.token },
+      body: new Uint8Array(bytes)
+    });
+    expect((await upload(Buffer.from("not an image"))).status).toBe(422);
+    const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAGUlEQVR4nO3BMQEAAADCoPVP7WENoAAAAG4MIAABt9NlCQAAAABJRU5ErkJggg==", "base64");
+    const uploaded = await upload(image);
+    const result = await uploaded.json();
+    expect({ status: uploaded.status, message: result.message }).toEqual({ status: 201, message: undefined });
+    const { id } = result.submission;
+    expect((await request("/media-review", undefined, owner.token)).submissions).toEqual([
+      expect.objectContaining({ id, status: "pending", mimeType: "image/jpeg" })
+    ]);
+    expect((await request("/media-review", undefined, moderator.token)).submissions).toEqual([]);
+    expect((await request("/admin/media-review", undefined, moderator.token)).submissions).toEqual([
+      expect.objectContaining({ id, status: "pending" })
+    ]);
+    const decision = `/admin/media-review/${id}/decision`;
+    await request(decision, { action: "approved" }, owner.token, "POST", 403);
+    const content = (token: string) => fetch(base + `/admin/media-review/${id}/content`, { headers: { "x-session-token": token } });
+    expect((await content(owner.token)).status).toBe(403);
+    const review = await content(moderator.token);
+    expect(review.status).toBe(200);
+    expect(review.headers.get("content-type")).toBe("image/jpeg");
+    await request(`/media/public/${id}/url`, undefined, moderator.token, "GET", 404);
+    const reportRoute = `/media-review/published/${id}/report`;
+    await request(reportRoute, { reason: "Underage concern" }, moderator.token, "POST", 404);
+    await request(decision, { action: "approved" }, moderator.token);
+    await request(decision, { action: "rejected", reason: "Late decision" }, moderator.token, "POST", 409);
+    const profile = async () => (await request(`/profile/public/${owner.id}`, undefined, moderator.token)).profile;
+    expect((await profile()).mainPhotoMediaId).toBe(id);
+    const listing = await request("/profile/public", undefined, moderator.token);
+    expect(listing.profiles).toEqual(expect.arrayContaining([expect.objectContaining({ userId: owner.id, mainPhotoMediaId: id })]));
+    const { downloadUrl } = await request(`/media/public/${id}/url`, undefined, moderator.token);
+    const published = await fetch(downloadUrl);
+    expect(published.status).toBe(200);
+    expect(published.headers.get("cache-control")).toContain("no-store");
+    await request(reportRoute, { reason: "Underage concern" }, owner.token, "POST", 400);
+    const { reportId } = await request(reportRoute, { reason: "Underage concern" }, moderator.token);
+    const reports = await request("/admin/safety-reports?queue=child-safety", undefined, moderator.token);
+    expect(reports.reports).toEqual(expect.arrayContaining([expect.objectContaining({
+      reportId, target: { kind: "profile-media", mediaId: id, targetKey: `user:${owner.id}` }
+    })]));
+    const evidence = (token: string) => fetch(base + `/admin/safety-reports/${reportId}/media`, {
+      headers: { "x-session-token": token }
+    });
+    expect((await evidence(owner.token)).status).toBe(403);
+
+    const replacement = await upload(image);
+    expect(replacement.status).toBe(201);
+    const { submission: pending } = await replacement.json();
+    expect((await profile()).mainPhotoMediaId).toBe(id);
+    await request(`/admin/media-review/${pending.id}/decision`, { action: "rejected", reason: "Test decision" }, moderator.token);
+    expect((await profile()).mainPhotoMediaId).toBe(id);
+    await request(decision, { action: "removed", reason: "Withdrawn" }, moderator.token);
+    expect((await content(moderator.token)).status).toBe(404);
+    expect((await fetch(downloadUrl)).status).toBe(404);
+    const retainedEvidence = await evidence(moderator.token);
+    expect(retainedEvidence.status).toBe(200);
+    expect(retainedEvidence.headers.get("content-type")).toBe("image/jpeg");
+    expect((await profile()).mainPhotoMediaId).toBeUndefined();
+    const gallery = await upload(image, "profile-gallery");
+    expect(gallery.status).toBe(201);
+    const { submission: galleryPhoto } = await gallery.json();
+    await request(`/admin/media-review/${galleryPhoto.id}/decision`, { action: "approved" }, moderator.token);
+    expect((await profile()).galleryMediaIds).toEqual([galleryPhoto.id]);
+    const { downloadUrl: galleryUrl } = await request(`/media/public/${galleryPhoto.id}/url`, undefined, moderator.token);
+    expect((await fetch(galleryUrl)).status).toBe(200);
+    await request("/members/me", { hideProfile: true }, owner.token, "PUT");
+    expect((await fetch(galleryUrl)).status).toBe(404);
+    await request("/members/me", { hideProfile: false }, owner.token, "PUT");
+
+    for (const fixture of [
+      { destination: "chat-audio", file: "review-test.wav", source: "sine=frequency=440:duration=1", mimeType: "audio/mp4" },
+      { destination: "profile-video", file: "review-test.mp4", source: "color=black:s=32x32:d=1", mimeType: "video/mp4" }
+    ]) {
+      const file = path.join(root, fixture.file);
+      const generated = spawnSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", fixture.source, "-threads", "1", file]);
+      expect(generated.status).toBe(0);
+      const clip = await upload(fs.readFileSync(file), fixture.destination);
+      expect(clip.status).toBe(201);
+      const { submission } = await clip.json();
+      expect(submission).toMatchObject({ mimeType: fixture.mimeType, status: "pending" });
+      await request(`/admin/media-review/${submission.id}/decision`, { action: "approved" }, moderator.token);
+      if (fixture.destination === "profile-video") {
+        expect((await profile()).videoMediaId).toBe(submission.id);
+        const { downloadUrl: videoUrl } = await request(`/media/public/${submission.id}/url`, undefined, moderator.token);
+        const video = await fetch(videoUrl);
+        expect(video.status).toBe(200);
+        expect(video.headers.get("content-type")).toBe("video/mp4");
+      } else {
+        await request(`/media/public/${submission.id}/url`, undefined, moderator.token, "GET", 404);
+      }
+    }
+
+    const imageUpload = await upload(image, "group-photo");
+    expect(imageUpload.status).toBe(201);
+    const { submission: cover } = await imageUpload.json();
+    const start = Date.now() + 1_800_000;
+    const group = { type: "event", title: "Photo group", body: "A group with an approved cover",
+      lat: 49.28, lng: -123.12, eventStartAtMs: start + 1_800_000,
+      groupSchedule: [{ startsAtMs: start, endsAtMs: start + 1_800_000 }], groupFormat: "open-house",
+      locationInstructions: "Meet at the park", groupDetails: "Bring water", photoMediaId: cover.id };
+    expect((await request("/public-postings", group, owner.token, "POST", 403)).code).toBe("MEDIA_NOT_APPROVED");
+    await request(`/admin/media-review/${cover.id}/decision`, { action: "approved" }, moderator.token);
+    await request(`/media/public/${cover.id}/url`, undefined, owner.token, "GET", 404);
+    expect((await request("/public-postings", group, moderator.token, "POST", 403)).code).toBe("MEDIA_NOT_APPROVED");
+    const { posting } = await request("/public-postings", group, owner.token);
+    const photoPath = `/public-postings/event/${posting.postingId}/photo`;
+    const groupPhoto = (token?: string) => fetch(base + photoPath, { headers: token ? { "x-session-token": token } : {} });
+    expect((await groupPhoto()).status).toBe(401);
+    expect((await groupPhoto(moderator.token)).status).toBe(200);
+    const groupReport = await request(`${photoPath}/report`, { mediaId: cover.id, reason: "Review this group cover" }, moderator.token);
+    expect(groupReport.reportId).toBeTruthy();
+    await request("/block", { targetKey: `user:${moderator.id}` }, owner.token);
+    expect((await groupPhoto(moderator.token)).status).toBe(404);
+    await request(`/admin/media-review/${cover.id}/decision`, { action: "removed", reason: "Test removal" }, moderator.token);
+    expect((await groupPhoto(owner.token)).status).toBe(404);
+    const list = await request("/public-postings?type=event", undefined, owner.token);
+    expect(list.postings.find((item: { postingId: string }) => item.postingId === posting.postingId).photoMediaId).toBeUndefined();
+
+    await request("/unblock", { targetKey: `user:${moderator.id}` }, owner.token);
+    async function approvePhoto(destination: "private-album" | "chat-photo") {
+      const response = await upload(image, destination);
+      expect(response.status).toBe(201);
+      const { submission } = await response.json();
+      await request(`/admin/media-review/${submission.id}/decision`, { action: "approved" }, moderator.token);
+      return submission.id as string;
+    }
+    const albumId = await approvePhoto("private-album");
+    const chatId = await approvePhoto("chat-photo");
+    await request("/plus/preferences", { privateMediaIds: [chatId] }, owner.token, "PUT", 403);
+    await request("/plus/preferences", { privateMediaIds: [albumId] }, owner.token, "PUT");
+    await request(`/plus/albums/${owner.id}`, undefined, moderator.token, "GET", 403);
+    await request(`/plus/album-requests/${owner.id}`, {}, moderator.token);
+    await request(`/plus/album-requests/${moderator.id}/respond`, { action: "approve" }, owner.token);
+    const { photos } = await request(`/plus/albums/${owner.id}`, undefined, moderator.token);
+    expect(photos).toHaveLength(1);
+    const albumUrl = photos[0].downloadUrl;
+    const download = (url: string, token?: string) => fetch(url, { headers: token ? { "x-session-token": token } : {} });
+    expect((await download(albumUrl)).status).toBe(403);
+    expect((await download(albumUrl, moderator.token)).status).toBe(200);
+    const albumReport = await request(`/plus/albums/${owner.id}/photos/${albumId}/report`, { reason: "Review this album photo" }, moderator.token);
+    await request(`/plus/album-requests/${moderator.id}/respond`, { action: "revoke" }, owner.token);
+    expect((await download(albumUrl, moderator.token)).status).toBe(403);
+
+    const media = { kind: "image", objectKey: `review-photo:${chatId}`, mimeType: "image/jpeg" };
+    const out = { chatKind: "cruise", toKey: `user:${moderator.id}`, text: "Photo", media };
+    await request("/chat/send", { ...out, media: { ...media, objectKey: `review-photo:${albumId}` } }, owner.token, "POST", 403);
+    const { message } = await request("/chat/send", out, owner.token);
+    const mediaPath = `/chat/media/url?objectKey=${encodeURIComponent(media.objectKey)}`;
+    const { downloadUrl: chatUrl } = await request(mediaPath, undefined, moderator.token);
+    expect((await download(chatUrl)).status).toBe(403);
+    expect((await download(chatUrl, owner.token)).status).toBe(403);
+    expect((await download(chatUrl, moderator.token)).status).toBe(200);
+    const outsider = await account("play-photo-outsider");
+    await request(mediaPath, undefined, outsider.token, "GET", 403);
+    const chatReport = await request("/chat/media/report", {
+      reason: "Review this chat photo", chatKind: "cruise", peerKey: `user:${owner.id}`, messageId: message.messageId, mediaId: chatId
+    }, moderator.token);
+    await request(`/admin/media-review/${chatId}/decision`, { action: "removed", reason: "Remove reported photo" }, moderator.token);
+    expect((await download(chatUrl, moderator.token)).status).toBe(404);
+    const photoReports = (await request("/admin/safety-reports", undefined, moderator.token)).reports;
+    for (const [reportId, mediaId, kind] of [[groupReport.reportId, cover.id, "group-photo"],
+      [albumReport.reportId, albumId, "album-photo"], [chatReport.reportId, chatId, "chat-photo"]]) {
+      expect(photoReports).toEqual(expect.arrayContaining([expect.objectContaining({ reportId, target: expect.objectContaining({ mediaId, kind }) })]));
+    }
+  });
+
+  it("previews and deletes expired Play media while preserving active media and held evidence", async () => {
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    await startBackend(false, "default", "google-play");
+    const moderator = await account("admin");
+    const owner = await account("play-retention-owner");
+    const endpoint = "/admin/media-review/retention";
+    expect(await request(endpoint, undefined, moderator.token)).toMatchObject({ enabled: false });
+    await request(endpoint, {}, moderator.token, "POST", 409);
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+
+    const directory = backendCwd ?? root;
+    const store = await createCommunityRepository(null, path.join(directory, "backend/.data/community.json"));
+    const storageDir = path.join(directory, "backend/.data/local-objects");
+    fs.mkdirSync(storageDir, { recursive: true });
+    const file = (id: string) => path.join(storageDir, `${encodeURIComponent(`private-profiles/review/${id}`)}.bin`);
+    const now = Date.now();
+    const old = now - 120 * 86_400_000;
+    const rows = [
+      { name: "pending", status: "pending", submittedAt: old },
+      { name: "removed", status: "removed", submittedAt: old, decidedAt: old },
+      { name: "held", status: "rejected", submittedAt: old, decidedAt: old },
+      { name: "reported", status: "removed", submittedAt: old, decidedAt: old },
+      { name: "incomplete", status: "uploading", submittedAt: old },
+      { name: "retry", status: "expired", submittedAt: old, purgeStartedAt: old },
+      { name: "unused", status: "approved", submittedAt: old, decidedAt: old, destination: "chat-photo" },
+      { name: "active", status: "approved", submittedAt: old, decidedAt: old, destination: "profile-photo",
+        decisions: [{ status: "approved", at: old, reviewerId: moderator.id, reason: "" }] },
+      { name: "recent", status: "pending", submittedAt: now }
+    ].map(row => ({ id: crypto.randomUUID(), ownerId: owner.id, mimeType: "image/jpeg", destination: "group-photo", ...row }));
+    for (const row of rows) fs.writeFileSync(file(row.id), Buffer.from("fixture bytes"));
+    await store.update(state => {
+      const entries = (state.settings.mediaReviews ??= {}) as Record<string, unknown>;
+      for (const { name, ...row } of rows) entries[row.id] = row;
+      (state.reports ??= []).push({
+        reportId: crypto.randomUUID(), fromKey: `user:${moderator.id}`, createdAtMs: old + 1,
+        reason: "Existing safety report",
+        target: { kind: "group-photo", mediaId: rows.find(row => row.name === "reported")!.id, targetKey: `user:${owner.id}` }
+      });
+    });
+    await startBackend(false, "default", "google-play", true);
+    const adminLogin = await request("/auth/login", { email: "smoke-admin@example.com", password: "Smoke-test123!" });
+    const adminToken = adminLogin.session.sessionToken;
+    const held = rows.find(row => row.name === "held")!;
+    const holdRoute = `/admin/media-review/${held.id}/retention`;
+    await request(holdRoute, { action: "hold", reason: "Evidence review" }, adminToken);
+    expect(await request(endpoint, undefined, adminToken)).toEqual({ enabled: true, eligible: 5, deleted: 0, failed: 0 });
+    expect(rows.every(row => fs.existsSync(file(row.id)))).toBe(true);
+    expect(await request(endpoint, {}, adminToken)).toEqual({ eligible: 5, deleted: 5, failed: 0 });
+    for (const row of rows) expect(fs.existsSync(file(row.id))).toBe(["held", "reported", "active", "recent"].includes(row.name));
+    await request(holdRoute, { action: "release", reason: "Evidence review complete" }, adminToken);
+    expect(await request(endpoint, {}, adminToken)).toEqual({ eligible: 1, deleted: 1, failed: 0 });
+    expect(fs.existsSync(file(held.id))).toBe(false);
+    expect(await request(endpoint, {}, adminToken)).toEqual({ eligible: 0, deleted: 0, failed: 0 });
+    expect(fs.existsSync(file(rows.find(row => row.name === "reported")!.id))).toBe(true);
+  });
+
+  it("confirms Play account deletion by email and removes account data while keeping held evidence", async () => {
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    await startBackend(false, "default", "google-play");
+    const owner = await account("play-delete-me");
+    const peer = await account("play-delete-peer");
+    const moderator = await account("admin");
+    await request("/profile/me", { displayName: "Delete fixture", age: 25, bio: "Temporary bio", stats: {} }, owner.token, "PUT");
+    await request("/chat/send", { chatKind: "cruise", toKey: `user:${peer.id}`, text: "Delete this conversation" }, owner.token);
+    const photo = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAGUlEQVR4nO3BMQEAAADCoPVP7WENoAAAAG4MIAABt9NlCQAAAABJRU5ErkJggg==", "base64");
+    async function submitPhoto() {
+      const response = await fetch(base + "/media-review/profile-photo", {
+        method: "POST", headers: { "content-type": "application/octet-stream", "x-session-token": owner.token }, body: new Uint8Array(photo)
+      });
+      expect(response.status).toBe(201);
+      return (await response.json()).submission.id as string;
+    }
+    const heldId = await submitPhoto();
+    const purgeId = await submitPhoto();
+    await request(`/admin/media-review/${heldId}/decision`, { action: "approved" }, moderator.token);
+    const { reportId } = await request(`/media-review/published/${heldId}/report`, { reason: "Test hold" }, peer.token);
+    const { downloadUrl } = await request(`/media/public/${heldId}/url`);
+    const keepPath = path.join(backendCwd ?? root, "backend/.data/local-objects");
+    const mediaFile = (id: string) => path.join(keepPath, `${encodeURIComponent(`private-profiles/review/${id}`)}.bin`);
+    expect(fs.existsSync(mediaFile(purgeId))).toBe(true);
+
+    const before = mail.messages.length;
+    await request("/account-deletion/request", { email: "play-delete-me@example.com" });
+    const message = await mail.next(before);
+    const code = /account deletion code is ([A-Za-z0-9_-]{32})/.exec(message)?.[1];
+    expect(code).toBeTruthy();
+    await request("/account-deletion/confirm", { code, confirmation: "no" }, undefined, "POST", 400);
+    expect(await request("/account-deletion/confirm", { code, confirmation: "DELETE" })).toEqual({ status: "deleted" });
+    await request("/account-deletion/confirm", { code, confirmation: "DELETE" }, undefined, "POST", 400);
+    await request("/session", undefined, owner.token, "GET", 401);
+    const publicList = await request("/profile/public", undefined, peer.token);
+    expect(publicList.profiles).not.toEqual(expect.arrayContaining([expect.objectContaining({ userId: owner.id })]));
+    expect((await request("/chat/threads?chatKind=cruise", undefined, peer.token)).threads).toEqual([]);
+    expect((await fetch(downloadUrl)).status).toBe(404);
+    expect(fs.existsSync(mediaFile(purgeId))).toBe(false);
+    expect(fs.existsSync(mediaFile(heldId))).toBe(true);
+    const evidence = await fetch(base + `/admin/safety-reports/${reportId}/media`, {
+      headers: { "x-session-token": moderator.token }
+    });
+    expect(evidence.status).toBe(200);
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    await startBackend(false, "default", "google-play");
+    await request("/session", undefined, owner.token, "GET", 401);
+    expect((await request("/profile/public")).profiles)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ userId: owner.id })]));
+    expect(fs.existsSync(mediaFile(purgeId))).toBe(false);
+
+  });
+
+  it("routes Play child-safety reports to designated reviewers and restricts reported content", async () => {
+    backend.kill("SIGTERM");
+    await once(backend, "exit");
+    await startBackend(false, "default", "google-play");
+    const moderator = await account("admin");
+    const regularAdmin = (await request("/auth/login", { email: "ordinary-admin@example.com", password: "Smoke-test123!" })).session;
+    const owner = await account("play-safety-owner");
+    const viewer = await account("play-safety-viewer");
+    const ownerKey = `user:${owner.id}`;
+    await request("/profile/me", { displayName: "Safety test fixture", age: 25, bio: "", stats: {} }, owner.token, "PUT");
+    const { report: profileReport } = await request("/report/user", { targetKey: ownerKey, reason: UNDERAGE_REPORT_REASON }, viewer.token);
+    expect(profileReport.childSafetyPriority).toBe("underage");
+
+    const harmlessText = "Harmless text for a child-safety workflow test";
+    const { message } = await request("/chat/send", { chatKind: "cruise", toKey: `user:${viewer.id}`, text: harmlessText }, owner.token);
+    const input = { chatKind: "cruise", targetKey: ownerKey, messageId: message.messageId, reason: EXPLOITATION_REPORT_REASON };
+    await request("/report/message", input, moderator.token, "POST", 404);
+    const { report: textReport } = await request("/report/message", input, viewer.token);
+    expect((await request(`/chat/messages?chatKind=cruise&otherKey=${ownerKey}`, undefined, viewer.token)).messages)
+      .toEqual([expect.objectContaining({ text: "Message unavailable while under safety review." })]);
+
+    const harmlessPhoto = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAGUlEQVR4nO3BMQEAAADCoPVP7WENoAAAAG4MIAABt9NlCQAAAABJRU5ErkJggg==", "base64");
+    const upload = await fetch(base + "/media-review/profile-photo", {
+      method: "POST", headers: { "content-type": "application/octet-stream", "x-session-token": owner.token },
+      body: new Uint8Array(harmlessPhoto)
+    });
+    expect(upload.status).toBe(201);
+    const { submission } = await upload.json();
+    await request(`/admin/media-review/${submission.id}/decision`, { action: "approved" }, moderator.token);
+    const { downloadUrl } = await request(`/media/public/${submission.id}/url`);
+    const route = `/media-review/published/${submission.id}/report`;
+    const ordinaryReport = await request(route, { reason: "Ordinary report" }, viewer.token);
+    const childReport = await request(route, { reason: EXPLOITATION_REPORT_REASON }, viewer.token);
+    expect((await fetch(downloadUrl)).status).toBe(404);
+    await request("/admin/safety-reports?queue=child-safety", undefined, regularAdmin.sessionToken, "GET", 403);
+    const general = await request("/admin/safety-reports", undefined, regularAdmin.sessionToken);
+    expect(general.reports).not.toEqual(expect.arrayContaining([expect.objectContaining({ reportId: childReport.reportId })]));
+    const priority = await request("/admin/safety-reports?queue=child-safety", undefined, moderator.token);
+    expect(priority.reports).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reportId: textReport.reportId, target: expect.objectContaining({ text: harmlessText }) }),
+      expect.objectContaining({ reportId: childReport.reportId, childSafetyPriority: "exploitation" })
+    ]));
+    const evidence = (id: string, token: string) => fetch(base + `/admin/safety-reports/${id}/media`,
+      { headers: { "x-session-token": token } });
+    expect((await evidence(ordinaryReport.reportId, regularAdmin.sessionToken)).status).toBe(403);
+    expect((await evidence(childReport.reportId, moderator.token)).status).toBe(200);
+    await request(`/admin/media-review/${submission.id}/retention`, { action: "release", reason: "Unauthorized attempt" }, regularAdmin.sessionToken, "POST", 409);
   });
 
 });

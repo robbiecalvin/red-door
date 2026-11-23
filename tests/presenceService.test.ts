@@ -254,4 +254,17 @@ describe("presenceService", () => {
     });
     expect(svc.listActivePresence()).toEqual([]);
   });
+  it("erases the deleted account's presence without removing other records", () => {
+    const service = createPresenceService({ randomizationMeters: 0, nowMs: () => 1 });
+    for (const userId of ["deleted", "remaining"]) {
+      const result = service.updatePresence({
+        sessionToken: `session-${userId}`, userId, userType: "registered", mode: "cruise", ageVerified: true
+      }, { lat: 49, lng: -123 });
+      expect(result.ok).toBe(true);
+    }
+    service.eraseActor("user:deleted");
+    service.eraseActor("user:deleted");
+    expect(service.listActivePresence()).toEqual([expect.objectContaining({ key: "user:remaining" })]);
+  });
+
 });

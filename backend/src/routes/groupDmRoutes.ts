@@ -15,6 +15,7 @@ export function installGroupDmRoutes(app: Express, deps: {
   session(req: Request, res: Response): Session | null;
   eligible(userId: string): boolean;
   blocked(left: string, right: string): boolean;
+  restrictedMessage?(messageId: string): boolean;
   hasHistory(left: string, right: string): boolean;
   report(session: Session, groupId: string, message: Message, reason: unknown): Promise<string>;
 }) {
@@ -101,7 +102,8 @@ export function installGroupDmRoutes(app: Express, deps: {
   app.get(`${route}/:id/messages`, wrap(async (req, res, user) => {
     const group = access(await read(), String(req.params.id), user.userId);
     active(group);
-    return res.json({ messages: recent(group) });
+    return res.json({ messages: recent(group).map(message => deps.restrictedMessage?.(message.id)
+      ? { ...message, text: "Message unavailable while under safety review." } : message) });
   }));
 
   app.post(`${route}/:id/read`, wrap(async (req, res, user) => {

@@ -1,3 +1,5 @@
+import { EXPLOITATION_REPORT_REASON, UNDERAGE_REPORT_REASON } from "../../../shared/childSafety";
+import { googlePlayEdition } from "./edition";
 import React, { useEffect, useState } from "react";
 import { GROUP_MESSAGE_MAX_LENGTH, type GroupDiscussionMessage } from "../../../shared/groupDiscussion";
 import { Sheet } from "./Sheet";
@@ -122,6 +124,10 @@ export function GroupDiscussion({ api, session, postingId, displayNameForUserId 
       {reporting ? <Sheet title="Report group message" onClose={() => { if (!submittingReport) setReporting(null); }}>
         <form className="rd-plan-form" onSubmit={event => void sendReport(event)}>
           <p>The safety team will receive the reported message and your reason.</p>
+          {googlePlayEdition && <div className="rd-row">
+            {[UNDERAGE_REPORT_REASON, EXPLOITATION_REPORT_REASON].map(option => <button key={option}
+              className="rd-btn" type="button" onClick={() => setReportReason(option)}>{option}</button>)}
+          </div>}
           <label className="rd-field"><span>Reason</span>
             <textarea className="rd-input" required maxLength={500} value={reportReason}
               onChange={event => setReportReason(event.target.value)} />

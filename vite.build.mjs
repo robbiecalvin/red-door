@@ -5,8 +5,17 @@ import react from "@vitejs/plugin-react";
 import { build } from "vite";
 
 async function main() {
+  const googlePlayEdition = process.env.DUALMODE_EDITION === "google-play";
   const apiBasePath = process.env.DUALMODE_API_BASE_PATH ?? "https://red-door-api.onrender.com";
   const wsUrl = process.env.DUALMODE_WS_URL ?? "wss://red-door-api.onrender.com/ws";
+  if (googlePlayEdition) {
+    const api = new URL(apiBasePath);
+    const websocket = new URL(wsUrl);
+    if (api.protocol !== "https:" || websocket.protocol !== "wss:" ||
+      [api, websocket].some(url => url.hostname === "red-door-api.onrender.com" || url.hostname === "badehausx.com")) {
+      throw new Error("The Google Play edition requires separate HTTPS API and WSS endpoints.");
+    }
+  }
   const publicUrl = process.env.DUALMODE_PUBLIC_APP_URL?.trim() || "https://badehausx.com/";
   const publicBase = new URL(publicUrl);
   if(publicBase.protocol!=="https:"||publicBase.username||publicBase.password||publicBase.search||publicBase.hash)throw new Error("DUALMODE_PUBLIC_APP_URL must be HTTPS.");
@@ -19,7 +28,8 @@ async function main() {
     root: "frontend",
     define: {
       __BACKROOM_EDITORIAL__: JSON.stringify(backroomArticles.map(({ slug, title, synopsis, alt }) => ({ slug, title, synopsis, alt }))),
-      __DUALMODE_PWA_ENABLED__: true,
+      __DUALMODE_PWA_ENABLED__: !googlePlayEdition,
+      __DUALMODE_GOOGLE_PLAY__: googlePlayEdition,
       __DUALMODE_MAP_STYLE_URL__: JSON.stringify(process.env.DUALMODE_MAP_STYLE_URL ?? "https://tiles.openfreemap.org/styles/dark"),
       __DUALMODE_DEFAULT_CENTER_LAT__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LAT ?? "0"),
       __DUALMODE_DEFAULT_CENTER_LNG__: JSON.stringify(process.env.DUALMODE_DEFAULT_CENTER_LNG ?? "0"),
@@ -34,10 +44,11 @@ async function main() {
       include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "maplibre-gl"],
     },
     build: {
-      outDir: "../dist",
+      outDir: googlePlayEdition ? "../dist-google-play" : "../dist",
       emptyOutDir: true,
     },
   });
+  if (googlePlayEdition) return;
   const backroom = fs.readFileSync("dist/index.html", "utf8")
     .replaceAll('"./', '"../')
     .replaceAll("<title>Badehaus X</title>", "<title>The Backroom · Badehaus X</title>")

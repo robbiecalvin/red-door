@@ -52,6 +52,7 @@ export type RecordSwipeResult = Readonly<{
 }>;
 
 export type MatchingService = Readonly<{
+  eraseUser(userId: string): void;
   recordSwipe(session: Session, toUserId: string, direction: SwipeDirection): Result<RecordSwipeResult>;
   listMatches(userId: string): Result<ReadonlyArray<MatchRecord>>;
   getSwipe(fromUserId: string, toUserId: string): SwipeRecord | null;
@@ -107,6 +108,20 @@ export function createMatchingService(deps: MatchingServiceDeps = {}): MatchingS
   }
 
   return {
+    eraseUser(userId: string) {
+      for (const [key, swipe] of swipeByPair) {
+        if (swipe.fromUserId !== userId && swipe.toUserId !== userId) continue;
+        swipeByPair.delete(key);
+        likeByPair.delete(key);
+      }
+      const removedPairs = matchesByUser.get(userId) ?? new Set<string>();
+      for (const key of removedPairs) matchByPair.delete(key);
+      for (const pairs of matchesByUser.values()) {
+        if (pairs === removedPairs) continue;
+        for (const key of removedPairs) pairs.delete(key);
+      }
+      matchesByUser.delete(userId);
+    },
     recordSwipe(session: Session, toUserId: string, direction: SwipeDirection): Result<RecordSwipeResult> {
       if (
         typeof session !== "object" ||

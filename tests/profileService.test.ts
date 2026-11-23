@@ -1,7 +1,31 @@
 import { createInMemoryProfileRepository } from "../backend/src/repositories/inMemoryProfileRepository";
-import { createProfileService } from "../backend/src/services/profileService";
+import { createProfileService, googlePlayProfileRepository } from "../backend/src/services/profileService";
 
 describe("profileService", () => {
+  it("omits sexual fields from existing profiles and Play edition writes", async () => {
+    const repo = createInMemoryProfileRepository();
+    const stats = { heightInches: 70, cockSizeInches: 7, cutStatus: "cut", position: "top" } as const;
+    const update = { displayName: "Member", age: 30, bio: "", stats };
+    const web = createProfileService({ repo });
+    const play = createProfileService({ repo: googlePlayProfileRepository(repo), googlePlayEdition: true });
+    expect(await web.adminUpsertProfile("member", update)).toMatchObject({ ok: true });
+    const legacy = await repo.getByUserId("member");
+    if (!legacy) throw new Error("Expected a stored legacy profile");
+    await repo.upsert({ ...legacy, mainPhotoMediaId: "photo", galleryMediaIds: ["gallery"], videoMediaId: "video" });
+    const publicProfile = await play.getPublicByUserId("member");
+    expect(publicProfile.ok && publicProfile.value.mainPhotoMediaId).toBeUndefined();
+    expect(publicProfile.ok && publicProfile.value.galleryMediaIds).toEqual([]);
+    expect(publicProfile.ok && publicProfile.value.videoMediaId).toBeUndefined();
+    expect(publicProfile.ok && publicProfile.value.stats).toEqual({ heightInches: 70 });
+    const publicProfiles = await play.listPublicProfiles();
+    expect(publicProfiles.ok && publicProfiles.value.find(profile => profile.userId === "member")?.stats).toEqual({ heightInches: 70 });
+    expect((await repo.getByUserId("member"))?.stats).toMatchObject(stats);
+
+    const saved = await play.adminUpsertProfile("member", update);
+    expect(saved.ok && saved.value.stats).toEqual({ heightInches: 70 });
+    expect((await repo.getByUserId("member"))?.stats).toEqual({ heightInches: 70 });
+  });
+
   it("Given an age-verified guest session When upsertMe is called Then profile is saved under a session-scoped key and can be read back", async () => {
     const repo = createInMemoryProfileRepository();
     const svc = createProfileService({ repo, nowMs: () => 1_700_000_000_000 });
