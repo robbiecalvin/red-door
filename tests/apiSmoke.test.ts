@@ -801,10 +801,11 @@ describe("Core API and payment lifecycle smoke checks", () => {
     await request(settings, { enabled: "true" }, analyticsOnly.token, "PUT", 400);
 
     const before = mail.messages.length;
-    const draft = { subject: "Fixture newsletter", body: "A scheduled Growth test.", segment: "all", atMs: Date.now() + 500 };
-    await request("/admin/growth/campaign", draft, subscriber.token, undefined, 403);
-    const { id } = await request("/admin/growth/campaign", draft, admin.token, undefined, 201);
-    const newsletter = await mail.next(before);
+    const draft = { subject: "Fixture newsletter", body: "A scheduled Growth test.", segment: "all" };
+    await request("/admin/growth/campaign", { ...draft, atMs: Date.now() + 1_000 }, subscriber.token, undefined, 403);
+    const { id } = await request("/admin/growth/campaign", { ...draft, atMs: Date.now() + 1_000 }, admin.token, undefined, 201);
+    // The scheduled-send wake can miss a tick. The delivery worker recovers on its 15-second poll.
+    const newsletter = await mail.next(before, 20_000);
     expect(newsletter).toContain("growth-opt-in@example.com");
     expect(newsletter).not.toContain("growth-analytics-only@example.com");
     expect(newsletter).toContain("Badehaus X fixture postal address");

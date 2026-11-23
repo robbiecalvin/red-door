@@ -30,5 +30,21 @@ export async function createTlsMail(root:string) {
       });
     });
     smtp.listen(0, "127.0.0.1"); await once(smtp, "listening");
-return {ca, messages, port:(smtp.address() as net.AddressInfo).port, async close(){for(const socket of sockets)socket.destroy();await new Promise<void>(r=>smtp.close(()=>r()));}, async next(after:number){for(let n=0;n<100 && messages.length<=after;n++)await new Promise(r=>setTimeout(r,50));if(messages.length<=after)throw new Error("SMTP fixture delivery timed out");return messages[after].replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, value) => String.fromCharCode(parseInt(value,16)));}};
+  return {
+    ca,
+    messages,
+    port: (smtp.address() as net.AddressInfo).port,
+    async close() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => smtp.close(() => resolve()));
+    },
+    async next(after: number, timeoutMs = 5_000) {
+      const deadline = Date.now() + timeoutMs;
+      while (messages.length <= after && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      if (messages.length <= after) throw new Error(`SMTP fixture delivery timed out after ${timeoutMs} ms`);
+      return messages[after].replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, value) => String.fromCharCode(parseInt(value, 16)));
+    }
+  };
 }
