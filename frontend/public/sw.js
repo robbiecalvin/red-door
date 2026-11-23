@@ -27,15 +27,19 @@ self.addEventListener('activate', event => {
 });
 self.addEventListener('fetch', event => {
   const request=event.request, url=new URL(request.url), scope=new URL(self.registration.scope);
-  if (request.method !== 'GET' || url.origin !== scope.origin || !url.pathname.startsWith(scope.pathname) || url.search || request.headers.has('authorization') || request.headers.has('x-session-token')) return;
+  if (request.method !== 'GET' || url.origin !== scope.origin || !url.pathname.startsWith(scope.pathname) || request.headers.has('authorization') || request.headers.has('x-session-token')) return;
   if (request.mode === 'navigate') {
     // Never persist navigations, query tokens or authenticated pages.
     const relative=url.pathname.slice(scope.pathname.length);
+    const publicAppQuery = (relative === '' || relative === 'index.html') &&
+      /^\?(?:app=1|city=[a-z0-9]+(?:-[a-z0-9]+)*(?:&category=[a-z]+(?:-[a-z]+)*)?)$/.test(url.search);
+    if (url.search && !publicAppQuery) return;
     if (relative !== '' && !/^(index|discover|threads|public|profile|settings|submissions|promoted)\.html$/.test(relative)) return;
     const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),8000);
     event.respondWith(fetch(request,{signal:controller.signal,cache:'no-cache'}).catch(async () => (await caches.open(CACHE_NAME)).match(OFFLINE_URL).then(response => response ?? new Response('Reconnect to use Badehaus X.', {status:503,headers:{'content-type':'text/plain'}}))).finally(()=>clearTimeout(timer)));
     return;
   }
+  if (url.search) return;
   const hashedAsset = /^assets\/[A-Za-z0-9_./-]+-[A-Za-z0-9_-]{8,}\.(js|css|woff2?|png|svg|webp|jpg)$/.test(url.pathname.slice(scope.pathname.length));
   if (!PUBLIC_URLS.has(url.href) && !hashedAsset) return;
   event.respondWith((async () => {

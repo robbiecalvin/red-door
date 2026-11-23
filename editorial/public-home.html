@@ -1,0 +1,61 @@
+<div class="site-page site-hub" id="public-home">
+  <header class="site-header">
+    <div class="site-header-inner">
+      <a class="site-brand" href="./"><img src="./icons/icon-192.png" width="36" height="36" alt="">Badehaus X</a>
+      <nav aria-label="Site navigation">
+        <a href="./gay-cruising/">Cruising</a><a href="#classifieds">City classifieds</a><a href="./thebackroom/">The Backroom</a>
+        <a href="#sign-in">Log in</a>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <div class="site-hub-intro">
+      <section class="site-hub-hero" aria-labelledby="home-heading">
+        <h1 id="home-heading">Gay cruising, nightlife &amp; culture</h1>
+        <p>Find city classifieds, queer nightlife, and practical guides for meeting people. Open Badehaus X to explore nearby and start a conversation.</p>
+        <a class="site-action" href="./?app=1#/discover-chat">Open the web app <span aria-hidden="true">→</span></a>
+      </section>
+      <section class="site-hub-auth" id="sign-in" aria-labelledby="sign-in-heading">
+        <h2 id="sign-in-heading">Sign in to Badehaus X</h2>
+        <div id="public-auth"></div>
+        <p class="site-hub-auth-fallback"><a href="./?app=1#/discover-chat">Continue to the web app</a></p>
+      </section>
+    </div>
+    <section class="site-hub-classifieds" id="classifieds" aria-labelledby="classifieds-heading">
+      <h2 id="classifieds-heading">City classifieds</h2>
+      <p>Find your city and browse housing, jobs, services, personals, and more in the app.</p>
+      <label class="site-visually-hidden" for="city-search">Find a Canadian city</label>
+      <input id="city-search" type="search" placeholder="Find a Canadian city" hidden>
+      <p role="status" id="city-search-status" hidden>No matching cities.</p>
+      <div class="site-city-directory">
+        <article class="site-city-feature" data-city="Vancouver British Columbia">
+          <h3>Vancouver</h3>
+          <p>Browse local posts or find queer nightlife and community resources in the Vancouver guide.</p>
+          <div class="site-hub-actions"><a class="site-action" href="./classifieds/vancouver/">Browse Vancouver classifieds</a><a class="site-hub-secondary" href="./vancouver/">City guide</a></div>
+        </article>
+        <ul class="site-city-grid" aria-label="More Canadian cities"><!-- CITY_LINKS --></ul>
+      </div>
+      <details class="site-city-more" id="more-cities">
+        <summary>Browse more Canadian cities</summary>
+        <ul class="site-city-grid" aria-label="Additional cities"><!-- MORE_CITY_LINKS --></ul>
+      </details>
+    </section>
+    <div class="site-hub-grid">
+      <article><h2><a href="./gay-cruising/">Gay cruising guide</a></h2><p>What cruising means and how to navigate consent, privacy, and a first meetup.</p></article>
+      <article><h2><a href="./thebackroom/">The Backroom</a></h2><p>Stories and practical advice on going out, meeting people, and staying connected.</p></article>
+    </div>
+    <section class="site-hub-adult" aria-labelledby="adult-content-heading">
+      <div>
+        <h2 id="adult-content-heading">Adult content <span>18+</span></h2>
+        <p>Browse videos by category, preview thumbnails, and watch on the original host.</p>
+        <div class="site-hub-actions">
+          <a class="site-action" href="./gay-porn/">Browse the video directory</a>
+          <a class="site-hub-secondary" href="https://justfor.fans/" rel="noreferrer">JustFor.Fans <span aria-hidden="true">↗</span></a>
+          <a class="site-hub-secondary" href="https://www.fansly.com/" rel="noreferrer">Fansly <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </section>
+    <footer><a href="./legal/">Policies and community guidelines</a></footer>
+  </main>
+</div>
+<div id="root"></div>

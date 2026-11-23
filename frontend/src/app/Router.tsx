@@ -1,3 +1,6 @@
+import { AdultLibrary, AdultProfileFavorites } from "./AdultLibrary";
+import { adLifetimeMs, CLASSIFIED_CATEGORIES, isClassifiedCategory, type ClassifiedCategory } from "../../../shared/postingBoard";
+import classifiedCities from "../../../shared/classifiedCities.json";
 import { deletionPage } from "./AccountDeletion";
 import { INTERESTS } from "../../../shared/member";
 import { googlePlayEdition } from "./edition";
@@ -73,7 +76,7 @@ type Settings = Readonly<{
   defaultCenterLng: number;
 }>;
 
-type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
+type TopTab = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "adult-library" | "promoted" | "md";
 type DiscoverFilter = "all" | "online" | "favorites";
 type MobileCruiseTab = "map" | "chat";
 type DiscoverScreen = MobileCruiseTab;
@@ -87,7 +90,7 @@ const GROUP_INVITE_STATUS_PREFIX = "GROUP_INVITE_STATUS|";
 const PROFILE_MEDIA_UPDATED_EVENT = "rd:profile-media-updated";
 const CHAT_READ_CURSOR_STORAGE_KEY = "reddoor:chat-read-cursors:v1";
 declare const __DUALMODE_WS_URL__: string | undefined;
-type RouterErrorScope = "live" | "discover" | "threads" | "ads" | "groups" | "cruise" | "profile" | "settings" | "submissions" | "promoted" | "md";
+type RouterErrorScope = TopTab;
 
 type ProfileDraft = Readonly<{
   displayName: string;
@@ -505,6 +508,7 @@ function CruiseSurface({
     userId: string;
     displayName: string;
     member?: PublicMember;
+    adultVideoFavorites?: PublicProfile["adultVideoFavorites"];
     age: number;
     bio: string;
     stats?: ProfileDetails & {
@@ -979,7 +983,8 @@ function CruiseSurface({
           discreetMode: meProfile.profile.discreetMode,
           mainPhotoMediaId: meProfile.profile.mainPhotoMediaId,
           galleryMediaIds: meProfile.profile.galleryMediaIds,
-          videoMediaId: meProfile.profile.videoMediaId
+          videoMediaId: meProfile.profile.videoMediaId,
+          adultVideoFavorites: meProfile.profile.adultVideoFavorites
         });
       } else {
         const res = await api.getPublicProfile(profileId, session.sessionToken);
@@ -1367,6 +1372,7 @@ function CruiseSurface({
                 {!browseOnly && !isSelf && selectedProfileKey.startsWith("user:") ? <RequestPrivateAlbum key={selectedProfileKey} api={api} session={session} ownerId={selectedProfileKey.slice(5)} /> : null}
                 <ProfileDetailsView stats={stats} />
                 {profile?.bio ? <div className="rd-member-bio"><h3>Bio</h3><p>{profile.bio}</p></div> : null}
+                {!googlePlayEdition && profile?.adultVideoFavorites && <AdultProfileFavorites videos={profile.adultVideoFavorites} />}
                 {!isSelf ? <div className="rd-member-profile-secondary">
                   {!browseOnly && profile?.mainPhotoMediaId ? <button className="rd-btn" type="button" onClick={() => reply("Your profile photo")}>Reply to profile photo</button> : null}
                   <ReportMemberButton api={api} session={session} peerKey={selectedProfileKey} />
@@ -3520,7 +3526,18 @@ function PublicPostings({
   compact?: boolean;
   onOpenThreadRequested?(key: string): void;
 }>): React.ReactElement {
-  const [ads, setAds] = useState<ReadonlyArray<PublicPosting>>([]);
+  const [allAds, setAds] = useState<ReadonlyArray<PublicPosting>>([]);
+  const classifiedsQuery = new URLSearchParams(window.location.search);
+  const cityId = classifiedsQuery.get("city");
+  const requestedCategory = classifiedsQuery.get("category");
+  const city = googlePlayEdition || screen !== "ads" ? undefined : classifiedCities.find(entry => entry.id === cityId);
+  const initialCategory = city && isClassifiedCategory(requestedCategory) ? requestedCategory : "";
+  const [category, setCategory] = useState<string>(initialCategory);
+  const [adCategory, setAdCategory] = useState<ClassifiedCategory | "">(initialCategory);
+  const [adBody, setAdBody] = useState("");
+  const ads = useMemo(() => allAds.filter(posting =>
+    posting.cityId === city?.id && (!city || !category || posting.board === category)
+  ), [allAds, city, category]);
   const [events, setEvents] = useState<ReadonlyArray<PublicPosting>>([]);
   const [adTitle, setAdTitle] = useState<string>("");
   const [eventTitle, setEventTitle] = useState<string>("");
@@ -3583,7 +3600,7 @@ function PublicPostings({
   const [presenceByKey, setPresenceByKey] = useState<Record<string, { lat: number; lng: number }>>({});
   const refreshSeqRef = useRef<number>(0);
 
-  const canPostAds = session.ageVerified && hasPlus(session);
+  const canPostAds = session.ageVerified && session.userType !== "guest" && (Boolean(city) || hasPlus(session));
   const postingChatKind = session.mode === "cruise" || session.userType === "guest" ? "cruise" : "date";
   const canPostEvents = session.userType !== "guest";
   const canCreateSpots = true;
@@ -4057,10 +4074,9 @@ function PublicPostings({
   }
 
   const adBoardRows = useMemo(() => {
-    const maxAgeMs = 12 * 60 * 60 * 1000;
     const now = Date.now();
     const recentAds = ads
-      .filter((row) => now - row.createdAtMs <= maxAgeMs)
+      .filter(row => now - row.createdAtMs < adLifetimeMs(row.cityId))
       .sort((a, b) => a.createdAtMs - b.createdAtMs);
     const grouped = new Map<
       string,
@@ -4087,7 +4103,7 @@ function PublicPostings({
   }, [ads]);
 
   async function submitBoardAd(): Promise<void> {
-    if (!canPostAds) { openPlus(); return; }
+    if (!canPostAds || (city && !adCategory)) return;
     const title = adTitle.trim();
     if (!title) { setLastError("Enter a posting headline."); return; }
     setLastError(null);
@@ -4096,10 +4112,13 @@ function PublicPostings({
       await api.createPublicPosting(session.sessionToken, {
         type: "ad",
         title,
-        body: "",
-        board: "general"
+        body: city ? adBody.trim() : "",
+        board: city && adCategory ? adCategory : "general",
+        cityId: city?.id
       });
       setAdTitle("");
+      setAdBody("");
+      if (city && category && category !== adCategory) setCategory(adCategory);
       await refresh();
     } catch (e) {
       setLastError(normalizeErrorMessage(e));
@@ -4217,15 +4236,39 @@ function PublicPostings({
     };
   }, [screen, selectedSpotId]);
 
+  const cityCategories = Object.entries(CLASSIFIED_CATEGORIES).map(([id, name]) => <option key={id} value={id}>{name}</option>);
+  const classifiedsHeading = (
+    <div className="rd-classifieds-heading">
+      {city && <h1>{city.name} classifieds</h1>}
+      <a href="./?directory=1#classifieds">{city ? "Choose another city" : "City classifieds"}</a>
+      {city && <label className="rd-field">
+        <span className="rd-label">Browse by category</span>
+        <select className="rd-input" value={category} onChange={event => setCategory(event.target.value)}>
+          <option value="">All categories</option>
+          {cityCategories}
+        </select>
+      </label>}
+    </div>
+  );
+
   const postingToolbar = (
-    <form className="rd-posting-toolbar" onSubmit={event => { event.preventDefault(); void submitBoardAd(); }}>
+    <form className={`rd-posting-toolbar${city ? " rd-city-posting-form" : ""}`} onSubmit={event => { event.preventDefault(); void submitBoardAd(); }}>
       {canPostAds ? <>
         <input className="rd-input" aria-label="Posting headline" placeholder="Headline" value={adTitle}
           required maxLength={120} disabled={boardPosting} onChange={event => setAdTitle(event.target.value)} />
-        <button type="submit" className="rd-btn primary" disabled={boardPosting || !adTitle.trim()}>
+        {city && <>
+          <select className="rd-input" aria-label="Posting category" required value={adCategory} disabled={boardPosting}
+            onChange={event => { const value = event.target.value; setAdCategory(isClassifiedCategory(value) ? value : ""); }}>
+            <option value="">Choose a category</option>
+            {cityCategories}
+          </select>
+          <textarea className="rd-input" aria-label="Posting details" placeholder="Details (optional)" maxLength={4000}
+            value={adBody} disabled={boardPosting} onChange={event => setAdBody(event.target.value)} />
+        </>}
+        <button type="submit" className="rd-btn primary" disabled={boardPosting || !adTitle.trim() || Boolean(city && !adCategory)}>
           {boardPosting ? "Posting…" : "Post"}
         </button>
-      </> : session.freePlus === false ? <button type="button" className="rd-btn" onClick={() => openPlus()}>Get Plus to post</button> : <p className="rd-caption">Create an account to post.</p>}
+      </> : !city && session.freePlus === false ? <button type="button" className="rd-btn" onClick={() => openPlus()}>Get Plus to post</button> : <p className="rd-caption">Sign in with a Badehaus X account to post.</p>}
     </form>
   );
 
@@ -4651,6 +4694,7 @@ function PublicPostings({
     return (
       <div style={{ display: "grid", gap: 10 }}>
         <div className="rd-board-panel">
+          {classifiedsHeading}
           {postingToolbar}
           <div className="rd-board-feed">
             {adBoardRows.length === 0 ? (
@@ -4695,6 +4739,7 @@ function PublicPostings({
                           }}
                         >
                           <strong>{bubble.title}</strong>
+                          {isClassifiedCategory(bubble.board) && <div className="rd-caption">{CLASSIFIED_CATEGORIES[bubble.board]}</div>}
                           {bubble.availability ? <span className="rd-posting-availability">{POSTING_AVAILABILITY[bubble.availability]}</span> : null}
                           {bubble.body ? <div>{bubble.body}</div> : null}
                         </div>
@@ -4788,13 +4833,14 @@ function PublicPostings({
                     <img src={avatarForUserId(p.authorUserId)} alt="" />
                     <span>{displayNameForUserId(p.authorUserId)}</span>
                   </div>
+                  {isClassifiedCategory(p.board) && <span className="rd-caption">{CLASSIFIED_CATEGORIES[p.board]}</span>}
                   {p.availability ? <span className="rd-posting-availability">{POSTING_AVAILABILITY[p.availability]}</span> : null}
                 </div>
               </button>
             ))}
           </div>
           <div style={{ display: "grid", gap: 10 }}>
-            <div className="rd-board-panel">{postingToolbar}</div>
+            <div className="rd-board-panel">{classifiedsHeading}{postingToolbar}</div>
             {selectedAd ? (
               <div style={{ ...cardStyle(), display: "grid", gap: 10 }}>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedAd.title}</div>
@@ -6996,6 +7042,9 @@ export function Router({
         {(settingsSection === "profile" || (!googlePlayEdition && settingsSection === "photos")) &&
           <SettingsProfile section={settingsSection} api={api} session={session} setLastError={setProfileError} />}
         {settingsSection === "profile" && mediaReview}
+        {settingsSection === "profile" && !googlePlayEdition && session.userId && (
+          <button type="button" className="rd-btn" onClick={() => setActiveTab("adult-library")}>Manage adult video favorites</button>
+        )}
         {settingsSection === "photos" && <>
           <PrivateAlbumsSettings api={api} session={session} />
           {!googlePlayEdition && <>
@@ -7236,6 +7285,7 @@ export function Router({
       ) : null}
       {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
+      {!googlePlayEdition && activeTab === "adult-library" ? <AdultLibrary api={api} session={session} onRegister={onRegister} /> : null}
       {activeTab === "submissions" ? <SubmissionsPanel api={api} session={session} setLastError={setSubmissionsError} /> : null}
       {activeTab === "promoted" || activeTab === "md" ? <p role="status">This feature is unavailable. Open Explore or Inbox to continue.</p> : null}
     </div>

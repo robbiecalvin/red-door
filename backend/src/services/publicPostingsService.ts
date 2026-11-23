@@ -1,4 +1,5 @@
-import { isPostingBoard, type PostingBoard } from "../../../shared/postingBoard";
+import classifiedCities from "../../../shared/classifiedCities.json";
+import { adLifetimeMs, isClassifiedCategory, isPostingBoard, type PostingBoard } from "../../../shared/postingBoard";
 import { randomUUID } from "node:crypto";
 import { GROUP_MESSAGE_MAX_LENGTH, type GroupDiscussionMessage } from "../../../shared/groupDiscussion";
 import { isGroupFormat, validGroupSchedule, type GroupFormat } from "../../../shared/groupSchedule";
@@ -54,6 +55,7 @@ export type Posting = Readonly<{
   photoMediaId?: string;
   availability?: PostingAvailability;
   board?: PostingBoard;
+  cityId?: string;
   lat?: number;
   lng?: number;
   eventStartAtMs?: number;
@@ -85,6 +87,7 @@ export type PostingInput = Readonly<{
   photoMediaId?: unknown;
   availability?: unknown;
   board?: unknown;
+  cityId?: unknown;
   lat?: unknown;
   lng?: unknown;
   eventStartAtMs?: unknown;
@@ -263,8 +266,7 @@ export function createPublicPostingsService(
 
   function isAdExpired(posting: Posting): boolean {
     if (posting.type !== "ad") return false;
-    const maxAgeMs = 12 * 60 * 60 * 1000;
-    return nowMs() - posting.createdAtMs >= maxAgeMs;
+    return nowMs() - posting.createdAtMs >= adLifetimeMs(posting.cityId);
   }
 
   function pruneExpiredEvents(): void {
@@ -333,15 +335,16 @@ export function createPublicPostingsService(
     list(type?: unknown, viewer?: SessionLike): Result<ReadonlyArray<Posting>> {
       pruneExpiredEvents();
       const includeAll = viewer?.role === "admin";
-      if (type === undefined) {
-        const visible = posts.filter(p => (includeAll || p.moderationStatus === "approved") && canInteractWithEvent(p, viewer?.userId));
-        return ok([...visible].sort((a, b) => b.createdAtMs - a.createdAtMs).map((p) => redactPostingForViewer(p, viewer, nowMs())));
-      }
-      const parsed = asType(type);
-      if (!parsed) return err("POSTING_TYPE_NOT_ALLOWED", "Invalid posting type.");
-      const filtered = posts.filter(p => p.type === parsed && canInteractWithEvent(p, viewer?.userId));
-      const visible = includeAll ? filtered : filtered.filter((p) => p.moderationStatus === "approved");
-      return ok(visible.sort((a, b) => b.createdAtMs - a.createdAtMs).map((p) => redactPostingForViewer(p, viewer, nowMs())));
+      const listed = posts.filter(posting =>
+        (!posting.cityId || viewer?.ageVerified === true) &&
+        (includeAll || posting.moderationStatus === "approved") &&
+        canInteractWithEvent(posting, viewer?.userId)
+      );
+      const parsed = type === undefined ? undefined : asType(type);
+      if (parsed === null) return err("POSTING_TYPE_NOT_ALLOWED", "Invalid posting type.");
+      return ok(listed.filter(posting => parsed === undefined || posting.type === parsed)
+        .sort((a, b) => b.createdAtMs - a.createdAtMs)
+        .map(posting => redactPostingForViewer(posting, viewer, nowMs())));
     },
 
     eraseUser(userId) {
@@ -377,7 +380,11 @@ export function createPublicPostingsService(
       if (!type) return err("POSTING_TYPE_NOT_ALLOWED", "Invalid posting type.");
       const auth = requirePostingIdentity(session);
       if (!auth.ok) return auth as Result<Posting>;
-      if (type === "ad" && !hasPlus(session, nowMs())) {
+      const cityId = input.cityId;
+      if (cityId !== undefined && (type !== "ad" || !classifiedCities.some(city => city.id === cityId))) {
+        return err("INVALID_INPUT", "Choose a city from the classifieds directory.");
+      }
+      if (type === "ad" && cityId === undefined && !hasPlus(session, nowMs())) {
         return err("PLUS_REQUIRED", "Publishing postings requires Plus.");
       }
       const availability = input.availability;
@@ -393,7 +400,10 @@ export function createPublicPostingsService(
       }
 
       const board = input.board;
-      if (board !== undefined && (type !== "ad" || !isPostingBoard(board))) {
+      if (cityId !== undefined && !isClassifiedCategory(board)) {
+        return err("INVALID_INPUT", "Choose a classifieds category.");
+      }
+      if (cityId === undefined && board !== undefined && (type !== "ad" || !isPostingBoard(board))) {
         return err("INVALID_INPUT", "Choose a valid message board.");
       }
       const body = asText(input.body) ?? "";
@@ -441,7 +451,8 @@ export function createPublicPostingsService(
         type,
         title,
         body,
-        ...(isPostingBoard(board) ? { board } : {}),
+        ...((isPostingBoard(board) || isClassifiedCategory(board)) ? { board } : {}),
+        ...(typeof cityId === "string" ? { cityId } : {}),
         ...(photoMediaId ? { photoMediaId } : {}),
         ...(type === "ad" && isPostingAvailability(availability) ? { availability } : {}),
         ...(type === "event" && typeof lat === "number" ? { lat } : {}),

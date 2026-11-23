@@ -1,3 +1,4 @@
+import { writeClassifiedPages } from "./scripts/build-classifieds.mjs";
 import fs from "node:fs";
 import { availableBackroomArticles, writeBackroomArticles } from "./scripts/build-backroom.mjs";
 import { writePwaBuild } from "./scripts/build-pwa.mjs";
@@ -50,19 +51,66 @@ async function main() {
   });
   if (googlePlayEdition) return;
   const home = fs.readFileSync("dist/index.html", "utf8");
-  const homeTitle = "Badehaus X | Gay Cruising App";
-  const homeDescription = "Badehaus X is an 18+ gay cruising web app. Explore nearby, start a conversation, and choose what to share. Read our guide to consent and privacy.";
+  // City names and regions are based on https://en.wikipedia.org/wiki/List_of_cities_in_Canada.
+  const cities = JSON.parse(fs.readFileSync("shared/classifiedCities.json", "utf8"));
+  fs.cpSync("editorial/home-art", "dist/home", { recursive: true });
+  const escapeHtml = value => value.replace(/[&<>"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
+  const cityLinks = featured => cities.filter(city => city.id !== "vancouver" && Boolean(city.featured) === featured).map(({ id, name, region }) => {
+    const art = fs.existsSync(`dist/home/${id}.webp`) ? ` style="--city-art: url('./home/${id}.webp')"` : "";
+    const label = featured ? escapeHtml(name) : `${escapeHtml(name)} <small>${escapeHtml(region)}</small>`;
+    return `<li data-city="${escapeHtml(`${id} ${name} ${region}`)}"><a href="./classifieds/${id}/"${art}>${label}</a></li>`;
+  }).join("\n");
+  const publicHome = fs.readFileSync("editorial/public-home.html", "utf8")
+    .replace("<!-- CITY_LINKS -->", () => cityLinks(true))
+    .replace("<!-- MORE_CITY_LINKS -->", () => cityLinks(false));
+  const homeTitle = "Badehaus X | Gay Cruising, Vancouver & Culture";
+  const homeDescription = "Explore gay cruising, Vancouver nightlife, and Canadian city classifieds. Read The Backroom or open the Badehaus X gay cruising app for adults.";
   fs.writeFileSync("dist/index.html", home
     .replace("<title>Badehaus X</title>", `<title>${homeTitle}</title>`)
     .replace('name="description" content="Explore nearby. Start a conversation. Connect your way with Badehaus X."', `name="description" content="${homeDescription}"`)
     .replace('property="og:title" content="Badehaus X"', `property="og:title" content="${homeTitle}"`)
     .replace('name="twitter:title" content="Badehaus X"', `name="twitter:title" content="${homeTitle}"`)
     .replaceAll('content="Explore nearby. Start a conversation. Connect your way."', `content="${homeDescription}"`)
-    .replace('<div id="root"></div>', `<div id="root"><main class="site-page">
-      <h1>Gay cruising on Badehaus X</h1>
-      <p>Badehaus X is an 18+ web app for gay men to explore nearby, chat, and choose what to share.</p>
-      <nav aria-label="Public guides"><a href="./gay-cruising/">Gay cruising guide</a> · <a href="./thebackroom/">The Backroom blog</a></nav>
-    </main></div>`));
+    .replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/, (_, entry) => `<script type="module">
+      const appHash = () => Boolean(location.hash && !["#sign-in", "#classifieds"].includes(location.hash));
+      const query = new URLSearchParams(location.search);
+      const openApp = appHash() || query.has("st") || query.has("app") ||
+        matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+      if (openApp) {
+        document.getElementById("public-home").remove();
+      } else {
+        const search = document.getElementById("city-search");
+        const cities = Array.from(document.querySelectorAll("[data-city]"));
+        const status = document.getElementById("city-search-status");
+        const more = document.getElementById("more-cities");
+        let wasSearching = false;
+        let moreWasOpen = false;
+        const normalize = (value) => value.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().replace(/[’']/g, "");
+        const filterCities = () => {
+          const query = normalize(search.value.trim());
+          for (const city of cities) city.hidden = !normalize(city.dataset.city).includes(query);
+          status.hidden = cities.some(city => !city.hidden);
+          if (query) {
+            if (!wasSearching) moreWasOpen = more.open;
+            more.hidden = !cities.some(city => !city.hidden && more.contains(city));
+            more.open = !more.hidden;
+          } else {
+            more.hidden = false;
+            if (wasSearching) more.open = moreWasOpen;
+          }
+          wasSearching = Boolean(query);
+        };
+        search.hidden = false;
+        search.addEventListener("input", filterCities);
+        filterCities();
+        window.addEventListener("hashchange", () => {
+          if (appHash()) location.reload();
+        });
+      }
+      import(${JSON.stringify(entry)});
+    </script>`)
+    .replace(/<link rel="modulepreload"[^>]+>/g, "")
+    .replace('<div id="root"></div>', () => publicHome));
   const backroom = home
     .replaceAll('"./', '"../')
     .replaceAll("<title>Badehaus X</title>", "<title>The Backroom · Badehaus X</title>")
@@ -75,10 +123,20 @@ async function main() {
     .replace(`property="og:url" content="${normalizedUrl}"`, `property="og:url" content="${normalizedUrl}thebackroom/"`);
   fs.mkdirSync("dist/thebackroom", { recursive: true });
   fs.writeFileSync("dist/thebackroom/index.html", backroom);
-  fs.mkdirSync("dist/gay-cruising", { recursive: true });
-  fs.writeFileSync("dist/gay-cruising/index.html",
-    fs.readFileSync("editorial/gay-cruising.html", "utf8").replaceAll("https://badehausx.com/", normalizedUrl));
-  writeBackroomArticles(backroomArticles, normalizedUrl);
+  const publicPages = [
+    "gay-cruising",
+    "gay-porn",
+    "vancouver",
+    "thebackroom/first-gay-bathhouse-visit",
+    "thebackroom/meet-gay-men-vancouver",
+  ];
+  for (const slug of publicPages) {
+    fs.mkdirSync(`dist/${slug}`, { recursive: true });
+    fs.writeFileSync(`dist/${slug}/index.html`,
+      fs.readFileSync(`editorial/${slug}.html`, "utf8").replaceAll("https://badehausx.com/", normalizedUrl));
+  }
+  const classifiedsPaths = writeClassifiedPages(cities, normalizedUrl, escapeHtml);
+  writeBackroomArticles(backroomArticles, normalizedUrl, classifiedsPaths);
   writePwaBuild();
   if(!publicBase.hostname.endsWith("github.io"))fs.writeFileSync("dist/CNAME",publicBase.hostname+"\n");
 }

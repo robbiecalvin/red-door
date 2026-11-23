@@ -1,4 +1,6 @@
-import { isPostingBoard, type PostingBoard } from "../../../shared/postingBoard";
+import type { AdultVideoFavorite } from "../../../shared/adultLibrary";
+import classifiedCities from "../../../shared/classifiedCities.json";
+import { adLifetimeMs, isClassifiedCategory, isPostingBoard, type PostingBoard } from "../../../shared/postingBoard";
 import type { PolicyAcceptance, RegistrationPolicy } from "../../../shared/registrationPolicy";
 import { isGroupFormat, validGroupSchedule, type GroupFormat, type GroupOccurrence } from "../../../shared/groupSchedule";
 import { isPostingAvailability, type PostingAvailability } from "../../../shared/postingStatus";
@@ -98,6 +100,7 @@ export type ProfileCutStatus = "cut" | "uncut";
 export type ProfilePosition = "top" | "bottom" | "side";
 
 export type UserProfile = Readonly<{
+  adultVideoFavorites?: readonly AdultVideoFavorite[];
   member?: PublicMember;
   userId: string;
   displayName: string;
@@ -120,6 +123,7 @@ export type UserProfile = Readonly<{
 }>;
 
 export type PublicProfile = Readonly<{
+  adultVideoFavorites?: readonly AdultVideoFavorite[];
   foundingMember?: boolean;
   member?: PublicMember;
   userId: string;
@@ -199,6 +203,7 @@ export type PublicPosting = Readonly<{
   photoMediaId?: string;
   availability?: PostingAvailability;
   board?: PostingBoard;
+  cityId?: string;
   lat?: number;
   lng?: number;
   eventStartAtMs?: number;
@@ -2661,6 +2666,7 @@ function createLocalApiClient(): Readonly<{
       photoMediaId?: string;
       availability?: PostingAvailability;
       board?: PostingBoard;
+      cityId?: string;
       lat?: number;
       lng?: number;
       eventStartAtMs?: number;
@@ -3414,10 +3420,12 @@ function createLocalApiClient(): Readonly<{
     },
     async listPublicPostings(type?: "ad" | "event", sessionToken?: string): Promise<{ postings: ReadonlyArray<PublicPosting> }> {
       const state = readState();
+      let viewerAgeVerified = false;
       let viewerUserId: string | null = null;
       if (typeof sessionToken === "string" && sessionToken.trim().length > 0) {
         try {
-          const viewerSession = requireUserSession(state, sessionToken);
+          const viewerSession = requireSession(state, sessionToken);
+          viewerAgeVerified = viewerSession.ageVerified;
           viewerUserId = viewerSession.ageVerified ? viewerSession.userId ?? null : null;
         } catch {
           viewerUserId = null;
@@ -3429,7 +3437,7 @@ function createLocalApiClient(): Readonly<{
           return typeof p.eventStartAtMs !== "number" || p.eventStartAtMs > now;
         }
         if (p.type === "ad") {
-          return now - p.createdAtMs < 12 * 60 * 60 * 1000;
+          return (!p.cityId || viewerAgeVerified) && now - p.createdAtMs < adLifetimeMs(p.cityId);
         }
         return true;
       });
@@ -3446,6 +3454,7 @@ function createLocalApiClient(): Readonly<{
         photoMediaId?: string;
         availability?: PostingAvailability;
         board?: PostingBoard;
+        cityId?: string;
         lat?: number;
         lng?: number;
         eventStartAtMs?: number;
@@ -3476,7 +3485,13 @@ function createLocalApiClient(): Readonly<{
         throw { code: "POSTING_TYPE_NOT_ALLOWED", message: "Invalid posting type." } as ServiceError;
       }
       if (!title) throw { code: "INVALID_INPUT", message: "Title is required." } as ServiceError;
-      if (payload.board !== undefined && (payload.type !== "ad" || !isPostingBoard(payload.board))) {
+      if (payload.cityId !== undefined && (payload.type !== "ad" || !classifiedCities.some(city => city.id === payload.cityId))) {
+        throw { code: "INVALID_INPUT", message: "Choose a city from the classifieds directory." } as ServiceError;
+      }
+      if (payload.cityId !== undefined && !isClassifiedCategory(payload.board)) {
+        throw { code: "INVALID_INPUT", message: "Choose a classifieds category." } as ServiceError;
+      }
+      if (payload.cityId === undefined && payload.board !== undefined && (payload.type !== "ad" || !isPostingBoard(payload.board))) {
         throw { code: "INVALID_INPUT", message: "Choose a valid message board." } as ServiceError;
       }
       if (!body && payload.board === undefined) throw { code: "INVALID_INPUT", message: "Body is required." } as ServiceError;
@@ -3486,7 +3501,7 @@ function createLocalApiClient(): Readonly<{
       if (session.ageVerified !== true) {
         throw { code: "AGE_GATE_REQUIRED", message: "You must be 18 or older to use Badehaus X.", context: { minimumAge: 18 } } as ServiceError;
       }
-      if (payload.type === "ad" && !hasPlus(session, nowMs())) {
+      if (payload.type === "ad" && payload.cityId === undefined && !hasPlus(session, nowMs())) {
         throw { code: "PLUS_REQUIRED", message: "Publishing postings requires Plus." } as ServiceError;
       }
       if (payload.type === "ad" && payload.availability !== undefined && !isPostingAvailability(payload.availability)) {
@@ -3526,7 +3541,8 @@ function createLocalApiClient(): Readonly<{
         title,
         body,
         ...(photoMediaId ? { photoMediaId } : {}),
-        ...(isPostingBoard(payload.board) ? { board: payload.board } : {}),
+        ...((isPostingBoard(payload.board) || isClassifiedCategory(payload.board)) ? { board: payload.board } : {}),
+        ...(payload.cityId ? { cityId: payload.cityId } : {}),
         ...(payload.type === "ad" && isPostingAvailability(payload.availability) ? { availability: payload.availability } : {}),
         ...(payload.type === "event" && typeof lat === "number" ? { lat } : {}),
         ...(payload.type === "event" && typeof lng === "number" ? { lng } : {}),
@@ -4217,6 +4233,7 @@ export function apiClient(basePath = "/api"): Readonly<{
       photoMediaId?: string;
       availability?: PostingAvailability;
       board?: PostingBoard;
+      cityId?: string;
       lat?: number;
       lng?: number;
       eventStartAtMs?: number;
@@ -4652,6 +4669,7 @@ export function apiClient(basePath = "/api"): Readonly<{
         photoMediaId?: string;
         availability?: PostingAvailability;
         board?: PostingBoard;
+        cityId?: string;
         lat?: number;
         lng?: number;
         eventStartAtMs?: number;

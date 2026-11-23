@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createPublicPostingsService } from "../backend/src/services/publicPostingsService";
+import { createPublicPostingsService, type PublicPostingsState } from "../backend/src/services/publicPostingsService";
 
 describe("publicPostingsService", () => {
   it("Given a guest session When listing postings Then listing succeeds", () => {
@@ -47,6 +47,30 @@ describe("publicPostingsService", () => {
     expect(service.create(member, draft)).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
     expect(service.create(member, { ...draft, board: "meetups" })).toMatchObject({ ok: true, value: { ...draft, board: "meetups" } });
     expect(service.list("ad")).toMatchObject({ ok: true, value: [{ ...draft, board: "meetups" }] });
+  });
+
+  it("validates and persists the selected classifieds city without changing unassigned ads", () => {
+    let nextId = 0;
+    const options = { nowMs: () => 1000, idFactory: () => String(++nextId) };
+    let state: PublicPostingsState | undefined;
+    const service = createPublicPostingsService({ ...options, onStateChanged: snapshot => { state = snapshot; } });
+    const member = { userType: "registered", userId: "member", ageVerified: true, tier: "premium" } as const;
+    const draft = { type: "ad", title: "Coffee after work", body: "", board: "general" };
+    expect(service.create(member, { ...draft, cityId: "unknown" })).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+    const freeMember = { ...member, tier: "free" } as const;
+    const cityDraft = { ...draft, cityId: "vancouver", board: "housing" };
+    expect(service.create(freeMember, draft)).toMatchObject({ ok: false, error: { code: "PLUS_REQUIRED" } });
+    expect(service.create(freeMember, { ...draft, cityId: "vancouver" })).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+    expect(service.create({ ...freeMember, ageVerified: false }, cityDraft)).toMatchObject({ ok: false, error: { code: "AGE_GATE_REQUIRED" } });
+    expect(service.create({ userType: "guest", ageVerified: true }, cityDraft)).toMatchObject({ ok: false, error: { code: "ANONYMOUS_FORBIDDEN" } });
+    expect(service.create(freeMember, cityDraft)).toMatchObject({ ok: true, value: { cityId: "vancouver", board: "housing" } });
+    expect(service.create(member, draft)).toMatchObject({ ok: true, value: { postingId: "2" } });
+    expect(state).toBeDefined();
+    const restored = createPublicPostingsService({ ...options, initialState: state });
+    const result = restored.list("ad", member);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.value.map(posting => posting.cityId)).toEqual(["vancouver", undefined]);
+    expect(restored.list("ad")).toMatchObject({ ok: true, value: [{ postingId: "2" }] });
   });
 
   it("Given a registered session When create is called Then posting is created", () => {

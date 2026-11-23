@@ -1,3 +1,4 @@
+import { adultProfileFavorites, installAdultLibraryRoutes } from "./routes/adultLibraryRoutes";
 import { childSafetyPriority } from "../../shared/childSafety";
 import { installAccountDeletionRoutes } from "./routes/accountDeletionRoutes";
 import { installMediaReviewRoutes } from "./routes/mediaReviewRoutes";
@@ -1166,6 +1167,17 @@ async function main(): Promise<void> {
     await authPersistQueue;
     if (authPersistenceError) throw new Error("Membership update could not be saved.");
   };
+  if (!googlePlayEdition) {
+    installAdultLibraryRoutes(app, {
+      repository: communityRepository,
+      member: plusUser,
+      async saveFavorites(userId, ids) {
+        const user = authService.getUser(userId);
+        if (!user) throw new Error("Account no longer exists.");
+        await membershipChange(userId, { ...user.plusData, adultVideoFavorites: ids });
+      }
+    });
+  }
   async function deletePriorityProof(userId: string, mediaId?: string) {
     if (!mediaId) return;
     const media = await mediaRepo.getById(mediaId);
@@ -1767,13 +1779,16 @@ async function main(): Promise<void> {
 
   // Profile
   app.get("/profile/me", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
     const token = getSessionToken(req);
     const sessionResult = authService.getSession(token ?? "");
     if (!sessionResult.ok) return sendError(res, sessionResult.error);
     const result = await profileService.getMe(sessionResult.value);
     if (!result.ok) return sendError(res, result.error);
     const media = (await playMediaReview?.profileMediaByOwner())?.get(result.value.userId);
-    return res.status(200).json({ profile: enrichProfile({ ...result.value, ...media }) });
+    const profile = enrichProfile({ ...result.value, ...media });
+    const favorites = googlePlayEdition ? [] : await adultProfileFavorites(communityRepository, authService.getUser(profile.userId)?.plusData?.adultVideoFavorites).catch(() => []);
+    return res.status(200).json({ profile: favorites.length ? { ...profile, adultVideoFavorites: favorites } : profile });
   });
 
   app.get("/profile/public/:userId", async (req, res) => {
@@ -1788,7 +1803,11 @@ async function main(): Promise<void> {
     const result = await profileService.getPublicByUserId(userId);
     if (!result.ok) return sendError(res, result.error);
     const media = (await playMediaReview?.profileMediaByOwner())?.get(userId);
-    return res.status(200).json({ profile: enrichProfile({ ...result.value, ...media }, viewer.ok && Boolean(viewer.value.userId) && viewer.value.ageVerified) });
+    const signedInAdult = viewer.ok && Boolean(viewer.value.userId) && viewer.value.ageVerified;
+    const profile = enrichProfile({ ...result.value, ...media }, signedInAdult);
+    const favorites = !googlePlayEdition && signedInAdult
+      ? await adultProfileFavorites(communityRepository, target?.plusData?.adultVideoFavorites).catch(() => []) : [];
+    return res.status(200).json({ profile: favorites.length ? { ...profile, adultVideoFavorites: favorites } : profile });
   });
 
   app.get("/profile/public", async (_req, res) => {
@@ -1987,6 +2006,7 @@ async function main(): Promise<void> {
       photoMediaId: (req.body as any)?.photoMediaId,
       availability: req.body?.availability,
       board: req.body?.board,
+      cityId: req.body?.cityId,
       lat: (req.body as any)?.lat,
       lng: (req.body as any)?.lng,
       eventStartAtMs: (req.body as any)?.eventStartAtMs,

@@ -74,7 +74,7 @@ if (!el) {
 createRoot(el).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <PwaProvider><App /></PwaProvider>
+      <PwaProvider><App publicAuthTarget={document.getElementById("public-auth")} /></PwaProvider>
     </ErrorBoundary>
   </React.StrictMode>
 );
