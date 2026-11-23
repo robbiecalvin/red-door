@@ -10,11 +10,13 @@ export function writeAdultCatalogPages(directory, baseUrl, escapeHtml) {
   const landing = fs.readFileSync(landingPath, "utf8");
   fs.writeFileSync(landingPath, landing.replace("</article>", () => `<h2>Video categories</h2><ul>${list}</ul></article>`));
 
+  const catalogPaths = [];
   for (const { name, slug, count, pages } of manifest) {
     const base = `gay-porn/cat/${slug}/`;
     const pagePath = number => number === 1 ? base : `${base}page/${number}/`;
     for (let number = 1; number <= pages; number++) {
       const route = pagePath(number);
+      catalogPaths.push(route);
       const root = "../".repeat(route.split("/").length - 1);
       const title = `${name} gay videos${number > 1 ? ` (page ${number})` : ""}`;
       const description = `Browse the ${name} category in the Badehaus X adult video directory. Page ${number} of ${pages}. Sign in to see previews.`;
@@ -26,7 +28,6 @@ export function writeAdultCatalogPages(directory, baseUrl, escapeHtml) {
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} | Badehaus X</title>
 <meta name="description" content="${escapeHtml(description)}">
-<meta name="robots" content="noindex, follow">
 <link rel="canonical" href="${escapeHtml(baseUrl + route)}">
 <link rel="stylesheet" href="${root}site-theme.css">
 </head><body class="site-page site-article">
@@ -38,4 +39,5 @@ export function writeAdultCatalogPages(directory, baseUrl, escapeHtml) {
 </article></main></body></html>`);
     }
   }
+  return catalogPaths;
 }
