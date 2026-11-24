@@ -499,3 +499,141 @@
 
 .rd-adult-saved-slots { display: grid; gap: .5rem; padding-inline-start: 1.5rem; }
 .rd-adult-saved-slots .rd-btn { margin-inline-start: .5rem; }
+
+@media (min-width: 901px) {
+  .rd-desktop-shell.has-bottom-nav {
+    grid-template-columns: 84px minmax(0, 1fr);
+    grid-template-rows: 58px minmax(0, 1fr) 56px;
+    background: #0b0a0c;
+  }
+
+  .rd-desktop-shell > .rd-topbar,
+  .rd-desktop-dock {
+    grid-column: 2;
+    min-width: 0;
+    background: var(--rd-app-bar-background);
+  }
+
+  .rd-desktop-shell > .rd-topbar .rd-topbar-inner {
+    max-width: none;
+    padding: 0 14px;
+    height: 100%;
+  }
+
+  .rd-desktop-command {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    width: 100%;
+  }
+
+  .rd-desktop-command > div,
+  .rd-desktop-dock {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(12px, 3vw, 36px);
+  }
+
+  .rd-desktop-rail {
+    grid-area: 1 / 1 / -1 / 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    overflow: auto;
+    padding: 10px 0;
+    background: #100d0f;
+    border-right: 1px solid #3d252b;
+    z-index: 9;
+  }
+
+  .rd-desktop-shell .rd-app-tool {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    padding: 5px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .rd-desktop-shell .rd-app-tool:hover,
+  .rd-desktop-shell .rd-app-tool[aria-current="page"],
+  .rd-desktop-shell .rd-app-tool[aria-pressed="true"] {
+    background: #c3243d1c;
+    border-color: #a7374a60;
+  }
+
+  .rd-desktop-shell :is(button, a):focus-visible {
+    outline: 2px solid #ff8193;
+    outline-offset: -2px;
+  }
+
+  .rd-desktop-shell .rd-app-tool .rd-art-icon { width: 32px; height: 32px; }
+  .rd-desktop-shell .rd-desktop-brand { width: 64px; height: 78px; }
+  .rd-desktop-brand img { width: 100%; height: 100%; object-fit: contain; }
+
+  .rd-desktop-shell .rd-desktop-rail .rd-app-avatar {
+    width: 54px;
+    height: 54px;
+    flex-shrink: 0;
+    margin: 0 0 10px;
+  }
+
+  .rd-desktop-dock { grid-row: 3; border-top: 1px solid #3d252b; }
+  .rd-desktop-shell.has-bottom-nav > .rd-main {
+    grid-area: 2 / 2;
+    padding: 12px 14px;
+  }
+
+  .rd-desktop-shell > .rd-main:has(.rd-desktop-workspace) { overflow: hidden; }
+  .rd-desktop-shell .rd-grid:has(.rd-desktop-workspace) { height: 100%; }
+  .rd-desktop-shell .rd-inbox-live-status:not([hidden]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .rd-desktop-workspace {
+    grid-template: auto minmax(0, 1fr) / repeat(2, minmax(0, 1fr));
+    gap: 0 14px !important;
+    min-height: 0;
+  }
+
+  .rd-desktop-workspace > [role="alert"] { grid-area: 1 / 1 / 2 / -1; margin-bottom: 8px; }
+  .rd-desktop-browse { grid-area: 2 / 1; }
+  .rd-desktop-chat { grid-area: 2 / 2; }
+  .rd-desktop-pane {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 1px solid #4c2c35;
+    border-radius: 8px;
+    background: #111113;
+  }
+  .rd-desktop-pane:focus-within { border-color: #995260; }
+
+  .rd-desktop-browse > .rd-explore-surface.is-map,
+  .rd-desktop-browse .is-map .rd-explore-layout { height: 100%; }
+  .rd-desktop-browse .is-map .rd-explore-layout { grid-template-columns: minmax(0, 1fr); }
+  .rd-desktop-browse .is-map .rd-people-pane { display: none; }
+  .rd-desktop-browse .rd-map-pane > :first-child { height: 100% !important; min-height: 0 !important; }
+  .rd-desktop-browse .rd-discover-grid .rd-people-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+  .rd-desktop-chat .rd-active-thread {
+    display: flex !important;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .rd-desktop-chat .rd-chat-window { flex: 1; min-height: 0; overflow: hidden; }
+  .rd-desktop-chat .rd-chat-messages { min-height: 0 !important; overflow: auto; }
+  .rd-desktop-chat .rd-chat-composer { position: static !important; }
+}
