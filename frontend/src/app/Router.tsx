@@ -2974,7 +2974,6 @@ function ThreadsPanel({
   onUnreadCountChange,
   mode = "all",
   compact = false,
-  docked = false,
   groupOnly = false
 }: Readonly<{
   initialPeerKey?: string | null;
@@ -2990,7 +2989,6 @@ function ThreadsPanel({
   onUnreadCountChange?(count: number): void;
   mode?: "all" | "pinned";
   compact?: boolean;
-  docked?: boolean;
   groupOnly?: boolean;
 }>): React.ReactElement {
   const [rows, setRows] = useState<ReadonlyArray<{ key: string; chatKind: "cruise" | "date"; displayName: string; preview: string; at: number; unreadCount: number; avatarUrl?: string }>>(
@@ -3424,7 +3422,6 @@ function ThreadsPanel({
         />
       </div>
     );
-    if (docked) return thread;
     const dialog = (
       <Sheet title={displayNameForIdentity(selectedPeerKey, peerLabel)} className="rd-thread-sheet"
         onClose={onCloseOverlay ?? (() => setSelectedPeerKey(null))}>
@@ -6993,9 +6990,6 @@ export function Router({
   const isMobile = useIsMobile();
   const threadProfileOpener = useRef<((request: ThreadProfileRequest) => void) | null>(null);
   const openThreadProfile = (request: ThreadProfileRequest) => threadProfileOpener.current?.(request);
-  const desktopWorkspace = !isMobile && !googlePlayEdition;
-  const splitWorkspace = desktopWorkspace && ["discover", "threads", "ads", "groups", "cruise"].includes(activeTab);
-  const showsDiscovery = activeTab === "discover" || (splitWorkspace && (activeTab === "threads" || activeTab === "ads"));
   const [exploreThreadKey, setExploreThreadKey] = useState<string | null>(null);
   const [externalOpenThreadRequest, setExternalOpenThreadRequest] = useState<{ key: string; nonce: number } | null>(null);
   const [rememberedThread, setRememberedThread] = useState<string | null>(null);
@@ -7156,12 +7150,11 @@ export function Router({
   }
 
   return (
-    <div className={splitWorkspace ? "rd-desktop-workspace" : undefined} style={{ display: "grid", gap: 12 }}>
+    <div style={{ display: "grid", gap: 12 }}>
       {!hideModeCard ? null : null}
       {!isMobileInboxOpen && !isMobileAdsOpen && activeTab !== "discover" && inlineErrorBanner}
 
-      <section aria-label="Discovery" className={`rd-discover-container${splitWorkspace ? " rd-desktop-pane rd-desktop-browse" : ""}`}
-        style={{ display: showsDiscovery ? "block" : "none" }}>
+      <div className="rd-discover-container" style={{ display: activeTab === "discover" ? "block" : "none" }}>
         <CruiseSurface
           api={api}
           session={session}
@@ -7175,11 +7168,6 @@ export function Router({
           discoverScreen={discoverScreen}
           threadProfileOpener={threadProfileOpener}
           onOpenThreadRequested={(key) => {
-            if (splitWorkspace) {
-              setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
-              if (activeTab === "ads") setActiveTab("threads");
-              return;
-            }
             if (googlePlayEdition && !session.userId) {
               setActiveTab("threads");
               return;
@@ -7193,21 +7181,15 @@ export function Router({
           }}
           onUnreadCountChange={onUnreadCountChange}
         />
-      </section>
-      {splitWorkspace && activeTab !== "ads" && <section id="desktop-instant-chat" tabIndex={-1} aria-label="Instant Chat" className="rd-desktop-pane rd-desktop-chat">
-        <ThreadsPanel onOpenProfile={openThreadProfile} initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
-          api={api} session={session} setLastError={setThreadsError} openThreadRequest={externalOpenThreadRequest}
-          onThreadRequestConsumed={() => setExternalOpenThreadRequest(null)} isMobile={false} docked
-          onUnreadCountChange={onUnreadCountChange} />
-      </section>}
-      {!desktopWorkspace && activeTab === "discover" && exploreThreadKey && !isMobile ? (
+      </div>
+      {activeTab === "discover" && exploreThreadKey && !isMobile ? (
         <ThreadsPanel onOpenProfile={openThreadProfile} key={exploreThreadKey} initialPeerKey={exploreThreadKey}
           onCloseOverlay={() => setExploreThreadKey(null)}
           api={api} session={session} setLastError={setThreadsError} isMobile={false}
           onUnreadCountChange={onUnreadCountChange}
         />
       ) : null}
-      {!desktopWorkspace && activeTab === "threads" && !isMobile ? (
+      {activeTab === "threads" && !isMobile ? (
         <ThreadsPanel onOpenProfile={openThreadProfile} initialPeerKey={rememberedThread} onActiveThreadChange={setRememberedThread}
           api={api}
           session={session}
@@ -7333,23 +7315,12 @@ export function Router({
           </div>
         </div>
       ) : null}
-      {activeTab === "ads" && !isMobile ? (
-        <section aria-label="Postings" className={splitWorkspace ? "rd-desktop-pane rd-desktop-chat" : undefined}>
-          <PublicPostings api={api} session={session} isMobile={false} screen="ads" setLastError={setAdsError}
-            onOpenThreadRequested={splitWorkspace ? key => {
-              setExternalOpenThreadRequest({ key: normalizePeerKey(key), nonce: Date.now() });
-              setActiveTab("threads");
-            } : undefined} />
-        </section>
-      ) : null}
+      {activeTab === "ads" && !isMobile ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="ads" setLastError={setAdsError} /> : null}
       {activeTab === "live" ? <LivePanel key={session.sessionToken} api={api} session={session} /> : null}
-      {(activeTab === "groups" || activeTab === "cruise") && (
-        <section aria-label={activeTab === "groups" ? "Groups" : "Cruising spots"}
-          className={splitWorkspace ? "rd-desktop-pane rd-desktop-browse" : undefined}>
-          <PublicPostings key={activeTab} api={api} session={session} isMobile={isMobile} screen={activeTab}
-            setLastError={activeTab === "groups" ? setGroupsError : setCruiseError} />
-        </section>
-      )}
+      {activeTab === "groups" ? (
+        <PublicPostings api={api} session={session} isMobile={isMobile} screen="groups" setLastError={setGroupsError} />
+      ) : null}
+      {activeTab === "cruise" ? <PublicPostings api={api} session={session} isMobile={isMobile} screen="cruise" setLastError={setCruiseError} /> : null}
       {activeTab === "profile" || activeTab === "settings" ? unifiedSettingsSurface : null}
       {!googlePlayEdition && activeTab === "private-inbox" && <PrivateInbox api={api} session={session} />}
       {!googlePlayEdition && activeTab === "adult-library" ? <AdultLibrary api={api} session={session} onRegister={onRegister} /> : null}
