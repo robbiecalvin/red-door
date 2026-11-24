@@ -1045,6 +1045,9 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
   const mobileFramedShell = isMobile && Boolean(session && session.ageVerified === true);
   const showBottomNav = Boolean(session && session.ageVerified === true && !profileSetupRequired && !profileSetupChecking);
   const desktopWideSession = Boolean(session && session.ageVerified === true && !isMobile);
+  const desktopWorkspace = desktopWideSession && showBottomNav && !googlePlayEdition;
+  const desktopDiscoveryVisible = activeTab === "discover" || activeTab === "threads" || activeTab === "ads";
+  const desktopChatVisible = activeTab === "discover" || activeTab === "threads" || activeTab === "groups" || activeTab === "cruise";
   const [filtersActive, setFiltersActive] = useState(false);
   useEffect(() => {
     const update = (event: Event) => setFiltersActive((event as CustomEvent<{ keys: string[] | null }>).detail.keys !== null);
@@ -1308,13 +1311,45 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
   }
 
   return (
-    <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav rd-app-bars" : ""}`}>
+    <div className={`rd-shell ${mobileFramedShell ? "mobile-framed" : ""} ${showBottomNav ? "has-bottom-nav rd-app-bars" : ""} ${desktopWorkspace ? "rd-desktop-shell" : ""}`}>
       {passwordRecovery}
       {session?.freePlus === false && <AccountNotices api={api} session={session} ready={Boolean(session?.ageVerified && !profileSetupChecking && !profileSetupRequired && !plusOpen)} loginSequence={loginSequence} />}
       {plusOpen && session?.freePlus === false ? <PlusPanel api={api} session={session} feature={plusFeature} onClose={() => setPlusOpen(false)} onRegister={() => { setPlusOpen(false); onLogout(); setAuthView("register"); }} /> : null}
         <header className={`rd-topbar ${isMobile ? "mobile" : ""} ${desktopWideSession ? "rd-topbar-wide" : ""}`}>
           <div className="rd-topbar-inner">
-            {session?.ageVerified === true ? (
+            {desktopWorkspace ? (
+              <nav className="rd-desktop-command" aria-label="Workspace navigation">
+                <div>
+                  <button type="button" className="rd-btn rd-app-tool" aria-label="People" title="People"
+                    aria-pressed={desktopDiscoveryVisible && discoverScreen === "chat"}
+                    onClick={() => setTabAndRoute("discover", "chat")}>
+                    <Icon name="grid" active={desktopDiscoveryVisible && discoverScreen === "chat"} />
+                  </button>
+                  <button type="button" className="rd-btn rd-app-tool" aria-label="Map" title="Map"
+                    aria-pressed={desktopDiscoveryVisible && discoverScreen === "map"}
+                    onClick={() => setTabAndRoute("discover", "map")}>
+                    <Icon name="map" active={desktopDiscoveryVisible && discoverScreen === "map"} />
+                  </button>
+                </div>
+                <div>
+                  <button type="button" className="rd-btn rd-app-tool" aria-label="Instant Chat" title="Instant Chat"
+                    aria-pressed={desktopChatVisible}
+                    onClick={() => {
+                      if (desktopChatVisible) document.getElementById("desktop-instant-chat")?.focus();
+                      else setTabAndRoute("threads");
+                    }}>
+                    <Icon name="message" active={desktopChatVisible} />
+                    {unreadChatCount > 0 && <span className="rd-app-inbox-badge" aria-label={`${unreadChatCount} unread`}>
+                      {unreadChatCount > 99 ? "99+" : unreadChatCount}
+                    </span>}
+                  </button>
+                  <button type="button" className="rd-btn rd-app-tool" aria-label="Postings" title="Postings"
+                    aria-current={activeTab === "ads" ? "page" : undefined} onClick={() => setTabAndRoute("ads")}>
+                    <Icon name="postings" active={activeTab === "ads"} />
+                  </button>
+                </div>
+              </nav>
+            ) : session?.ageVerified === true ? (
               <div className={`rd-app-toolbar${!googlePlayEdition && session.userId ? " rd-app-toolbar-with-inbox" : ""}`}>
                 <div className="rd-app-toolbar-side">
                   <button type="button" className="rd-btn rd-app-tool" aria-label="Badehaus X Explore" title="Explore"
@@ -1360,8 +1395,31 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
             <NotificationPrompt key={session.userId} api={api} session={session} ready={showBottomNav} />
           )}
         </header>
+      {desktopWorkspace && session && <nav className="rd-desktop-rail" aria-label="Account and tools">
+        <button type="button" className="rd-btn rd-app-tool rd-desktop-brand" aria-label="Badehaus X Explore" title="Explore"
+          onClick={() => setTabAndRoute("discover", "chat")}>
+          <img src={brandMark} alt="" />
+        </button>
+        <button type="button" className="rd-top-avatar rd-app-avatar" aria-label="Open my profile preview" title="My profile"
+          onClick={openSelfProfilePreview}>
+          <img src={topAvatar} alt="" className="rd-mobile-avatar-img" />
+          <span className="rd-mobile-avatar-dot" />
+        </button>
+        {session.userId && <button type="button" className="rd-btn rd-app-tool" aria-label="Open private inbox" title="Private inbox"
+          aria-current={activeTab === "private-inbox" ? "page" : undefined} onClick={() => setTabAndRoute("private-inbox")}>
+          <img src={activeTab === "private-inbox" ? inboxToolbarSelected : inboxToolbar} alt="" className="rd-art-icon" />
+        </button>}
+        <button type="button" className="rd-btn rd-app-tool" onClick={toggleTopFilterPanel} aria-label="Open filter controls" title="Filters">
+          <Icon name="filter" active={filtersActive} />
+        </button>
+        <button type="button" className="rd-btn rd-app-tool" aria-label="Open settings" title="Settings"
+          aria-current={activeTab === "settings" ? "page" : undefined} onClick={() => setTabAndRoute("settings")}>
+          <Icon name="settings" active={activeTab === "settings"} />
+        </button>
+        <InstallApp iconOnly />
+      </nav>}
       <main
-        className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
+        className={`rd-main ${isMobile ? "mobile" : ""} ${session ? "" : "rd-home-main"} ${isMapFullScreen && !desktopWorkspace ? "rd-main-full-map" : ""} ${showBottomNav ? "rd-main-with-bottom-nav" : ""} ${desktopWideSession ? "rd-main-desktop-wide" : ""}`}
       >
         <div className="rd-inbox-live-status" role="status" hidden={isMobile || activeTab!=="threads" || !session?.ageVerified}>{liveInboxStatus}</div>
         <div className="rd-grid">
@@ -1542,7 +1600,26 @@ export function App({ publicAuthTarget }: { publicAuthTarget?: HTMLElement | nul
         </div>
       </main>
 
-      {showBottomNav ? (
+      {desktopWorkspace ? (
+        <nav className="rd-desktop-dock" aria-label="More app features">
+          <button type="button" className="rd-btn rd-app-tool" aria-label="Groups" title="Groups"
+            aria-current={activeTab === "groups" ? "page" : undefined} onClick={() => setTabAndRoute("groups")}>
+            <Icon name="groups" active={activeTab === "groups"} />
+          </button>
+          <button type="button" className="rd-btn rd-app-tool" aria-label="Cruising spots" title="Cruising spots"
+            aria-current={activeTab === "cruise" ? "page" : undefined} onClick={() => setTabAndRoute("cruise")}>
+            <Icon name="explore" active={activeTab === "cruise"} />
+          </button>
+          <button type="button" className="rd-btn rd-app-tool" aria-label="Adult video finder" title="Adult video finder"
+            aria-current={activeTab === "adult-library" ? "page" : undefined} onClick={() => setTabAndRoute("adult-library")}>
+            <img src={activeTab === "adult-library" ? videoPlaySelected : videoPlay} alt="" className="rd-art-icon" />
+          </button>
+          {session?.userId && <button type="button" className="rd-btn rd-app-tool" aria-label="Live" title="Live"
+            aria-current={activeTab === "live" ? "page" : undefined} onClick={() => setTabAndRoute("live")}>
+            <Icon name="live" active={activeTab === "live" || liveState.broadcasts.some(room => room.live)} />
+          </button>}
+        </nav>
+      ) : showBottomNav ? (
         <nav className={googlePlayEdition ? "rd-app-dock rd-app-dock-play" : "rd-app-dock"} aria-label="Primary navigation">
           {discoverScreen !== "map" && exploreControls && <div className="rd-app-dock-context">{exploreControls}</div>}
           <button type="button" className="rd-btn rd-app-tool" aria-label="Explore" title="Explore"
