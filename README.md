@@ -462,3 +462,7 @@ See [Plus subscription setup and behavior](docs/plus-subscriptions.md) for limit
 ## Shared-link previews
 
 Text-message and social previews use the static Open Graph/Twitter metadata in `frontend/index.html` and `frontend/public/social/badehaus-x-share-v1.png`. The image is copied into `dist/social/` during the production build. Keep the absolute preview/canonical URLs aligned with the public site domain if it changes. Messaging services can cache older previews after deployment.
+
+## AI-assisted engineering and acceptance testing
+
+`AGENTS.md` defines execution, verification and failure-handling rules. `docs/test_matrix.md` maps acceptance scenarios to Jest tests covering permissions, mode transitions, presence and messaging. Test presence alone does not establish production readiness.
